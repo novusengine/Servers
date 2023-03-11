@@ -18,7 +18,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
     #tracy::tracy
 )
 
-set_target_properties(${PROJECT_NAME} PROPERTIES FOLDER ${ROOT_FOLDER} LINKER_LANGUAGE CXX)
+set_target_properties(${PROJECT_NAME} PROPERTIES FOLDER ${ROOT_FOLDER} LINKER_LANGUAGE CXX UNITY_BUILD ON)
 create_vs_filters(${GAMESERVER_FILES})
 
 #set the visual studio working directory to the parent path of the client executable
