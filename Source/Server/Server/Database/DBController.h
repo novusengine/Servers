@@ -42,12 +42,27 @@ namespace Server::Database
 	struct DBConnection
 	{
 	public:
-		DBConnection(std::string connectionString) : connection(connectionString), ctx(connection) { }
+		DBConnection() { }
 
-		pqxx::connection connection;
-		pqxx::work ctx;
+		void Init(const std::string& connectionString)
+		{
+			if (connection != nullptr)
+				return;
 
-	private:
+			try
+			{
+				connection = new pqxx::connection(connectionString);
+			}
+			catch (const std::exception& e)
+			{
+				DebugHandler::PrintWarning("{0}", e.what());
+			}
+        }
+
+		pqxx::work Context() { return pqxx::work(*connection); }
+
+	public:
+		pqxx::connection* connection = nullptr;
 	};
 
 	class DBController
@@ -64,7 +79,13 @@ namespace Server::Database
 			const DBEntry& dbEntry = _dbEntries[index];
 			SharedPool<DBConnection>& sharedPool = _dbConnections[index];
 
-			return sharedPool.acquireOrCreate(dbEntry.connectionString);
+			auto connection = sharedPool.acquireOrCreate();
+			connection->Init(dbEntry.connectionString);
+
+			if (connection->connection == nullptr)
+                return nullptr;
+			
+			return connection;
 		}
 
 		bool GetDBEntry(const DBType type, DBEntry& dbEntry)

@@ -29,7 +29,6 @@ void Application::Start()
 	if (_isRunning)
 		return;
 
-
 	_isRunning = true;
 
 	std::thread applicationThread = std::thread(&Application::Run, this);

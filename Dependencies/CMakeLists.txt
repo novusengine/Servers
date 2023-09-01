@@ -1,5 +1,6 @@
 project(server-dependencies VERSION 1.0.0)
 
+## PostgreSQL
 # Set Output Directories
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Bin/Libpqxx/Libs)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/Bin/Libpqxx)

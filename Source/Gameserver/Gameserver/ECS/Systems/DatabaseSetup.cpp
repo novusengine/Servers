@@ -52,15 +52,18 @@ namespace ECS::Systems
 		{
 			auto conn = databaseState.controller->GetConnection(Server::Database::DBType::Character);
 
-			for (auto [id, name] : conn->ctx.query<i32, std::string>(
-				"SELECT id, name FROM characters ORDER BY id"))
+			if (conn)
 			{
-				Server::Database::CharacterDefinition character;
-				character.id = id;
-				character.name = name;
+				for (auto [id, name] : conn->Context().query<i32, std::string>(
+					"SELECT id, name FROM characters ORDER BY id"))
+				{
+					Server::Database::CharacterDefinition character;
+					character.id = id;
+					character.name = name;
 
-				databaseState.characterIDToDefinition[id] = character;
-				databaseState.characterNameToDefinition[name] = character;
+					databaseState.characterIDToDefinition[id] = character;
+					databaseState.characterNameToDefinition[name] = character;
+				}
 			}
 		}
 	}
