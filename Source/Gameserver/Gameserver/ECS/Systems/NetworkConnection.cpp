@@ -120,7 +120,7 @@ namespace ECS::Systems
 	{
 		entt::registry::context& ctx = registry.ctx();
 
-		Singletons::NetworkState& networkState = ctx.at<Singletons::NetworkState>();
+		Singletons::NetworkState& networkState = ctx.get<Singletons::NetworkState>();
 
 		// Handle 'SocketConnectedEvent'
 		{

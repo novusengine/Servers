@@ -19,7 +19,7 @@ bool LuaUtil::DoString(const std::string& code)
 	entt::registry* gameRegistry = enttRegistries->gameRegistry;
 
 	entt::registry::context& ctx = gameRegistry->ctx();
-	Singletons::ScriptState& scriptState = ctx.at<Singletons::ScriptState>();
+	Singletons::ScriptState& scriptState = ctx.get<Singletons::ScriptState>();
 	lua_State* luaCtx = scriptState.GetLuaCtx();
 
 	Luau::CompileOptions compileOptions;

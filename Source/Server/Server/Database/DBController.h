@@ -24,6 +24,7 @@ namespace Server::Database
 			connectionString += "port=" + std::to_string(hostPort) + " ";
 			connectionString += "user=" + user + " ";
 			connectionString += "password=" + pass + " ";
+			connectionString += "dbname=" + db + " ";
 		}
 
 	public:
