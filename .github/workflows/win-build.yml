@@ -54,4 +54,4 @@ jobs:
     
     - name: Start NovusServer service
       run: |
-        net stop NovusServer
+        net start NovusServer
