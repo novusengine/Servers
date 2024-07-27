@@ -1,0 +1,27 @@
+name: Windows Deploy
+
+on:
+  workflow_call:
+
+jobs:
+  win-deploy:
+    runs-on: self-hosted
+    
+    strategy:
+      fail-fast: false
+    
+    steps:
+    - name: Stop NovusServer service
+      continue-on-error: true
+      run: |
+        net stop NovusServer
+    
+    - name: Download Game Server artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: Server-Game
+        path: c:/server
+    
+    - name: Start NovusServer service
+      run: |
+        net start NovusServer

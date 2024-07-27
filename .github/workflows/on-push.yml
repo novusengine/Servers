@@ -1,0 +1,16 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  call-windows-build:
+    name: Windows Build
+    uses: ./.github/workflows/win-build.yml
+    
+  call-windows-deploy:
+    needs: call-windows-build
+    if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    name: Windows Deploy
+    uses: ./.github/workflows/win-deploy.yml
