@@ -33,3 +33,27 @@ jobs:
       with:
         name: Server-Game
         path: Build/Bin/Servers/Debug/Server-Game.exe
+
+  win-deploy:
+    needs: win-build
+    runs-on: self-hosted
+    if: github.ref == 'refs/heads/master'
+    
+    strategy:
+      fail-fast: false
+    
+    steps:
+    - name: Stop NovusServer service
+      continue-on-error: true
+      run: |
+        net stop NovusServer
+    
+    - name: Download Game Server artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: Server-Game
+        path: c:/server
+    
+    - name: Start NovusServer service
+      run: |
+        net start NovusServer

@@ -8,3 +8,8 @@ jobs:
   call-windows-build:
     name: Windows Build
     uses: ./.github/workflows/win-build.yml
+    
+  call-windows-deploy:
+    needs: call-windows-build
+    name: Windows Deploy
+    uses: ./.github/workflows/win-build.yml
