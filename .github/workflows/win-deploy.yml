@@ -1,0 +1,32 @@
+name: Windows Deploy
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: Windows Build
+    branches: master
+    types: completed
+
+jobs:
+  win-deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: self-hosted
+    
+    strategy:
+      fail-fast: false
+    
+    steps:
+    - name: Stop NovusServer service
+      continue-on-error: true
+      run: |
+        net stop NovusServer
+    
+    - name: Download Game Server artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: Server-Game
+        path: c:/server
+    
+    - name: Start NovusServer service
+      run: |
+        net start NovusServer
