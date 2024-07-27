@@ -11,5 +11,6 @@ jobs:
     
   call-windows-deploy:
     needs: call-windows-build
+    if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
     name: Windows Deploy
-    uses: ./.github/workflows/win-build.yml
+    uses: ./.github/workflows/win-deploy.yml
