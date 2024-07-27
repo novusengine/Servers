@@ -650,7 +650,7 @@ namespace ECS::Systems
 			networkState.packetHandler->SetMessageHandler(Network::Opcode::CMSG_CHEAT_DELETE_CHARACTER, Network::OpcodeHandler(Network::ConnectionStatus::AUTH_NONE, 3u, 11u, &HandleOnCheatDeleteCharacter));
 
 			// Bind to IP/Port
-			std::string ipAddress = "127.0.0.1";
+			std::string ipAddress = "0.0.0.0";
 			u16 port = 4000;
 
 			Network::Socket::Result initResult = networkState.server->Init(Network::Socket::Mode::TCP, ipAddress, port);
