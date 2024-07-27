@@ -43,6 +43,7 @@ jobs:
     
     steps:
     - name: Stop NovusServer service
+      continue-on-error: true
       run: |
         net stop NovusServer
     
