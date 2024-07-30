@@ -3,5 +3,5 @@
 
 struct EnttRegistries
 {
-	entt::registry* gameRegistry;
+    entt::registry* gameRegistry;
 };

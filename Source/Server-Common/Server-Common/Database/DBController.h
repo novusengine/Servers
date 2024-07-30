@@ -1,6 +1,7 @@
 #pragma once
 #include <Base/Types.h>
 #include <Base/Memory/SharedPool.h>
+#include <Base/Util/DebugHandler.h>
 
 #include <pqxx/pqxx>
 

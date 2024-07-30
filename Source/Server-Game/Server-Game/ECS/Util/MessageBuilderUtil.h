@@ -4,10 +4,12 @@
 #include <Base/Types.h>
 #include <Base/Memory/Bytebuffer.h>
 
-#include <Network/Define.h>
+#include "Gameplay/Network/Opcode.h"
 
 #include <entt/fwd.hpp>
 
+#include <functional>
+#include <limits>
 #include <memory>
 
 namespace ECS
@@ -20,9 +22,13 @@ namespace ECS
 
     namespace Util::MessageBuilder
     {
+        u32 AddHeader(std::shared_ptr<Bytebuffer>& buffer, Network::GameOpcode opcode, u16 size = 0);
+        bool ValidatePacket(const std::shared_ptr<Bytebuffer>& buffer, u32 headerPos);
+        bool CreatePacket(std::shared_ptr<Bytebuffer>& buffer, Network::GameOpcode opcode, std::function<bool()> func);
+
         namespace Authentication
         {
-            bool BuildConnectedMessage(Network::SocketID socketID, std::shared_ptr<Bytebuffer>& buffer, u8 result, entt::entity entity, const std::string* resultString = nullptr);
+            bool BuildConnectedMessage(std::shared_ptr<Bytebuffer>& buffer, u8 result, entt::entity entity, const std::string* resultString = nullptr);
         }
 
         namespace Entity
@@ -30,7 +36,6 @@ namespace ECS
             bool BuildEntityCreateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::Transform& transform, u32 displayID);
             bool BuildEntityDestroyMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity);
             bool BuildEntityMoveMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const vec3& position, const quat& rotation, const Components::MovementFlags& movementFlags, f32 verticalVelocity);
-            bool BuildEntityJumpMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, u8 jumpState);  
             bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::UnitStatsComponent& unitStatsComponent);
             bool BuildEntityTargetUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, entt::entity target);
             bool BuildEntitySpellCastMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, f32 castTime, f32 castDuration);

@@ -12,29 +12,29 @@
 
 namespace ECS
 {
-	Scheduler::Scheduler()
-	{
+    Scheduler::Scheduler()
+    {
 
-	}
+    }
 
-	void Scheduler::Init(entt::registry& registry)
-	{
-		Systems::DatabaseSetup::Init(registry);
-		Systems::SimpleReplication::Init(registry);
-		Systems::NetworkConnection::Init(registry);
-		Systems::UpdatePower::Init(registry);
-		Systems::UpdateSpell::Init(registry);
-		Systems::UpdateScripts::Init(registry);
-	}
+    void Scheduler::Init(entt::registry& registry)
+    {
+        Systems::DatabaseSetup::Init(registry);
+        Systems::SimpleReplication::Init(registry);
+        Systems::NetworkConnection::Init(registry);
+        Systems::UpdatePower::Init(registry);
+        Systems::UpdateSpell::Init(registry);
+        Systems::UpdateScripts::Init(registry);
+    }
 
-	void Scheduler::Update(entt::registry& registry, f32 deltaTime)
-	{
-		// TODO: You know, actually scheduling stuff and multithreading (enkiTS tasks?)
-		Systems::DatabaseSetup::Update(registry, deltaTime);
-		Systems::NetworkConnection::Update(registry, deltaTime);
-		Systems::UpdatePower::Update(registry, deltaTime);
-		Systems::UpdateSpell::Update(registry, deltaTime);
-		Systems::UpdateScripts::Update(registry, deltaTime);
-		Systems::SimpleReplication::Update(registry, deltaTime);
-	}
+    void Scheduler::Update(entt::registry& registry, f32 deltaTime)
+    {
+        // TODO: You know, actually scheduling stuff and multithreading (enkiTS tasks?)
+        Systems::DatabaseSetup::Update(registry, deltaTime);
+        Systems::NetworkConnection::Update(registry, deltaTime);
+        Systems::UpdatePower::Update(registry, deltaTime);
+        Systems::UpdateSpell::Update(registry, deltaTime);
+        Systems::UpdateScripts::Update(registry, deltaTime);
+        Systems::SimpleReplication::Update(registry, deltaTime);
+    }
 }

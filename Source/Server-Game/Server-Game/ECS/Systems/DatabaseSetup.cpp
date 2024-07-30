@@ -12,69 +12,71 @@
 
 namespace ECS::Systems
 {
-	void DatabaseSetup::Init(entt::registry& registry)
-	{
+    void DatabaseSetup::Init(entt::registry& registry)
+    {
         entt::registry::context& ctx = registry.ctx();
 
         Singletons::DatabaseState& databaseState = ctx.emplace<Singletons::DatabaseState>();
 
-		// Setup Database Settings
-		{
-			nlohmann::ordered_json fallback;
+        // Setup Database Settings
+        {
+            nlohmann::ordered_json fallback;
 
-			fallback["Connection"] = 
-			{
-				{ "address",  "127.0.0.1" },
-				{ "port",  5432 },
-				{ "database",  "postgres" },
-				{ "user",  "postgres" },
-				{ "password",  "postgres" }
-			};
+            fallback["Connection"] = 
+            {
+                { "address",  "127.0.0.1" },
+                { "port",  5432 },
+                { "database",  "postgres" },
+                { "user",  "postgres" },
+                { "password",  "postgres" }
+            };
 
-			if (!JsonUtils::LoadFromPathOrCreate(databaseState.config, fallback, "Data/config/Database.json"))
-			{
-				NC_LOG_CRITICAL("[Database] : Failed to create config file");
-			}
-		}
+            if (!JsonUtils::LoadFromPathOrCreate(databaseState.config, fallback, "Data/config/Database.json"))
+            {
+                NC_LOG_CRITICAL("[Database] : Failed to create config file");
+            }
+        }
 
-		// Setup DatabaseState
-		{
-			databaseState.controller = std::make_unique<Server::Database::DBController>();
+        // Setup DatabaseState
+        {
+            databaseState.controller = std::make_unique<Server::Database::DBController>();
 
-			nlohmann::json& connection = databaseState.config["Connection"];
-			Server::Database::DBEntry dbEntry(connection["address"], connection["port"], connection["database"], connection["user"], connection["password"]);
+            nlohmann::json& connection = databaseState.config["Connection"];
+            Server::Database::DBEntry dbEntry(connection["address"], connection["port"], connection["database"], connection["user"], connection["password"]);
 
-			databaseState.controller->SetDBEntry(Server::Database::DBType::Auth, dbEntry);
-			databaseState.controller->SetDBEntry(Server::Database::DBType::Character, dbEntry);
-			databaseState.controller->SetDBEntry(Server::Database::DBType::World, dbEntry);
-		}
+            databaseState.controller->SetDBEntry(Server::Database::DBType::Auth, dbEntry);
+            databaseState.controller->SetDBEntry(Server::Database::DBType::Character, dbEntry);
+            databaseState.controller->SetDBEntry(Server::Database::DBType::World, dbEntry);
+        }
 
-		// Load Character Table
-		{
+        // Load Character Table
+        {
 
-			if (auto conn = databaseState.controller->GetConnection(Server::Database::DBType::Character))
-			{
-				conn->connection->prepare("CreateCharacter", "INSERT INTO characters (name, permissionlevel) VALUES ($1, $2) RETURNING id");
-				conn->connection->prepare("DeleteCharacter", "DELETE FROM characters WHERE id = $1");
+            if (auto conn = databaseState.controller->GetConnection(Server::Database::DBType::Character))
+            {
+                conn->connection->prepare("CreateCharacter", "INSERT INTO public.characters (name, permissionlevel) VALUES ($1, $2) RETURNING id");
+                conn->connection->prepare("DeleteCharacter", "DELETE FROM public.characters WHERE id = $1");
 
-				for (auto& [id, name, permissionLevel] : conn->Context().query<u32, std::string, u16>("SELECT id, name, permissionlevel FROM characters ORDER BY id"))
-				{
-					Server::Database::CharacterDefinition character =
-					{
-						.id = id,
-						.name = name,
-						.permissionLevel = permissionLevel
-					};
+                for (auto& [id, name, permissionLevel, position_x, position_y, position_z, position_o] : conn->Context().query<u32, std::string, u16, f32, f32, f32, f32>("SELECT id, name, permissionlevel, position_x, position_y, position_z, position_o FROM public.characters ORDER BY id"))
+                {
+                    Server::Database::CharacterDefinition character =
+                    {
+                        .id = id,
+                        .name = name,
+                        .permissionLevel = permissionLevel,
+                        .position = vec3(position_x, position_y, position_z),
+                        .orientation = position_o
+                    };
 
-					databaseState.characterIDToDefinition.insert({ id, character });
-					databaseState.characterNameToDefinition.insert({ name, character });
-				}
-			}
-		}
-	}
+                    databaseState.characterIDToDefinition.insert({ id, character });
+                    databaseState.characterNameToDefinition.insert({ name, character });
+                }
+            }
+        }
+    }
 
-	void DatabaseSetup::Update(entt::registry& registry, f32 deltaTime)
-	{
-		entt::registry::context& ctx = registry.ctx();
-	}
+    void DatabaseSetup::Update(entt::registry& registry, f32 deltaTime)
+    {
+        entt::registry::context& ctx = registry.ctx();
+    }
 }

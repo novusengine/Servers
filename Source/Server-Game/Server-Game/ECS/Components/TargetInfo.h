@@ -5,9 +5,9 @@
 
 namespace ECS::Components
 {
-	struct TargetInfo
-	{
-	public:
-		entt::entity target;
-	};
+    struct TargetInfo
+    {
+    public:
+        entt::entity target;
+    };
 }

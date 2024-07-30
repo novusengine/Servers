@@ -16,15 +16,15 @@
 
 namespace ECS::Systems
 {
-	void UpdatePower::Init(entt::registry& registry)
-	{
-	}
+    void UpdatePower::Init(entt::registry& registry)
+    {
+    }
 
-	void UpdatePower::Update(entt::registry& registry, f32 deltaTime)
-	{
+    void UpdatePower::Update(entt::registry& registry, f32 deltaTime)
+    {
         Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
 
-		auto view = registry.view<Components::UnitStatsComponent>();
+        auto view = registry.view<Components::UnitStatsComponent>();
         view.each([&](entt::entity entity, Components::UnitStatsComponent& unitStatsComponent)
         {
             static constexpr f32 healthGainRate = 5.0f;
@@ -93,12 +93,12 @@ namespace ECS::Systems
 
             if (isUnitStatsDirty)
             {
-                std::shared_ptr<Bytebuffer> unitStatsMessage = nullptr;
+                std::shared_ptr<Bytebuffer> unitStatsMessage = Bytebuffer::Borrow<256>();
                 if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, entity, unitStatsComponent))
                     return;
 
                 ECS::Util::Grid::SendToGrid(entity, unitStatsMessage, ECS::Singletons::GridUpdateFlag{ .SendToSelf = true });
             }
         });
-	}
+    }
 }

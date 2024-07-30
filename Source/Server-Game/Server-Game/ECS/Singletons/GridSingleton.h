@@ -12,40 +12,40 @@
 
 namespace ECS::Singletons
 {
-	struct GridUpdateFlag
-	{
-		u32 SendToSelf : 1 = 0;
-	};
+    struct GridUpdateFlag
+    {
+        u32 SendToSelf : 1 = 0;
+    };
 
-	struct GridUpdate
-	{
-	public:
-		entt::entity owner;
-		GridUpdateFlag flags;
+    struct GridUpdate
+    {
+    public:
+        entt::entity owner;
+        GridUpdateFlag flags;
 
-		std::shared_ptr<Bytebuffer> buffer;
-	};
+        std::shared_ptr<Bytebuffer> buffer;
+    };
 
-	struct GridCellEntityList
-	{
-	public:
-		robin_hood::unordered_set<entt::entity> list;
-		robin_hood::unordered_set<entt::entity> entering;
-		robin_hood::unordered_set<entt::entity> leaving;
-	};
+    struct GridCellEntityList
+    {
+    public:
+        robin_hood::unordered_set<entt::entity> list;
+        robin_hood::unordered_set<entt::entity> entering;
+        robin_hood::unordered_set<entt::entity> leaving;
+    };
 
-	struct GridCell
-	{
-	public:
-		GridCellEntityList players;
-		std::vector<GridUpdate> updates;
+    struct GridCell
+    {
+    public:
+        GridCellEntityList players;
+        std::vector<GridUpdate> updates;
 
-		std::mutex mutex;
-	};
+        std::mutex mutex;
+    };
 
-	struct GridSingleton
-	{
-	public:
-		GridCell cell;
-	};
+    struct GridSingleton
+    {
+    public:
+        GridCell cell;
+    };
 }

@@ -10,22 +10,22 @@
 
 namespace Network
 {
-	class Server;
-	class PacketHandler;
+    class Server;
+    class GameMessageRouter;
 }
 
 namespace ECS::Singletons
 {
-	struct NetworkState
-	{
-	public:
-		std::unique_ptr<Network::Server> server;
-		std::unique_ptr<Network::PacketHandler> packetHandler;
+    struct NetworkState
+    {
+    public:
+        std::unique_ptr<Network::Server> server;
+        std::unique_ptr<Network::GameMessageRouter> gameMessageRouter;
 
-		robin_hood::unordered_set<Network::SocketID> socketIDRequestedToClose;
-		robin_hood::unordered_map<Network::SocketID, u32> socketIDToCharacterID;
-		robin_hood::unordered_map<Network::SocketID, entt::entity> socketIDToEntity;
-		robin_hood::unordered_map<u32, Network::SocketID> characterIDToSocketID;
-		robin_hood::unordered_map<entt::entity, Network::SocketID> EntityToSocketID;
-	};
+        robin_hood::unordered_set<Network::SocketID> socketIDRequestedToClose;
+        robin_hood::unordered_map<Network::SocketID, u32> socketIDToCharacterID;
+        robin_hood::unordered_map<Network::SocketID, entt::entity> socketIDToEntity;
+        robin_hood::unordered_map<u32, Network::SocketID> characterIDToSocketID;
+        robin_hood::unordered_map<entt::entity, Network::SocketID> EntityToSocketID;
+    };
 }

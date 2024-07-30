@@ -15,21 +15,21 @@ using namespace Scripting;
 
 bool LuaUtil::DoString(const std::string& code)
 {
-	EnttRegistries* enttRegistries = ServiceLocator::GetEnttRegistries();
-	entt::registry* gameRegistry = enttRegistries->gameRegistry;
+    EnttRegistries* enttRegistries = ServiceLocator::GetEnttRegistries();
+    entt::registry* gameRegistry = enttRegistries->gameRegistry;
 
-	entt::registry::context& ctx = gameRegistry->ctx();
-	Singletons::ScriptState& scriptState = ctx.get<Singletons::ScriptState>();
-	lua_State* luaCtx = scriptState.GetLuaCtx();
+    entt::registry::context& ctx = gameRegistry->ctx();
+    Singletons::ScriptState& scriptState = ctx.get<Singletons::ScriptState>();
+    lua_State* luaCtx = scriptState.GetLuaCtx();
 
-	Luau::CompileOptions compileOptions;
-	Luau::ParseOptions parseOptions;
+    Luau::CompileOptions compileOptions;
+    Luau::ParseOptions parseOptions;
 
-	std::string bytecode = Luau::compile(code, compileOptions, parseOptions);
-	i32 result = luau_load(luaCtx, "", bytecode.c_str(), bytecode.size(), 0);
-	if (result != LUA_OK)
-		return false;
+    std::string bytecode = Luau::compile(code, compileOptions, parseOptions);
+    i32 result = luau_load(luaCtx, "", bytecode.c_str(), bytecode.size(), 0);
+    if (result != LUA_OK)
+        return false;
 
-	result = lua_resume(luaCtx, luaCtx, 0);
-	return result == LUA_OK || result == LUA_YIELD || result == LUA_BREAK;
+    result = lua_resume(luaCtx, luaCtx, 0);
+    return result == LUA_OK || result == LUA_YIELD || result == LUA_BREAK;
 }

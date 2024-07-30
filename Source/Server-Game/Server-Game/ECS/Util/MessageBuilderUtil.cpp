@@ -6,528 +6,394 @@
 
 namespace ECS::Util::MessageBuilder
 {
-	namespace Authentication
-	{
-		bool BuildConnectedMessage(Network::SocketID socketID, std::shared_ptr<Bytebuffer>& buffer, u8 result, entt::entity entity, const std::string* resultString)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 64>();
-			}
+    u32 AddHeader(std::shared_ptr<Bytebuffer>& buffer, Network::GameOpcode opcode, u16 size)
+    {
+        Network::PacketHeader header =
+        {
+            .opcode = static_cast<Network::OpcodeType>(opcode),
+            .size = size
+        };
 
-			switch (result)
-			{
-				case 0:
-				{
-					Network::PacketHeader header =
-					{
-						.opcode = Network::Opcode::SMSG_CONNECTED,
-						.size = sizeof(u8) + sizeof(entt::entity) + static_cast<u8>(resultString->size()) + 1
-					};
+        if (buffer->GetSpace() < sizeof(Network::PacketHeader))
+            return std::numeric_limits<u32>().max();
 
-					if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-						return false;
+        u32 headerPos = static_cast<u32>(buffer->writtenData);
+        buffer->Put(header);
 
-					buffer->Put(header);
-					buffer->PutU8(result);
-					buffer->Put(entity);
-					buffer->PutString(*resultString);
+        return headerPos;
+    }
 
-					break;
-				}
+    bool ValidatePacket(const std::shared_ptr<Bytebuffer>& buffer, u32 headerPos)
+    {
+        if (buffer->writtenData < headerPos + sizeof(Network::PacketHeader))
+            return false;
 
-				default:
-				{
-					static const std::string CharacterDoesNotExist = "Character does not exist";
-					static const std::string AlreadyConnectedToACharacter = "Already connected to a character";
-					static const std::string CharacterInUse = "Character is in use";
-					static const std::string EmptyStr = "";
+        Network::PacketHeader* header = reinterpret_cast<Network::PacketHeader*>(buffer->GetDataPointer() + headerPos);
 
-					const std::string* errorText = &EmptyStr;
-					switch (result)
-					{
-						case 0x1:
-						{
-							errorText = &CharacterDoesNotExist;
-							break;
-						}
+        u32 headerSize = static_cast<u32>(buffer->writtenData - headerPos) - sizeof(Network::PacketHeader);
+        if (headerSize > std::numeric_limits<u16>().max())
+            return false;
 
-						case 0x2:
-						{
-							errorText = &AlreadyConnectedToACharacter;
-							break;
-						}
+        header->size = headerSize;
+        return true;
+    }
 
-						case 0x4:
-						{
-							errorText = &CharacterInUse;
-							break;
-						}
-					}
+    bool CreatePacket(std::shared_ptr<Bytebuffer>& buffer, Network::GameOpcode opcode, std::function<void()> func)
+    {
+        if (!buffer)
+            return false;
 
-					Network::PacketHeader header =
-					{
-						.opcode = Network::Opcode::SMSG_CONNECTED,
-						.size = sizeof(u8) + static_cast<u8>(errorText->size()) + 1
-					};
+        u32 headerPos = AddHeader(buffer, opcode);
 
-					if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-						return false;
+        func();
 
-					buffer->Put(header);
-					buffer->PutU8(result);
-					buffer->PutString(*errorText);
+        if (!ValidatePacket(buffer, headerPos))
+            return false;
 
-					break;
-				}
-			}
+        return true;
+    }
 
-			return true;
-		}
-	}
+    namespace Authentication
+    {
+        bool BuildConnectedMessage(std::shared_ptr<Bytebuffer>& buffer, u8 result, entt::entity entity, const std::string* resultString)
+        {
+            static const std::string EmptyStr = "";
+            static const std::string CharacterDoesNotExist = "Character does not exist";
+            static const std::string AlreadyConnectedToACharacter = "Already connected to a character";
+            static const std::string CharacterInUse = "Character is in use";
 
-	namespace Entity
-	{
-		bool BuildEntityMoveMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const vec3& position, const quat& rotation, const Components::MovementFlags& movementFlags, f32 verticalVelocity)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 40>();
-			}
+            if (!resultString)
+                resultString = &EmptyStr;
 
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::MSG_ENTITY_MOVE,
-				.size = sizeof(entt::entity) + sizeof(vec3) + sizeof(quat) + sizeof(Components::MovementFlags) + sizeof(f32)
-			};
-
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
-
-			buffer->Put(header);
-			buffer->Put(entity);
-			buffer->Put(position);
-			buffer->Put(rotation);
-			buffer->Put(movementFlags);
-			buffer->Put(verticalVelocity);
-
-			return true;
-		}
-		bool BuildEntityCreateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::Transform& transform, u32 displayID)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 48>();
-			}
-
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_ENTITY_CREATE,
-				.size = sizeof(entt::entity) + sizeof(u32) + sizeof(Components::Transform)
-			};
-
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
-
-			buffer->Put(header);
-			buffer->Put(entity);
-			buffer->PutU32(displayID);
-			buffer->Put(transform);
-
-			return true;
-		}
-		bool BuildEntityDestroyMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 4>();
-			}
-
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_ENTITY_DESTROY,
-				.size = sizeof(entt::entity)
-			};
-
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
-
-			buffer->Put(header);
-			buffer->Put(entity);
-
-			return true;
-		}
-		bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::UnitStatsComponent& unitStatsComponent)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<(144)>();
-			}
-
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_ENTITY_RESOURCES_UPDATE,
-				.size = sizeof(entt::entity) + sizeof(u32) + sizeof(f32) + sizeof(f32) + sizeof(f32)
-			};
-
-			if (buffer->GetSpace() < (u32)Components::PowerType::Count + 1 * (sizeof(Network::PacketHeader) + header.size))
-				return false;
-
-			buffer->Put(header);
-			buffer->Put(entity);
-			buffer->Put(Components::PowerType::Health);
-			buffer->PutF32(unitStatsComponent.baseHealth);
-			buffer->PutF32(unitStatsComponent.currentHealth);
-			buffer->PutF32(unitStatsComponent.maxHealth);
-
-
-			for (i32 i = 0; i < (u32)Components::PowerType::Count; i++)
-			{
-				Components::PowerType powerType = (Components::PowerType)i;
-
-				f32 powerValue = unitStatsComponent.currentPower[i];
-				f32 basePower = unitStatsComponent.basePower[i];
-				f32 maxPower = unitStatsComponent.maxPower[i];
-
-				buffer->Put(header);
-				buffer->Put(entity);
-				buffer->Put(powerType);
-				buffer->PutF32(basePower);
-				buffer->PutF32(powerValue);
-				buffer->PutF32(maxPower);
-			}
-
-			return true;
-		}
-		bool BuildEntityTargetUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, entt::entity target)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 8>();
-			}
-
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::MSG_ENTITY_TARGET_UPDATE,
-				.size = sizeof(entt::entity) + sizeof(entt::entity)
-			};
-
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
-
-			buffer->Put(header);
-			buffer->Put(entity);
-			buffer->Put(target);
-
-			return true;
-		}
-		bool BuildEntitySpellCastMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, f32 castTime, f32 castDuration)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 12>();
-			}
-
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_ENTITY_CAST_SPELL,
-				.size = sizeof(entt::entity) + sizeof(f32) + sizeof(f32)
-			};
-
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
-
-			buffer->Put(header);
-			buffer->Put(entity);
-			buffer->PutF32(castTime);
-			buffer->PutF32(castDuration);
-
-			return true;
-		}
-		bool BuildEntityDisplayInfoUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, u32 displayID)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 8>();
-			}
-
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_ENTITY_DISPLAYINFO_UPDATE,
-				.size = sizeof(entt::entity) + sizeof(u32)
-			};
-
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
-
-			buffer->Put(header);
-			buffer->Put(entity);
-			buffer->PutU32(displayID);
-
-			return true;
-		}
-	}
-
-	namespace Spell
-	{
-		bool BuildSpellCastResultMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, u8 result, f32 castTime, f32 castDuration)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 65>();
-			}
-
-			if (result == 0)
-			{
-				Network::PacketHeader header =
-				{
-					.opcode = Network::Opcode::SMSG_SEND_SPELLCAST_RESULT,
-					.size = sizeof(u8) + sizeof(f32) + sizeof(f32)
-				};
-
-				if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-					return false;
-
-				buffer->Put(header);
-				buffer->PutU8(result);
-				buffer->PutF32(castTime);
-				buffer->PutF32(castDuration);
-			}
-			else
-			{
-				static const std::string AlreadyCasting = "A spell is already being cast";
-				static const std::string NotTargetAvailable = "You have no target to cast on";
-				static const std::string EmptyStr = "";
-
-				const std::string* resultString = &EmptyStr;
-				switch (result)
-				{
-					case 0x1:
-					{
-						resultString = &AlreadyCasting;
-						break;
-					}
-
-					case 0x2:
-					{
-						resultString = &NotTargetAvailable;
-						break;
-					}
-
-					default: break;
-				}
-
-				Network::PacketHeader header =
-				{
-					.opcode = Network::Opcode::SMSG_SEND_SPELLCAST_RESULT,
-					.size = sizeof(u8) + static_cast<u16>(resultString->size()) + 1
-				};
-
-				if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-					return false;
-
-				buffer->Put(header);
-				buffer->PutU8(result);
-				buffer->PutString(*resultString);
-			}
-
-			return true;
-		}
-	}
-
-	namespace CombatLog
-	{
-		bool BuildDamageDealtMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity source, entt::entity target, f32 damage)
-		{
-			if (buffer == nullptr)
+            switch (result)
             {
-                buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 14>();
+                case 0: break;
+
+                default:
+                {
+                    switch (result)
+                    {
+                        case 0x1:
+                        {
+                            resultString = &CharacterDoesNotExist;
+                            break;
+                        }
+
+                        case 0x2:
+                        {
+                            resultString = &AlreadyConnectedToACharacter;
+                            break;
+                        }
+
+                        case 0x4:
+                        {
+                            resultString = &CharacterInUse;
+                            break;
+                        }
+                    }
+
+                    break;
+                }
             }
 
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_COMBAT_EVENT,
-				.size = sizeof(u16) + sizeof(entt::entity) + sizeof(entt::entity) + sizeof(f32)
-			};
+            bool createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_Connected, [&]()
+            {
+                buffer->PutU8(result);
+                buffer->Put(entity);
+                buffer->PutString(*resultString);
+            });
 
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
+            return createPacketResult;
+        }
+    }
 
-			buffer->Put(header);
-			buffer->Put(Components::CombatLogEvents::DamageDealt);
-			buffer->Put(source);
-			buffer->Put(target);
-			buffer->PutF32(damage);
+    namespace Entity
+    {
+        bool BuildEntityMoveMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const vec3& position, const quat& rotation, const Components::MovementFlags& movementFlags, f32 verticalVelocity)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Shared_EntityMove, [&]()
+            {
+                buffer->Put(entity);
+                buffer->Put(position);
+                buffer->Put(rotation);
+                buffer->Put(movementFlags);
+                buffer->Put(verticalVelocity);
+            });
 
-			return true;
-		}
-		bool BuildHealingDoneMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity source, entt::entity target, f32 healing)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 14>();
-			}
+            return result;
+        }
+        bool BuildEntityCreateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::Transform& transform, u32 displayID)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityCreate, [&]()
+            {
+                buffer->Put(entity);
+                buffer->PutU32(displayID);
+                buffer->Put(transform);
+            });
 
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_COMBAT_EVENT,
-				.size = sizeof(u16) + sizeof(entt::entity) + sizeof(entt::entity) + sizeof(f32)
-			};
+            return result;
+        }
+        bool BuildEntityDestroyMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityDestroy, [&]()
+            {
+                buffer->Put(entity);
+            });
 
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
+            return result;
+        }
+        bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::UnitStatsComponent& unitStatsComponent)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityResourcesUpdate, [&]()
+            {
+                buffer->Put(entity);
+                buffer->Put(Components::PowerType::Health);
+                buffer->PutF32(unitStatsComponent.baseHealth);
+                buffer->PutF32(unitStatsComponent.currentHealth);
+                buffer->PutF32(unitStatsComponent.maxHealth);
+            });
 
-			buffer->Put(header);
-			buffer->Put(Components::CombatLogEvents::HealingDone);
-			buffer->Put(source);
-			buffer->Put(target);
-			buffer->PutF32(healing);
+            if (!result)
+                return false;
 
-			return true;
-		}
-		bool BuildRessurectedMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity source, entt::entity target)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 10>();
-			}
+            for (i32 i = 0; i < (u32)Components::PowerType::Count; i++)
+            {
+                Components::PowerType powerType = (Components::PowerType)i;
 
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_COMBAT_EVENT,
-				.size = sizeof(u16) + sizeof(entt::entity) + sizeof(entt::entity)
-			};
+                f32 powerValue = unitStatsComponent.currentPower[i];
+                f32 basePower = unitStatsComponent.basePower[i];
+                f32 maxPower = unitStatsComponent.maxPower[i];
 
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
+                u32 headerPos = AddHeader(buffer, Network::GameOpcode::Server_EntityResourcesUpdate);
 
-			buffer->Put(header);
-			buffer->Put(Components::CombatLogEvents::Ressurected);
-			buffer->Put(source);
-			buffer->Put(target);
+                buffer->Put(entity);
+                buffer->Put(powerType);
+                buffer->PutF32(basePower);
+                buffer->PutF32(powerValue);
+                buffer->PutF32(maxPower);
 
-			return true;
-		}
-	}
+                if (!ValidatePacket(buffer, headerPos))
+                    return false;
+            }
 
-	namespace Cheat
-	{
-		bool BuildCharacterCreateResultMessage(std::shared_ptr<Bytebuffer>& buffer, const std::string& name, u8 result)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 53>();
-			}
+            return true;
+        }
+        bool BuildEntityTargetUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, entt::entity target)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Shared_EntityTargetUpdate, [&]()
+            {
+                buffer->Put(entity);
+                buffer->Put(target);
+            });
 
-			static const std::string InvalidNameSupplied = "Character creation failed due to invalid name";
-			static const std::string CharacterWasCreated = "Character was created";
-			static const std::string CharacterAlreadyExists = "A character with the given name already exists";
-			static const std::string DatabaseTransactionFailed = "A database error occured during character creation";
-			static const std::string EmptyStr = "";
+            return result;
+        }
+        bool BuildEntitySpellCastMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, f32 castTime, f32 castDuration)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityCastSpell, [&]()
+            {
+                buffer->Put(entity);
+                buffer->PutF32(castTime);
+                buffer->PutF32(castDuration);
+            });
 
-			const std::string* resultString = &EmptyStr;
-			switch (result)
-			{
-				case 0x0:
-				{
-					resultString = &CharacterWasCreated;
-					break;
-				}
+            return result;
+        }
+        bool BuildEntityDisplayInfoUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, u32 displayID)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityDisplayInfoUpdate, [&]()
+            {
+                buffer->Put(entity);
+                buffer->PutU32(displayID);
+            });
 
-				case 0x1:
-				{
-					resultString = &InvalidNameSupplied;
-					break;
-				}
+            return result;
+        }
+    }
 
-				case 0x2:
-				{
-					resultString = &CharacterAlreadyExists;
-					break;
-				}
+    namespace Spell
+    {
+        bool BuildSpellCastResultMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, u8 result, f32 castTime, f32 castDuration)
+        {
+            bool createPacketResult = false;
 
-				case 0x4:
-				{
-					resultString = &DatabaseTransactionFailed;
-					break;
-				}
+            if (result == 0)
+            {
+                result = CreatePacket(buffer, Network::GameOpcode::Server_SendSpellCastResult, [&]()
+                {
+                    buffer->PutU8(result);
+                    buffer->PutF32(castTime);
+                    buffer->PutF32(castDuration);
+                });
+            }
+            else
+            {
+                static const std::string EmptyStr = "";
+                static const std::string AlreadyCasting = "A spell is already being cast";
+                static const std::string NotTargetAvailable = "You have no target to cast on";
+                const std::string* errorString = &EmptyStr;
 
-				default: break;
-			}
+                switch (result)
+                {
+                    case 0x1:
+                    {
+                        errorString = &AlreadyCasting;
+                        break;
+                    }
 
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_CHEAT_CREATE_CHARACTER_RESULT,
-				.size = sizeof(u8) + static_cast<u16>(resultString->size()) + 1
-			};
+                    case 0x2:
+                    {
+                        errorString = &NotTargetAvailable;
+                        break;
+                    }
 
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
+                    default: break;
+                }
 
-			buffer->Put(header);
-			buffer->PutU8(result);
-			buffer->PutString(*resultString);
+                createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendSpellCastResult, [&]()
+                {
+                    buffer->PutU8(result);
+                    buffer->PutString(*errorString);
+                });
+            }
 
-			return true;
-		}
+            return createPacketResult;
+        }
+    }
 
-		bool BuildCharacterDeleteResultMessage(std::shared_ptr<Bytebuffer>& buffer, const std::string& name, u8 result)
-		{
-			if (buffer == nullptr)
-			{
-				buffer = Bytebuffer::Borrow<sizeof(Network::PacketHeader) + 55>();
-			}
+    namespace CombatLog
+    {
+        bool BuildDamageDealtMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity source, entt::entity target, f32 damage)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_SendCombatEvent, [&]()
+            {
+                buffer->Put(Components::CombatLogEvents::DamageDealt);
+                buffer->Put(source);
+                buffer->Put(target);
+                buffer->PutF32(damage);
+            });
 
-			static const std::string CharacterWasDeleted = "Character was deleted";
-			static const std::string CharacterDoesNotExists = "No character with the given name exists";
-			static const std::string DatabaseTransactionFailed = "A database error occured during character deletion";
-			static const std::string InsufficientPermission = "Could not delete character, insufficient permissions";
-			static const std::string EmptyStr = "";
+            return result;
+        }
+        bool BuildHealingDoneMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity source, entt::entity target, f32 healing)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_SendCombatEvent, [&]()
+            {
+                buffer->Put(Components::CombatLogEvents::HealingDone);
+                buffer->Put(source);
+                buffer->Put(target);
+                buffer->PutF32(healing);
+            });
 
-			const std::string* resultString = &EmptyStr;
-			switch (result)
-			{
-				case 0x0:
-				{
-					resultString = &CharacterWasDeleted;
-					break;
-				}
+            return result;
+        }
+        bool BuildRessurectedMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity source, entt::entity target)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_SendCombatEvent, [&]()
+            {
+                buffer->Put(Components::CombatLogEvents::Ressurected);
+                buffer->Put(source);
+                buffer->Put(target);
+            });
 
-				case 0x1:
-				{
-					resultString = &CharacterDoesNotExists;
-					break;
-				}
+            return result;
+        }
+    }
 
-				case 0x2:
-				{
-					resultString = &DatabaseTransactionFailed;
-					break;
-				}
+    namespace Cheat
+    {
+        bool BuildCharacterCreateResultMessage(std::shared_ptr<Bytebuffer>& buffer, const std::string& name, u8 result)
+        {
+            static const std::string EmptyStr = "";
+            static const std::string InvalidNameSupplied = "Character creation failed due to invalid name";
+            static const std::string CharacterWasCreated = "Character was created";
+            static const std::string CharacterAlreadyExists = "A character with the given name already exists";
+            static const std::string DatabaseTransactionFailed = "A database error occured during character creation";
 
-				case 0x4:
-				{
-					resultString = &InsufficientPermission;
-					break;
-				}
+            const std::string* resultString = &EmptyStr;
+            switch (result)
+            {
+                case 0x0:
+                {
+                    resultString = &CharacterWasCreated;
+                    break;
+                }
 
-				default: break;
-			}
+                case 0x1:
+                {
+                    resultString = &InvalidNameSupplied;
+                    break;
+                }
 
-			Network::PacketHeader header =
-			{
-				.opcode = Network::Opcode::SMSG_CHEAT_DELETE_CHARACTER_RESULT,
-				.size = sizeof(u8) + static_cast<u16>(resultString->size()) + 1
-			};
+                case 0x2:
+                {
+                    resultString = &CharacterAlreadyExists;
+                    break;
+                }
 
-			if (buffer->GetSpace() < sizeof(Network::PacketHeader) + header.size)
-				return false;
+                case 0x4:
+                {
+                    resultString = &DatabaseTransactionFailed;
+                    break;
+                }
 
-			buffer->Put(header);
-			buffer->PutU8(result);
-			buffer->PutString(*resultString);
+                default: break;
+            }
 
-			return true;
-		}
-	}
+            bool createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendCheatCommandResult , [&]()
+            {
+                buffer->PutU8(result);
+                buffer->PutString(*resultString);
+            });
+
+            return createPacketResult;
+        }
+
+        bool BuildCharacterDeleteResultMessage(std::shared_ptr<Bytebuffer>& buffer, const std::string& name, u8 result)
+        {
+            static const std::string EmptyStr = "";
+            static const std::string CharacterWasDeleted = "Character was deleted";
+            static const std::string CharacterDoesNotExists = "No character with the given name exists";
+            static const std::string DatabaseTransactionFailed = "A database error occured during character deletion";
+            static const std::string InsufficientPermission = "Could not delete character, insufficient permissions";
+
+            const std::string* resultString = &EmptyStr;
+            switch (result)
+            {
+                case 0x0:
+                {
+                    resultString = &CharacterWasDeleted;
+                    break;
+                }
+
+                case 0x1:
+                {
+                    resultString = &CharacterDoesNotExists;
+                    break;
+                }
+
+                case 0x2:
+                {
+                    resultString = &DatabaseTransactionFailed;
+                    break;
+                }
+
+                case 0x4:
+                {
+                    resultString = &InsufficientPermission;
+                    break;
+                }
+
+                default: break;
+            }
+
+            bool createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendCheatCommandResult, [&]()
+            {
+                buffer->PutU8(result);
+                buffer->PutString(*resultString);
+            });
+
+            return createPacketResult;
+        }
+    }
 }

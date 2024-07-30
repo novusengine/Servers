@@ -3,5 +3,5 @@
 
 namespace Scripting::LuaUtil
 {
-	bool DoString(const std::string& code);
+    bool DoString(const std::string& code);
 }

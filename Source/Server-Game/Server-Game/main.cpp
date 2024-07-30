@@ -17,8 +17,8 @@ i32 main()
     auto console_sink = quill::Frontend::create_or_get_sink<quill::ConsoleSink>("console_sink_1");
     quill::Logger* logger = quill::Frontend::create_or_get_logger("root", std::move(console_sink), "%(time:<16) LOG_%(log_level:<11) %(message)", "%H:%M:%S.%Qms", quill::Timezone::LocalTime, quill::ClockSourceType::System);
     
-	Application app;
-	app.Start();
+    Application app;
+    app.Start();
 
     ConsoleCommandHandler commandHandler;
     auto future = std::async(std::launch::async, StringUtils::GetLineFromCin);
@@ -67,5 +67,5 @@ i32 main()
         }
     }
 
-	return 0;
+    return 0;
 }

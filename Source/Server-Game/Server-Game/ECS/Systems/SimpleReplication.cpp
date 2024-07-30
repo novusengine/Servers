@@ -56,7 +56,7 @@ namespace ECS::Systems
                 {
                     gridSingleton.cell.players.list.erase(entity);
 
-                    std::shared_ptr<Bytebuffer> buffer = nullptr;
+                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
                     if (!Util::MessageBuilder::Entity::BuildEntityDestroyMessage(buffer, entity))
                         continue;
 
@@ -103,7 +103,7 @@ namespace ECS::Systems
                     auto& transform = registry.get<Components::Transform>(entity);
                     auto& displayInfo = registry.get<Components::DisplayInfo>(entity);
 
-                    std::shared_ptr<Bytebuffer> buffer = nullptr;
+                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
                     if (!Util::MessageBuilder::Entity::BuildEntityCreateMessage(buffer, entity, transform, displayInfo.displayID))
                         continue;
 
@@ -114,10 +114,16 @@ namespace ECS::Systems
             // Create Packets for all entering players
             for (entt::entity entity : gridSingleton.cell.players.entering)
             {
+                if (!registry.valid(entity))
+                    continue;
+
+                if (!networkState.EntityToSocketID.contains(entity))
+                    continue;
+
                 Components::Transform& transform = registry.get<Components::Transform>(entity);
                 auto& displayInfo = registry.get<Components::DisplayInfo>(entity);
 
-                std::shared_ptr<Bytebuffer> buffer = nullptr;
+                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
                 if (!Util::MessageBuilder::Entity::BuildEntityCreateMessage(buffer, entity, transform, displayInfo.displayID))
                     continue;
 
@@ -153,7 +159,7 @@ namespace ECS::Systems
             }
 
             numPlayersInCell = static_cast<u32>(gridSingleton.cell.players.list.size());
-            NC_ASSERT(gridSingleton.cell.players.entering.empty(), "Entering list should be empty");
+            gridSingleton.cell.players.entering.clear();
         }
 
         // Handle Updates

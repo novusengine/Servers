@@ -1,7 +1,7 @@
-local mod = Solution.Util.CreateModuleTable("Server-Game", { "base", "fileformat", "input", "network", "luau-compiler", "luau-vm", "enkits", "refl-cpp", "utfcpp", "base64", "server-common" })
+local mod = Solution.Util.CreateModuleTable("Server-Game", { "server-common" })
 
 Solution.Util.CreateConsoleApp(mod.Name, Solution.Projects.Current.BinDir, mod.Dependencies, function()
-    local defines = { "_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS", "_SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS", "WIN32_LEAN_AND_MEAN", "NOMINMAX" }
+    local defines = { "_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS", "_SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS" }
 
     Solution.Util.SetLanguage("C++")
     Solution.Util.SetCppDialect(20)

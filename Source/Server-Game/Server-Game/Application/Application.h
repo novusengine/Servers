@@ -11,44 +11,44 @@
 
 namespace enki
 {
-	class TaskScheduler;
+    class TaskScheduler;
 }
 namespace ECS
 {
-	class Scheduler;
+    class Scheduler;
 }
 
 class Application
 {
 public:
-	Application();
-	~Application();
+    Application();
+    ~Application();
 
-	void Start();
-	void Stop();
+    void Start();
+    void Stop();
 
-	void PassMessage(MessageInbound& message);
-	bool TryGetMessageOutbound(MessageOutbound& message);
-
-private:
-	void Run();
-	bool Init();
-	bool Tick(f32 deltaTime);
-
-	void Cleanup();
+    void PassMessage(MessageInbound& message);
+    bool TryGetMessageOutbound(MessageOutbound& message);
 
 private:
-	bool _isRunning = false;
+    void Run();
+    bool Init();
+    bool Tick(f32 deltaTime);
 
-	EnttRegistries _registries;
-	enki::TaskScheduler* _taskScheduler = nullptr;
+    void Cleanup();
 
-	ECS::Scheduler* _ecsScheduler = nullptr;
+private:
+    bool _isRunning = false;
 
-	nlohmann::json _cvarJson;
-	nlohmann::json _databaseJson;
+    EnttRegistries _registries;
+    enki::TaskScheduler* _taskScheduler = nullptr;
 
-	std::shared_ptr<Network::Server> _server = nullptr;
-	moodycamel::ConcurrentQueue<MessageInbound> _messagesInbound;
-	moodycamel::ConcurrentQueue<MessageOutbound> _messagesOutbound;
+    ECS::Scheduler* _ecsScheduler = nullptr;
+
+    nlohmann::json _cvarJson;
+    nlohmann::json _databaseJson;
+
+    std::shared_ptr<Network::Server> _server = nullptr;
+    moodycamel::ConcurrentQueue<MessageInbound> _messagesInbound;
+    moodycamel::ConcurrentQueue<MessageOutbound> _messagesOutbound;
 };
