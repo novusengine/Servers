@@ -5,7 +5,7 @@ Solution.Util.SetGroup(Solution.DependencyGroup)
 
 local dependencies =
 {
-    "Libpqxx/Libpqxx.lua"
+    "libpqxx/Libpqxx.lua"
 }
 
 for k,v in pairs(dependencies) do
