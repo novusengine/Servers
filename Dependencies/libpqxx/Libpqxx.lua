@@ -19,7 +19,12 @@ Solution.Util.CreateStaticLib(dep.Name, Solution.Projects.Current.BinDir, dep.De
 
     local baseDir = dep.Path .. "/Libpqxx"
     local sourceDir = baseDir .. "/src"
-    local pqinclude = iif(os.istarget("windows"), postgresRoot .. "/include", "/usr/include/postgresql/")
+    local pqinclude = iif(os.istarget("windows"), postgresRoot .. "/include", { "/usr/include/postgresql", "/usr/include/postgresql/14/server" })
+    
+    if os.target() == "linux" then
+        Solution.Util.SetLibDirs({ "/usr/lib/x86_64-linux-gnu", "/usr/lib/postgresql/14/lib" })
+    end
+    
     local includeDirs = { baseDir .. "/include", pqinclude }
     local files =
     {
