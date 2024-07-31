@@ -1,8 +1,11 @@
-local osEnvName = "POSTGRES_ROOT"
-local postgresRoot = os.getenv(osEnvName)
+-- TODO: should probably not hardcode postgres dir for Linux but oh well
+if os.target() == "windows" then
+    local osEnvName = "POSTGRES_ROOT"
+    local postgresRoot = os.getenv(osEnvName)
 
-if not postgresRoot then
-    Solution.Util.PrintError("Failed to find System Environment Variable '" .. osEnvName .. ". Please ensure Postgres is installed and that " .. osEnvName .. " have been properly configured")
+    if not postgresRoot then
+        Solution.Util.PrintError("Failed to find System Environment Variable '" .. osEnvName .. ". Please ensure Postgres is installed and that " .. osEnvName .. " have been properly configured")
+    end
 end
 
 local dep = Solution.Util.CreateDepTable("Libpqxx", {})
@@ -15,7 +18,8 @@ Solution.Util.CreateStaticLib(dep.Name, Solution.Projects.Current.BinDir, dep.De
 
     local baseDir = dep.Path .. "/Libpqxx"
     local sourceDir = baseDir .. "/src"
-    local includeDirs = { baseDir .. "/include", postgresRoot .. "/include" }
+    local pqinclude = iif(os.istarget("windows"), postgresRoot .. "/include", "/usr/include/postgresql/")
+    local includeDirs = { baseDir .. "/include", pqinclude }
     local files =
     {
         sourceDir .. "/**.cxx",
@@ -24,7 +28,9 @@ Solution.Util.CreateStaticLib(dep.Name, Solution.Projects.Current.BinDir, dep.De
     Solution.Util.SetFiles(files)
     Solution.Util.SetIncludes(includeDirs)
     Solution.Util.SetDefines(defines)
-    Solution.Util.SetLinks({postgresRoot .. "/lib/libpq.lib"})
+    
+    local libPath = iif(os.istarget("windows"), postgresRoot .. "/lib/libpq.lib", "pq")
+    Solution.Util.SetLinks(libPath)
 end)
 
 Solution.Util.CreateDep(dep.NameLow, dep.Dependencies, function()
