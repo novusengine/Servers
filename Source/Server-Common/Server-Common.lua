@@ -14,6 +14,8 @@ Solution.Util.CreateStaticLib(mod.Name, Solution.Projects.Current.BinDir, mod.De
     Solution.Util.SetFilter("platforms:Win64", function()
         Solution.Util.SetDefines({"WIN32_LEAN_AND_MEAN", "NOMINMAX"})
     end)
+    
+    dependson {"luau-compiler", "luau-vm"}
 end)
 
 Solution.Util.CreateDep(mod.NameLow, mod.Dependencies, function()
