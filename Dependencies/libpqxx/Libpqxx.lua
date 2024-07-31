@@ -1,7 +1,8 @@
+local postgresRoot = ""
 -- TODO: should probably not hardcode postgres dir for Linux but oh well
 if os.target() == "windows" then
     local osEnvName = "POSTGRES_ROOT"
-    local postgresRoot = os.getenv(osEnvName)
+    postgresRoot = os.getenv(osEnvName)
 
     if not postgresRoot then
         Solution.Util.PrintError("Failed to find System Environment Variable '" .. osEnvName .. ". Please ensure Postgres is installed and that " .. osEnvName .. " have been properly configured")
