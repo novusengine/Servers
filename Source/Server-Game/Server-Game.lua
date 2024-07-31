@@ -28,6 +28,8 @@ Solution.Util.CreateConsoleApp(mod.Name, Solution.Projects.Current.BinDir, mod.D
             ['*'] = { '**.*' }
         }
     end)
+    
+    dependson {"Luau-Compiler", "Luau-VM"}
 end)
 
 Solution.Util.CreateDep(mod.NameLow, mod.Dependencies, function()
