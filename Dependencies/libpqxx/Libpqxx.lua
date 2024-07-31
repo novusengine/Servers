@@ -43,5 +43,6 @@ Solution.Util.CreateDep(dep.NameLow, dep.Dependencies, function()
     local baseDir = dep.Path .. "/Libpqxx"
 
     Solution.Util.SetIncludes({baseDir .. "/include"})
-    Solution.Util.SetLinks(dep.Name)
+    local libPath = iif(os.istarget("windows"), postgresRoot .. "/lib/libpq.lib", "pq")
+    Solution.Util.SetLinks({ dep.Name, libPath })
 end)
