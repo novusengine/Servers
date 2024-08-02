@@ -30,7 +30,7 @@ namespace ECS::Systems
             static constexpr f32 healthGainRate = 5.0f;
             static constexpr f32 powerGainRate = 25.0f;
 
-            if (!networkState.EntityToSocketID.contains(entity))
+            if (!networkState.entityToSocketID.contains(entity))
                 return;
 
             bool isUnitStatsDirty = false;

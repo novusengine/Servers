@@ -8,6 +8,61 @@ using namespace ECS;
 
 namespace UnitUtils
 {
+    u32 GetDisplayIDFromRaceGender(GameDefine::Race race, GameDefine::Gender gender)
+    {
+        u32 displayID = 0;
+
+        switch (race)
+        {
+            case GameDefine::Race::Human:
+            {
+                displayID = 49;
+                break;
+            }
+            case GameDefine::Race::Orc:
+            {
+                displayID = 51;
+                break;
+            }
+            case GameDefine::Race::Dwarf:
+            {
+                displayID = 53;
+                break;
+            }
+            case GameDefine::Race::NightElf:
+            {
+                displayID = 55;
+                break;
+            }
+            case GameDefine::Race::Undead:
+            {
+                displayID = 57;
+                break;
+            }
+            case GameDefine::Race::Tauren:
+            {
+                displayID = 59;
+                break;
+            }
+            case GameDefine::Race::Gnome:
+            {
+                displayID = 1563;
+                break;
+            }
+            case GameDefine::Race::Troll:
+            {
+                displayID = 1478;
+                break;
+            }
+
+            default: break;
+        }
+
+        displayID += 1 * (gender != GameDefine::Gender::Male);
+
+        return displayID;
+    }
+
     Components::UnitStatsComponent& AddStatsComponent(entt::registry& registry, entt::entity entity)
     {
         auto& unitStatsComponent = registry.emplace_or_replace<Components::UnitStatsComponent>(entity);

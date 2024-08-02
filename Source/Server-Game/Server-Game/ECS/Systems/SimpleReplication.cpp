@@ -66,7 +66,7 @@ namespace ECS::Systems
                 // Send Destroy Message to all players in the cell
                 for (entt::entity entity : gridSingleton.cell.players.list)
                 {
-                    Network::SocketID socketID = networkState.EntityToSocketID[entity];
+                    Network::SocketID socketID = networkState.entityToSocketID[entity];
 
                     for (Singletons::GridUpdate& update : updates)
                     {
@@ -100,11 +100,9 @@ namespace ECS::Systems
                     if (!registry.valid(entity))
                         continue;
 
-                    auto& transform = registry.get<Components::Transform>(entity);
-                    auto& displayInfo = registry.get<Components::DisplayInfo>(entity);
+                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<512>();
 
-                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
-                    if (!Util::MessageBuilder::Entity::BuildEntityCreateMessage(buffer, entity, transform, displayInfo.displayID))
+                    if (!Util::MessageBuilder::Unit::BuildUnitCreate(buffer, registry, entity))
                         continue;
 
                     listUpdates.push_back({ entity, {}, std::move(buffer) });
@@ -117,14 +115,11 @@ namespace ECS::Systems
                 if (!registry.valid(entity))
                     continue;
 
-                if (!networkState.EntityToSocketID.contains(entity))
+                if (!networkState.entityToSocketID.contains(entity))
                     continue;
 
-                Components::Transform& transform = registry.get<Components::Transform>(entity);
-                auto& displayInfo = registry.get<Components::DisplayInfo>(entity);
-
-                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::Entity::BuildEntityCreateMessage(buffer, entity, transform, displayInfo.displayID))
+                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<512>();
+                if (!Util::MessageBuilder::Unit::BuildUnitCreate(buffer, registry, entity))
                     continue;
 
                 enterUpdates.push_back({ entity, {}, std::move(buffer) });
@@ -135,7 +130,7 @@ namespace ECS::Systems
             // Send Create Messages to all players in the cell
             for (entt::entity entity : gridSingleton.cell.players.list)
             {
-                Network::SocketID socketID = networkState.EntityToSocketID[entity];
+                Network::SocketID socketID = networkState.entityToSocketID[entity];
 
                 bool justEntered = gridSingleton.cell.players.entering.contains(entity);
                 if (justEntered)
@@ -174,7 +169,7 @@ namespace ECS::Systems
                         if (shouldSkip)
                             continue;
 
-                        Network::SocketID socketID = networkState.EntityToSocketID[entity];
+                        Network::SocketID socketID = networkState.entityToSocketID[entity];
 
                         networkState.server->SendPacket(socketID, update.buffer);
                     }
