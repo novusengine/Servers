@@ -14,8 +14,7 @@ local function PrintError(msg)
     if callerName == nil then
         error(": " .. msg, 2)
     else
-        
-    error("[" .. callerName .. "]" .. " : " .. msg, 2)
+        error("[" .. callerName .. "]" .. " : " .. msg, 2)
     end
 end
 
@@ -338,6 +337,10 @@ end
 
 Solution.Util.SetLinks = function(linksToAdd)
     links (linksToAdd)
+end
+
+Solution.Util.SetLibDirs = function(dirsToAdd)
+    libdirs (dirsToAdd)
 end
 
 Solution.Util.GetFilesForCpp = function(basePath)

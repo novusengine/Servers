@@ -54,7 +54,7 @@ namespace ECS::Systems
 
     bool HandleOnCheatDamage(Network::SocketID socketID, entt::entity socketEntity, std::shared_ptr<Bytebuffer>& recvPacket)
     {
-        u32 damage = 0.0f;
+        u32 damage = 0;
         if (!recvPacket->GetU32(damage))
             return false;
 
