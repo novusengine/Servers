@@ -9,13 +9,13 @@ namespace ECS::Util::MessageBuilder
 {
     u32 AddHeader(std::shared_ptr<Bytebuffer>& buffer, Network::GameOpcode opcode, u16 size)
     {
-        Network::PacketHeader header =
+        Network::MessageHeader header =
         {
             .opcode = static_cast<Network::OpcodeType>(opcode),
             .size = size
         };
 
-        if (buffer->GetSpace() < sizeof(Network::PacketHeader))
+        if (buffer->GetSpace() < sizeof(Network::MessageHeader))
             return std::numeric_limits<u32>().max();
 
         u32 headerPos = static_cast<u32>(buffer->writtenData);
@@ -26,12 +26,12 @@ namespace ECS::Util::MessageBuilder
 
     bool ValidatePacket(const std::shared_ptr<Bytebuffer>& buffer, u32 headerPos)
     {
-        if (buffer->writtenData < headerPos + sizeof(Network::PacketHeader))
+        if (buffer->writtenData < headerPos + sizeof(Network::MessageHeader))
             return false;
 
-        Network::PacketHeader* header = reinterpret_cast<Network::PacketHeader*>(buffer->GetDataPointer() + headerPos);
+        Network::MessageHeader* header = reinterpret_cast<Network::MessageHeader*>(buffer->GetDataPointer() + headerPos);
 
-        u32 headerSize = static_cast<u32>(buffer->writtenData - headerPos) - sizeof(Network::PacketHeader);
+        u32 headerSize = static_cast<u32>(buffer->writtenData - headerPos) - sizeof(Network::MessageHeader);
         if (headerSize > std::numeric_limits<u16>().max())
             return false;
 
@@ -64,6 +64,21 @@ namespace ECS::Util::MessageBuilder
             });
 
             return createPacketResult;
+        }
+    }
+
+    namespace Heartbeat
+    {
+        bool BuildPongMessage(std::shared_ptr<Bytebuffer>& buffer, u16 ping, u8 networkDiff, u8 serverDiff)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_Pong, [&buffer, ping, networkDiff, serverDiff]()
+            {
+                buffer->PutU16(ping);
+                buffer->PutU8(networkDiff);
+                buffer->PutU8(serverDiff);
+            });
+
+            return result;
         }
     }
 

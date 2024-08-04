@@ -3,6 +3,7 @@
 #include "Server-Game/Application/EnttRegistries.h"
 #include "Server-Game/ECS/Components/CastInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
+#include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
@@ -10,6 +11,7 @@
 #include "Server-Game/ECS/Singletons/DatabaseState.h"
 #include "Server-Game/ECS/Singletons/GridSingleton.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
+#include "Server-Game/ECS/Singletons/TimeState.h"
 #include "Server-Game/ECS/Util/GridUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
@@ -27,13 +29,15 @@
 
 #include <entt/entt.hpp>
 
+#include <chrono>
+
 namespace ECS::Systems
 {
-    bool HandleOnConnected(Network::SocketID socketID, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnConnected(Network::SocketID socketID, Network::Message& message)
     {
         std::string charName = "";
 
-        if (!recvPacket->GetString(charName))
+        if (!message.buffer->GetString(charName))
             return false;
 
         if (!StringUtils::StringIsAlphaAndAtLeastLength(charName, 2))
@@ -52,10 +56,63 @@ namespace ECS::Systems
         return true;
     }
 
-    bool HandleOnCheatDamage(Network::SocketID socketID, entt::entity socketEntity, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnPing(Network::SocketID socketID, Network::Message& message)
+    {
+        u64 clientCurrentTime = 0;
+        if (!message.buffer->GetU64(clientCurrentTime))
+            return false;
+
+        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        auto& timeState = registry->ctx().get<Singletons::TimeState>();
+
+        if (!networkState.socketIDToEntity.contains(socketID))
+            return false;
+
+        entt::entity socketEntity = networkState.socketIDToEntity[socketID];
+        auto& netInfo = registry->get<Components::NetInfo>(socketEntity);
+
+        auto currentTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
+        u64 timeSinceLastPing = currentTime - netInfo.lastPingTime;
+
+        u16 timeForPingToArrive = static_cast<u16>(message.timestampProcessed - clientCurrentTime);
+        u8 networkDiff = static_cast<u8>(message.timeToProcess + message.networkSleepDiff + message.networkUpdateDiff);
+        u8 serverDiff = static_cast<u8>(timeState.deltaTime * 1000.0f);
+
+        if (timeSinceLastPing < Components::NetInfo::PING_INTERVAL - 1000)
+        {
+            netInfo.numEarlyPings++;
+        }
+        else if (timeSinceLastPing > Components::NetInfo::PING_INTERVAL + 1000)
+        {
+            netInfo.numLatePings++;
+        }
+
+        if (netInfo.numEarlyPings > Components::NetInfo::MAX_EARLY_PINGS ||
+            netInfo.numLatePings > Components::NetInfo::MAX_LATE_PINGS)
+        {
+            networkState.server->CloseSocketID(socketID);
+            return true;
+        }
+
+        netInfo.ping = timeForPingToArrive;
+        netInfo.numEarlyPings = 0;
+        netInfo.numLatePings = 0;
+        netInfo.lastPingTime = currentTime;
+
+        std::shared_ptr<Bytebuffer> pongMessage = Bytebuffer::Borrow<64>();
+        if (!Util::MessageBuilder::Heartbeat::BuildPongMessage(pongMessage, timeForPingToArrive, networkDiff, serverDiff))
+            return false;
+
+        networkState.server->SendPacket(socketID, pongMessage);
+        return true;
+    }
+
+    bool HandleOnCheatDamage(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
     {
         u32 damage = 0;
-        if (!recvPacket->GetU32(damage))
+        if (!message.buffer->GetU32(damage))
             return false;
 
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -90,7 +147,7 @@ namespace ECS::Systems
 
         return true;
     }
-    bool HandleOnCheatKill(Network::SocketID socketID, entt::entity socketEntity, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnCheatKill(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
 
@@ -125,7 +182,7 @@ namespace ECS::Systems
 
         return true;
     }
-    bool HandleOnCheatResurrect(Network::SocketID socketID, entt::entity socketEntity, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnCheatResurrect(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
 
@@ -155,10 +212,10 @@ namespace ECS::Systems
 
         return true;
     }
-    bool HandleOnCheatMorph(Network::SocketID socketID, entt::entity socketEntity, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnCheatMorph(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
     {
         u32 displayID = 0;
-        if (!recvPacket->GetU32(displayID))
+        if (!message.buffer->GetU32(displayID))
             return false;
 
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -174,7 +231,7 @@ namespace ECS::Systems
 
         return true;
     }
-    bool HandleOnCheatDemorph(Network::SocketID socketID, entt::entity socketEntity, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnCheatDemorph(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
 
@@ -193,10 +250,10 @@ namespace ECS::Systems
         ECS::Util::Grid::SendToGrid(socketEntity, displayInfoUpdateMessage, { .SendToSelf = 1 });
         return true;
     }
-    bool HandleOnCheatCreateCharacter(Network::SocketID socketID, entt::entity socketEntity, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnCheatCreateCharacter(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
     {
         std::string charName = "";
-        if (!recvPacket->GetString(charName))
+        if (!message.buffer->GetString(charName))
             return false;
 
         entt::registry::context& ctx = ServiceLocator::GetEnttRegistries()->gameRegistry->ctx();
@@ -251,8 +308,8 @@ namespace ECS::Systems
                 auto queryResult = transaction.exec_prepared("CreateCharacter", charName, 1);
                 if (queryResult.empty())
                 {
-                    result.DatabaseTransactionFailed = true;
                     transaction.abort();
+                    result.DatabaseTransactionFailed = true;
                 }
                 else
                 {
@@ -279,10 +336,10 @@ namespace ECS::Systems
         networkState.server->SendPacket(socketID, characterCreateResultMessage);
         return true;
     }
-    bool HandleOnCheatDeleteCharacter(Network::SocketID socketID, entt::entity socketEntity, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnCheatDeleteCharacter(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
     {
         std::string charName = "";
-        if (!recvPacket->GetString(charName))
+        if (!message.buffer->GetString(charName))
             return false;
 
         entt::registry::context& ctx = ServiceLocator::GetEnttRegistries()->gameRegistry->ctx();
@@ -359,8 +416,8 @@ namespace ECS::Systems
 
                 if (queryResult.affected_rows() == 0)
                 {
-                    result.DatabaseTransactionFailed = true;
                     transaction.abort();
+                    result.DatabaseTransactionFailed = true;
                 }
                 else
                 {
@@ -386,7 +443,198 @@ namespace ECS::Systems
         networkState.server->SendPacket(socketID, characterDeleteResultMessage);
         return true;
     }
-    bool HandleOnSendCheatCommand(Network::SocketID socketID, std::shared_ptr<Bytebuffer>& recvPacket)
+
+    bool HandleOnCheatSetRace(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
+    {
+        GameDefine::UnitRace race = GameDefine::UnitRace::None;
+        if (!message.buffer->Get(race))
+            return false;
+
+        if (race == GameDefine::UnitRace::None || race > GameDefine::UnitRace::Troll)
+            return false;
+
+        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+        entt::registry::context& ctx = registry->ctx();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+
+        if (!networkState.socketIDToCharacterID.contains(socketID))
+            return false;
+
+        u64 characterID = networkState.socketIDToCharacterID[socketID];
+        if (!databaseState.characterTables.idToDefinition.contains(characterID))
+            return false;
+
+        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        {
+            auto& socketCharacterDefinition = databaseState.characterTables.idToDefinition[characterID];
+
+            GameDefine::UnitRace originalRace = socketCharacterDefinition.GetRace();
+            socketCharacterDefinition.SetRace(race);
+
+            auto transaction = conn->NewTransaction();
+            auto queryResult = transaction.exec_prepared("UpdateCharacterSetRaceGenderClass", socketCharacterDefinition.id, socketCharacterDefinition.raceGenderClass);
+            if (queryResult.affected_rows() == 0)
+            {
+                transaction.abort();
+                socketCharacterDefinition.SetRace(originalRace);
+            }
+            else
+            {
+                transaction.commit();
+
+                auto& displayInfo = registry->get<Components::DisplayInfo>(socketEntity);
+                displayInfo.race = race;
+                displayInfo.displayID = UnitUtils::GetDisplayIDFromRaceGender(race, socketCharacterDefinition.GetGender());
+
+                std::shared_ptr<Bytebuffer> displayInfoUpdateMessage = Bytebuffer::Borrow<64>();
+                if (!Util::MessageBuilder::Entity::BuildEntityDisplayInfoUpdateMessage(displayInfoUpdateMessage, socketEntity, displayInfo.displayID))
+                    return false;
+
+                ECS::Util::Grid::SendToGrid(socketEntity, displayInfoUpdateMessage, { .SendToSelf = 1 });
+            }
+        }
+
+        return true;
+    }
+    bool HandleOnCheatSetGender(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
+    {
+        GameDefine::Gender gender = GameDefine::Gender::None;
+        if (!message.buffer->Get(gender))
+            return false;
+
+        if (gender == GameDefine::Gender::None || gender > GameDefine::Gender::Other)
+            return false;
+
+        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+        entt::registry::context& ctx = registry->ctx();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+
+        if (!networkState.socketIDToCharacterID.contains(socketID))
+            return false;
+
+        u64 characterID = networkState.socketIDToCharacterID[socketID];
+        if (!databaseState.characterTables.idToDefinition.contains(characterID))
+            return false;
+
+        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        {
+            auto& socketCharacterDefinition = databaseState.characterTables.idToDefinition[characterID];
+
+            GameDefine::Gender originalGender = socketCharacterDefinition.GetGender();
+            socketCharacterDefinition.SetGender(gender);
+
+            auto transaction = conn->NewTransaction();
+            auto queryResult = transaction.exec_prepared("UpdateCharacterSetRaceGenderClass", socketCharacterDefinition.id, socketCharacterDefinition.raceGenderClass);
+            if (queryResult.affected_rows() == 0)
+            {
+                transaction.abort();
+                socketCharacterDefinition.SetGender(originalGender);
+            }
+            else
+            {
+                transaction.commit();
+
+                auto& displayInfo = registry->get<Components::DisplayInfo>(socketEntity);
+                displayInfo.gender = gender;
+                displayInfo.displayID = UnitUtils::GetDisplayIDFromRaceGender(socketCharacterDefinition.GetRace(), gender);
+
+                std::shared_ptr<Bytebuffer> displayInfoUpdateMessage = Bytebuffer::Borrow<64>();
+                if (!Util::MessageBuilder::Entity::BuildEntityDisplayInfoUpdateMessage(displayInfoUpdateMessage, socketEntity, displayInfo.displayID))
+                    return false;
+
+                ECS::Util::Grid::SendToGrid(socketEntity, displayInfoUpdateMessage, { .SendToSelf = 1 });
+            }
+        }
+
+        return true;
+    }
+    bool HandleOnCheatSetClass(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
+    {
+        GameDefine::UnitClass unitClass = GameDefine::UnitClass::None;
+        if (!message.buffer->Get(unitClass))
+            return false;
+
+        if (unitClass == GameDefine::UnitClass::None || unitClass > GameDefine::UnitClass::Druid)
+            return false;
+
+        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+        entt::registry::context& ctx = registry->ctx();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+
+        if (!networkState.socketIDToCharacterID.contains(socketID))
+            return false;
+
+        u64 characterID = networkState.socketIDToCharacterID[socketID];
+        if (!databaseState.characterTables.idToDefinition.contains(characterID))
+            return false;
+
+        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        {
+            auto& socketCharacterDefinition = databaseState.characterTables.idToDefinition[characterID];
+
+            GameDefine::UnitClass originalGameClass = socketCharacterDefinition.GetGameClass();
+            socketCharacterDefinition.SetGameClass(unitClass);
+
+            auto transaction = conn->NewTransaction();
+            auto queryResult = transaction.exec_prepared("UpdateCharacterSetRaceGenderClass", socketCharacterDefinition.id, socketCharacterDefinition.raceGenderClass);
+            if (queryResult.affected_rows() == 0)
+            {
+                transaction.abort();
+                socketCharacterDefinition.SetGameClass(originalGameClass);
+            }
+            else
+            {
+                transaction.commit();
+            }
+        }
+
+        return true;
+    }
+    bool HandleOnCheatSetLevel(Network::SocketID socketID, entt::entity socketEntity, Network::Message& message)
+    {
+        u16 level = 0;
+        if (!message.buffer->Get(level))
+            return false;
+
+        if (level == 0)
+            return false;
+
+        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+        entt::registry::context& ctx = registry->ctx();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+
+        if (!networkState.socketIDToCharacterID.contains(socketID))
+            return false;
+
+        u64 characterID = networkState.socketIDToCharacterID[socketID];
+        if (!databaseState.characterTables.idToDefinition.contains(characterID))
+            return false;
+
+        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        {
+            auto& socketCharacterDefinition = databaseState.characterTables.idToDefinition[characterID];
+
+            auto transaction = conn->NewTransaction();
+            auto queryResult = transaction.exec_prepared("UpdateCharacterSetLevel", socketCharacterDefinition.id, level);
+            if (queryResult.affected_rows() == 0)
+            {
+                transaction.abort();
+            }
+            else
+            {
+                transaction.commit();
+
+                socketCharacterDefinition.level = level;
+            }
+        }
+
+        return true;
+    }
+    bool HandleOnSendCheatCommand(Network::SocketID socketID, Network::Message& message)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         Singletons::NetworkState& networkState = registry->ctx().get<Singletons::NetworkState>();
@@ -399,44 +647,64 @@ namespace ECS::Systems
             return false;
 
         Network::CheatCommands command = Network::CheatCommands::None;
-        if (!recvPacket->Get(command))
+        if (!message.buffer->Get(command))
             return false;
 
         switch (command)
         {
             case Network::CheatCommands::Damage:
             {
-                return HandleOnCheatDamage(socketID, socketEntity, recvPacket);
+                return HandleOnCheatDamage(socketID, socketEntity, message);
             }
 
             case Network::CheatCommands::Kill:
             {
-                return HandleOnCheatKill(socketID, socketEntity, recvPacket);
+                return HandleOnCheatKill(socketID, socketEntity, message);
             }
 
             case Network::CheatCommands::Resurrect:
             {
-                return HandleOnCheatResurrect(socketID, socketEntity, recvPacket);
+                return HandleOnCheatResurrect(socketID, socketEntity, message);
             }
 
             case Network::CheatCommands::Morph:
             {
-                return HandleOnCheatMorph(socketID, socketEntity, recvPacket);
+                return HandleOnCheatMorph(socketID, socketEntity, message);
             }
 
             case Network::CheatCommands::Demorph:
             {
-                return HandleOnCheatDemorph(socketID, socketEntity, recvPacket);
+                return HandleOnCheatDemorph(socketID, socketEntity, message);
             }
 
             case Network::CheatCommands::CreateCharacter:
             {
-                return HandleOnCheatCreateCharacter(socketID, socketEntity, recvPacket);
+                return HandleOnCheatCreateCharacter(socketID, socketEntity, message);
             }
 
             case Network::CheatCommands::DeleteCharacter:
             {
-                return HandleOnCheatDeleteCharacter(socketID, socketEntity, recvPacket);
+                return HandleOnCheatDeleteCharacter(socketID, socketEntity, message);
+            }
+
+            case Network::CheatCommands::SetRace:
+            {
+                return HandleOnCheatSetRace(socketID, socketEntity, message);
+            }
+
+            case Network::CheatCommands::SetGender:
+            {
+                return HandleOnCheatSetGender(socketID, socketEntity, message);
+            }
+
+            case Network::CheatCommands::SetClass:
+            {
+                return HandleOnCheatSetClass(socketID, socketEntity, message);
+            }
+
+            case Network::CheatCommands::SetLevel:
+            {
+                return HandleOnCheatSetLevel(socketID, socketEntity, message);
             }
 
             default: break;
@@ -445,23 +713,23 @@ namespace ECS::Systems
         return true;
     }
 
-    bool HandleOnEntityMove(Network::SocketID socketID, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnEntityMove(Network::SocketID socketID, Network::Message& message)
     {
         vec3 position = vec3(0.0f);
         quat rotation = quat(1.0f, 0.0f, 0.0f, 0.0f);
         Components::MovementFlags movementFlags = {};
         f32 verticalVelocity = 0.0f;
 
-        if (!recvPacket->Get(position))
+        if (!message.buffer->Get(position))
             return false;
 
-        if (!recvPacket->Get(rotation))
+        if (!message.buffer->Get(rotation))
             return false;
 
-        if (!recvPacket->Get(movementFlags))
+        if (!message.buffer->Get(movementFlags))
             return false;
 
-        if (!recvPacket->Get(verticalVelocity))
+        if (!message.buffer->Get(verticalVelocity))
             return false;
 
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -483,11 +751,11 @@ namespace ECS::Systems
         ECS::Util::Grid::SendToGrid(socketEntity, entityMoveMessage);
         return true;
     }
-    bool HandleOnEntityTargetUpdate(Network::SocketID socketID, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnEntityTargetUpdate(Network::SocketID socketID, Network::Message& message)
     {
         entt::entity targetEntity = entt::null;
 
-        if (!recvPacket->Get(targetEntity))
+        if (!message.buffer->Get(targetEntity))
             return false;
 
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -510,11 +778,11 @@ namespace ECS::Systems
         return true;
     }
 
-    bool HandleOnRequestSpellCast(Network::SocketID socketID, std::shared_ptr<Bytebuffer>& recvPacket)
+    bool HandleOnRequestSpellCast(Network::SocketID socketID, Network::Message& message)
     {
         u32 spellID = 0;
 
-        if (!recvPacket->GetU32(spellID))
+        if (!message.buffer->GetU32(spellID))
             return false;
 
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -585,6 +853,7 @@ namespace ECS::Systems
             networkState.gameMessageRouter = std::make_unique<Network::GameMessageRouter>();
 
             networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_Connect,                  Network::GameMessageHandler(Network::ConnectionStatus::None,        0u, -1, &HandleOnConnected));
+            networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_Ping,                     Network::GameMessageHandler(Network::ConnectionStatus::Connected,   0u, -1, &HandleOnPing));
 
             networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_SendCheatCommand,         Network::GameMessageHandler(Network::ConnectionStatus::Connected,   0u, -1, &HandleOnSendCheatCommand));
             
@@ -683,11 +952,11 @@ namespace ECS::Systems
             Network::SocketMessageEvent messageEvent;
             while (messageEvents.try_dequeue(messageEvent))
             {
-                auto* messageHeader = reinterpret_cast<Network::PacketHeader*>(messageEvent.buffer->GetDataPointer());
+                auto* messageHeader = reinterpret_cast<Network::MessageHeader*>(messageEvent.message.buffer->GetDataPointer());
                 NC_LOG_INFO("Network : Message from (SocketID : {0}, Opcode : {1}, Size : {2})", static_cast<std::underlying_type<Network::SocketID>::type>(messageEvent.socketID), static_cast<std::underlying_type<Network::GameOpcode>::type>(messageHeader->opcode), messageHeader->size);
 
                 // Invoke MessageHandler here
-                if (networkState.gameMessageRouter->CallHandler(messageEvent.socketID, messageEvent.buffer))
+                if (networkState.gameMessageRouter->CallHandler(messageEvent.socketID, messageEvent.message))
                     continue;
 
                 // Failed to Call Handler, Close Socket

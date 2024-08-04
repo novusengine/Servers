@@ -25,9 +25,14 @@ namespace Database
         f32 orientation = 0.0f;
 
     public:
-        GameDefine::Race GetRace() const { return static_cast<GameDefine::Race>(raceGenderClass & 0x7F); }
+        GameDefine::UnitRace GetRace() const { return static_cast<GameDefine::UnitRace>(raceGenderClass & 0x7F); }
+        void SetRace(GameDefine::UnitRace race) { raceGenderClass = (raceGenderClass & 0xFF80) | static_cast<u16>(race); }
+
         GameDefine::Gender GetGender() const { return static_cast<GameDefine::Gender>((raceGenderClass >> 7) & 0x3); }
-        GameDefine::GameClass GetGameClass() const { return static_cast<GameDefine::GameClass>((raceGenderClass >> 9) & 0x7f); }
+        void SetGender(GameDefine::Gender gender) { raceGenderClass = (raceGenderClass & 0xFE7F) | (static_cast<u16>(gender) << 7); }
+
+        GameDefine::UnitClass GetGameClass() const { return static_cast<GameDefine::UnitClass>((raceGenderClass >> 9) & 0x7f); }
+        void SetGameClass(GameDefine::UnitClass gameClass) { raceGenderClass = (raceGenderClass & 0x1FF) | (static_cast<u16>(gameClass) << 9); }
     };
     struct CharacterCurrency
     {

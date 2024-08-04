@@ -1,5 +1,6 @@
 #include "Scheduler.h"
 
+#include "Server-Game/ECS/Singletons/TimeState.h"
 #include "Server-Game/ECS/Systems/CharacterLoginHandler.h"
 #include "Server-Game/ECS/Systems/DatabaseSetup.h"
 #include "Server-Game/ECS/Systems/NetworkConnection.h"
@@ -19,6 +20,8 @@ namespace ECS
 
     void Scheduler::Init(entt::registry& registry)
     {
+        registry.ctx().emplace<Singletons::TimeState>();
+
         Systems::DatabaseSetup::Init(registry);
         Systems::NetworkConnection::Init(registry);
         Systems::CharacterLoginHandler::Init(registry);

@@ -8,48 +8,48 @@ using namespace ECS;
 
 namespace UnitUtils
 {
-    u32 GetDisplayIDFromRaceGender(GameDefine::Race race, GameDefine::Gender gender)
+    u32 GetDisplayIDFromRaceGender(GameDefine::UnitRace race, GameDefine::Gender gender)
     {
         u32 displayID = 0;
 
         switch (race)
         {
-            case GameDefine::Race::Human:
+            case GameDefine::UnitRace::Human:
             {
                 displayID = 49;
                 break;
             }
-            case GameDefine::Race::Orc:
+            case GameDefine::UnitRace::Orc:
             {
                 displayID = 51;
                 break;
             }
-            case GameDefine::Race::Dwarf:
+            case GameDefine::UnitRace::Dwarf:
             {
                 displayID = 53;
                 break;
             }
-            case GameDefine::Race::NightElf:
+            case GameDefine::UnitRace::NightElf:
             {
                 displayID = 55;
                 break;
             }
-            case GameDefine::Race::Undead:
+            case GameDefine::UnitRace::Undead:
             {
                 displayID = 57;
                 break;
             }
-            case GameDefine::Race::Tauren:
+            case GameDefine::UnitRace::Tauren:
             {
                 displayID = 59;
                 break;
             }
-            case GameDefine::Race::Gnome:
+            case GameDefine::UnitRace::Gnome:
             {
                 displayID = 1563;
                 break;
             }
-            case GameDefine::Race::Troll:
+            case GameDefine::UnitRace::Troll:
             {
                 displayID = 1478;
                 break;

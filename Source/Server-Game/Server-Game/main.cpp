@@ -3,6 +3,7 @@
 #include "Application/ConsoleCommandHandler.h"
 
 #include <Base/Types.h>
+#include <Base/Platform.h>
 #include <Base/Util/StringUtils.h>
 #include <Base/Util/DebugHandler.h>
 
@@ -10,8 +11,17 @@
 
 #include <future>
 
+#if WIN32
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
+#endif
+
 i32 main()
 {
+#if WIN32
+    timeBeginPeriod(1);
+#endif
+
     quill::Backend::start();
 
     quill::ConsoleColours consoleColours;

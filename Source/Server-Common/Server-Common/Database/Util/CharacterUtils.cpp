@@ -14,6 +14,8 @@ namespace Database::Util::Character
 
         dbConnection->connection->prepare("CreateCharacter", "INSERT INTO public.characters (name, racegenderclass) VALUES ($1, $2) RETURNING id");
         dbConnection->connection->prepare("DeleteCharacter", "DELETE FROM public.characters WHERE id = $1");
+        dbConnection->connection->prepare("UpdateCharacterSetRaceGenderClass", "UPDATE public.characters SET racegenderclass = $2 WHERE id = $1");
+        dbConnection->connection->prepare("UpdateCharacterSetLevel", "UPDATE public.characters SET level = $2 WHERE id = $1");
 
         dbConnection->connection->prepare("SetCharacterCurrency", "INSERT INTO public.character_currency (characterid, currencyid, value) VALUES ($1, $2, $3) ON CONFLICT(characterid, currencyid) DO UPDATE SET value = EXCLUDED.value");
         dbConnection->connection->prepare("DeleteCharacterCurrency", "DELETE FROM public.character_currency WHERE characterid = $1 AND currencyid = $2");

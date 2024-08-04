@@ -9,7 +9,6 @@
 #include <entt/fwd.hpp>
 #include <robinhood/robinhood.h>
 
-
 namespace ECS::Singletons
 {
     struct GridUpdateFlag

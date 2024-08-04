@@ -32,6 +32,11 @@ namespace ECS
             bool BuildConnectedMessage(std::shared_ptr<Bytebuffer>& buffer, Network::ConnectResult result);
         }
 
+        namespace Heartbeat
+        {
+            bool BuildPongMessage(std::shared_ptr<Bytebuffer>& buffer, u16 ping, u8 networkDiff, u8 serverDiff);
+        }
+
         namespace Entity
         {
             bool BuildSetMoverMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity);

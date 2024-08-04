@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "Server-Game/ECS/Scheduler.h"
+#include "Server-Game/ECS/Singletons/TimeState.h"
 #include "Server-Game/Scripting/LuaUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
@@ -74,8 +75,13 @@ void Application::Run()
         Timer timer;
         while (true)
         {
+            auto& timeState = _registries.gameRegistry->ctx().get<ECS::Singletons::TimeState>();
+
             f32 deltaTime = timer.GetDeltaTime();
             timer.Tick();
+
+            timeState.deltaTime = deltaTime;
+            timeState.epochAtFrameStart = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();;
 
             if (!Tick(deltaTime))
                 break;

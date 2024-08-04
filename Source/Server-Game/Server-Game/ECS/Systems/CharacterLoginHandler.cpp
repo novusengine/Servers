@@ -1,6 +1,7 @@
 #include "CharacterLoginHandler.h"
 
 #include "Server-Game/ECS/Components/DisplayInfo.h"
+#include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
@@ -86,6 +87,8 @@ namespace ECS::Systems
 
             Components::TargetInfo& targetInfo = registry.emplace<Components::TargetInfo>(socketEntity);
             targetInfo.target = entt::null;
+
+           registry.emplace<Components::NetInfo>(socketEntity);
 
             std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<512>();
 

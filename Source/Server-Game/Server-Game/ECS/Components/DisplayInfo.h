@@ -8,7 +8,7 @@ namespace ECS::Components
     struct DisplayInfo
     {
     public:
-        GameDefine::Race race = GameDefine::Race::None;
+        GameDefine::UnitRace race = GameDefine::UnitRace::None;
         GameDefine::Gender gender = GameDefine::Gender::None;
 
         u32 displayID;

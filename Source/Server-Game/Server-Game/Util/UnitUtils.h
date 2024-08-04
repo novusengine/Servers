@@ -12,7 +12,7 @@ namespace ECS::Components
 
 namespace UnitUtils
 {
-    u32 GetDisplayIDFromRaceGender(GameDefine::Race race, GameDefine::Gender gender);
+    u32 GetDisplayIDFromRaceGender(GameDefine::UnitRace race, GameDefine::Gender gender);
     ECS::Components::UnitStatsComponent& AddStatsComponent(entt::registry& registry, entt::entity entity);
 
     f32 HandleRageRegen(f32 current, f32 rateModifier, f32 deltaTime);
