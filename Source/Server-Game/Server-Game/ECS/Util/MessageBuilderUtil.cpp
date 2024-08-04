@@ -69,11 +69,10 @@ namespace ECS::Util::MessageBuilder
 
     namespace Heartbeat
     {
-        bool BuildPongMessage(std::shared_ptr<Bytebuffer>& buffer, u16 ping, u8 networkDiff, u8 serverDiff)
+        bool BuildUpdateStatsMessage(std::shared_ptr<Bytebuffer>& buffer, u8 networkDiff, u8 serverDiff)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_Pong, [&buffer, ping, networkDiff, serverDiff]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_UpdateStats, [&buffer, networkDiff, serverDiff]()
             {
-                buffer->PutU16(ping);
                 buffer->PutU8(networkDiff);
                 buffer->PutU8(serverDiff);
             });

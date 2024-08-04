@@ -34,7 +34,7 @@ namespace ECS
 
         namespace Heartbeat
         {
-            bool BuildPongMessage(std::shared_ptr<Bytebuffer>& buffer, u16 ping, u8 networkDiff, u8 serverDiff);
+            bool BuildUpdateStatsMessage(std::shared_ptr<Bytebuffer>& buffer, u8 networkDiff, u8 serverDiff);
         }
 
         namespace Entity

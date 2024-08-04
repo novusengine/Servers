@@ -58,8 +58,8 @@ namespace ECS::Systems
 
     bool HandleOnPing(Network::SocketID socketID, Network::Message& message)
     {
-        u64 clientCurrentTime = 0;
-        if (!message.buffer->GetU64(clientCurrentTime))
+        u16 ping = 0;
+        if (!message.buffer->GetU16(ping))
             return false;
 
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -76,7 +76,6 @@ namespace ECS::Systems
 
         u64 timeSinceLastPing = currentTime - netInfo.lastPingTime;
 
-        u16 timeForPingToArrive = static_cast<u16>(message.timestampProcessed - clientCurrentTime);
         u8 networkDiff = static_cast<u8>(message.timeToProcess + message.networkSleepDiff + message.networkUpdateDiff);
         u8 serverDiff = static_cast<u8>(timeState.deltaTime * 1000.0f);
 
@@ -96,16 +95,17 @@ namespace ECS::Systems
             return true;
         }
 
-        netInfo.ping = timeForPingToArrive;
+        netInfo.ping = ping;
         netInfo.numEarlyPings = 0;
         netInfo.numLatePings = 0;
         netInfo.lastPingTime = currentTime;
 
-        std::shared_ptr<Bytebuffer> pongMessage = Bytebuffer::Borrow<64>();
-        if (!Util::MessageBuilder::Heartbeat::BuildPongMessage(pongMessage, timeForPingToArrive, networkDiff, serverDiff))
+        std::shared_ptr<Bytebuffer> updateStatsMessage = Bytebuffer::Borrow<64>();
+        if (!Util::MessageBuilder::Heartbeat::BuildUpdateStatsMessage(updateStatsMessage, networkDiff, serverDiff))
             return false;
 
-        networkState.server->SendPacket(socketID, pongMessage);
+        networkState.server->SendPacket(socketID, updateStatsMessage);
+
         return true;
     }
 
@@ -853,7 +853,7 @@ namespace ECS::Systems
             networkState.gameMessageRouter = std::make_unique<Network::GameMessageRouter>();
 
             networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_Connect,                  Network::GameMessageHandler(Network::ConnectionStatus::None,        0u, -1, &HandleOnConnected));
-            networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_Ping,                     Network::GameMessageHandler(Network::ConnectionStatus::Connected,   0u, -1, &HandleOnPing));
+            networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Shared_Ping,                     Network::GameMessageHandler(Network::ConnectionStatus::Connected,   0u, -1, &HandleOnPing));
 
             networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_SendCheatCommand,         Network::GameMessageHandler(Network::ConnectionStatus::Connected,   0u, -1, &HandleOnSendCheatCommand));
             
