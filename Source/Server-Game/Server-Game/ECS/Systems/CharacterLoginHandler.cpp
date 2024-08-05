@@ -105,9 +105,7 @@ namespace ECS::Systems
                 continue;
             }
 
-            gridSingleton.cell.mutex.lock();
             gridSingleton.cell.players.entering.insert(socketEntity);
-            gridSingleton.cell.mutex.unlock();
 
             networkState.server->SendPacket(socketID, buffer);
         }

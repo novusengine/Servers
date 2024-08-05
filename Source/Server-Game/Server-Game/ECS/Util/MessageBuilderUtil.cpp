@@ -124,41 +124,18 @@ namespace ECS::Util::MessageBuilder
 
             return result;
         }
-        bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::UnitStatsComponent& unitStatsComponent)
+        bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, Components::PowerType powerType, f32 base, f32 current, f32 max)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityResourcesUpdate, [&buffer, &unitStatsComponent, entity]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityResourcesUpdate, [&buffer, entity, powerType, base, current, max]()
             {
-                buffer->Put(entity);
-                buffer->Put(Components::PowerType::Health);
-                buffer->PutF32(unitStatsComponent.baseHealth);
-                buffer->PutF32(unitStatsComponent.currentHealth);
-                buffer->PutF32(unitStatsComponent.maxHealth);
-            });
-
-            if (!result)
-                return false;
-
-            for (i32 i = 0; i < (u32)Components::PowerType::Count; i++)
-            {
-                Components::PowerType powerType = (Components::PowerType)i;
-
-                f32 powerValue = unitStatsComponent.currentPower[i];
-                f32 basePower = unitStatsComponent.basePower[i];
-                f32 maxPower = unitStatsComponent.maxPower[i];
-
-                u32 headerPos = AddHeader(buffer, Network::GameOpcode::Server_EntityResourcesUpdate);
-
                 buffer->Put(entity);
                 buffer->Put(powerType);
-                buffer->PutF32(basePower);
-                buffer->PutF32(powerValue);
-                buffer->PutF32(maxPower);
+                buffer->PutF32(base);
+                buffer->PutF32(current);
+                buffer->PutF32(max);
+            });
 
-                if (!ValidatePacket(buffer, headerPos))
-                    return false;
-            }
-
-            return true;
+            return result;
         }
         bool BuildEntityTargetUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, entt::entity target)
         {
@@ -204,7 +181,13 @@ namespace ECS::Util::MessageBuilder
             bool failed = false;
             failed |= !Entity::BuildEntityCreateMessage(buffer, entity, transform);
             failed |= !Entity::BuildEntityDisplayInfoUpdateMessage(buffer, entity, displayInfo.displayID);
-            failed |= !Entity::BuildUnitStatsMessage(buffer, entity, unitStatsComponent);
+
+            failed |= !Entity::BuildUnitStatsMessage(buffer, entity, Components::PowerType::Health, unitStatsComponent.baseHealth, unitStatsComponent.currentHealth, unitStatsComponent.maxHealth);
+
+            for (i32 i = 0; i < (u32)Components::PowerType::Count; i++)
+            {
+                failed |= !Entity::BuildUnitStatsMessage(buffer, entity, (Components::PowerType)i, unitStatsComponent.basePower[i], unitStatsComponent.currentPower[i], unitStatsComponent.maxPower[i]);
+            }
 
             return !failed;
         }

@@ -1,5 +1,6 @@
 #pragma once
 #include "Server-Game/ECS/Components/Transform.h"
+#include "Server-Game/ECS/Components/UnitStatsComponent.h"
 
 #include <Base/Types.h>
 #include <Base/Memory/Bytebuffer.h>
@@ -43,7 +44,7 @@ namespace ECS
             bool BuildEntityCreateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::Transform& transform);
             bool BuildEntityDestroyMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity);
             bool BuildEntityMoveMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const vec3& position, const quat& rotation, const Components::MovementFlags movementFlags, f32 verticalVelocity);
-            bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::UnitStatsComponent& unitStatsComponent);
+            bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, Components::PowerType powerType, f32 base, f32 current, f32 max);
             bool BuildEntityTargetUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, entt::entity target);
             bool BuildEntitySpellCastMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, f32 castTime, f32 castDuration);
             bool BuildEntityDisplayInfoUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, u32 displayID);

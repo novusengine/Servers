@@ -22,21 +22,15 @@ namespace ECS::Systems
     {
         Singletons::GridSingleton& gridSingleton = registry.ctx().emplace<Singletons::GridSingleton>();
 
-        gridSingleton.cell.mutex.lock();
         gridSingleton.cell.players.list.reserve(256);
         gridSingleton.cell.players.entering.reserve(256);
         gridSingleton.cell.players.leaving.reserve(256);
-
-        gridSingleton.cell.updates.reserve(256);
-        gridSingleton.cell.mutex.unlock();
     }
 
     void SimpleReplication::Update(entt::registry& registry, f32 deltaTime)
     {
         Singletons::GridSingleton& gridSingleton = registry.ctx().get<Singletons::GridSingleton>();
         Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
-
-        gridSingleton.cell.mutex.lock();
 
         u32 numPlayersLeaving = static_cast<u32>(gridSingleton.cell.players.leaving.size());
         u32 numPlayersEntering = static_cast<u32>(gridSingleton.cell.players.entering.size());
@@ -161,7 +155,8 @@ namespace ECS::Systems
         {
             if (numPlayersInCell)
             {
-                for (auto& update : gridSingleton.cell.updates)
+                Singletons::GridUpdate update;
+                while (gridSingleton.cell.updates.try_dequeue(update))
                 {
                     for (entt::entity entity : gridSingleton.cell.players.list)
                     {
@@ -175,10 +170,11 @@ namespace ECS::Systems
                     }
                 }
             }
-
-            gridSingleton.cell.updates.clear();
+            else
+            {
+                Singletons::GridUpdate update;
+                while (gridSingleton.cell.updates.try_dequeue(update)) { }
+            }
         }
-
-        gridSingleton.cell.mutex.unlock();
     }
 }

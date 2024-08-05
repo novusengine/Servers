@@ -928,9 +928,7 @@ namespace ECS::Systems
 
                         // Remove From Grid
                         {
-                            gridSingleton.cell.mutex.lock();
                             gridSingleton.cell.players.leaving.insert(entity);
-                            gridSingleton.cell.mutex.unlock();
                         }
 
                         if (networkState.entityToSocketID.contains(entity))

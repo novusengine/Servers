@@ -24,16 +24,14 @@ namespace ECS::Systems
     {
         Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
 
+        static f32 timeSinceLastUpdate = 0.0f;
+        static constexpr f32 UPDATE_INTERVAL = 1.0f / 10.0f;
+
         auto view = registry.view<Components::UnitStatsComponent>();
         view.each([&](entt::entity entity, Components::UnitStatsComponent& unitStatsComponent)
         {
             static constexpr f32 healthGainRate = 5.0f;
             static constexpr f32 powerGainRate = 25.0f;
-
-            if (!networkState.entityToSocketID.contains(entity))
-                return;
-
-            bool isUnitStatsDirty = false;
 
             // Handle Health Regen
             {
@@ -44,8 +42,8 @@ namespace ECS::Systems
                     unitStatsComponent.currentHealth = glm::clamp(currentHealth + (healthGainRate * deltaTime), 0.0f, unitStatsComponent.maxHealth);
                 }
 
-                isUnitStatsDirty |= currentHealth != unitStatsComponent.currentHealth || unitStatsComponent.healthIsDirty;
-                unitStatsComponent.healthIsDirty = false;
+                bool isHealthDirty = (currentHealth != unitStatsComponent.currentHealth || unitStatsComponent.healthIsDirty);
+                unitStatsComponent.healthIsDirty |= isHealthDirty;
             }
 
             for (i32 i = 0; i < (u32)Components::PowerType::Count; i++)
@@ -88,17 +86,48 @@ namespace ECS::Systems
                     }
                 }
 
-                isUnitStatsDirty |= powerValue != prevPowerValue;
-            }
-
-            if (isUnitStatsDirty)
-            {
-                std::shared_ptr<Bytebuffer> unitStatsMessage = Bytebuffer::Borrow<256>();
-                if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, entity, unitStatsComponent))
-                    return;
-
-                ECS::Util::Grid::SendToGrid(entity, unitStatsMessage, ECS::Singletons::GridUpdateFlag{ .SendToSelf = true });
+                bool isStatDirty = powerValue != prevPowerValue;
+                unitStatsComponent.powerIsDirty[i] |= isStatDirty;
             }
         });
+
+        timeSinceLastUpdate += deltaTime;
+        if (timeSinceLastUpdate >= UPDATE_INTERVAL)
+        {
+            auto view = registry.view<Components::UnitStatsComponent>();
+            view.each([&](entt::entity entity, Components::UnitStatsComponent& unitStatsComponent)
+            {
+                if (!networkState.entityToSocketID.contains(entity))
+                    return;
+
+                if (unitStatsComponent.healthIsDirty)
+                {
+                    std::shared_ptr<Bytebuffer> unitStatsMessage = Bytebuffer::Borrow<32>();
+                    if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, entity, Components::PowerType::Health, unitStatsComponent.baseHealth, unitStatsComponent.currentHealth, unitStatsComponent.maxHealth))
+                        return;
+
+                    ECS::Util::Grid::SendToGrid(entity, unitStatsMessage, ECS::Singletons::GridUpdateFlag{ .SendToSelf = true });
+                    unitStatsComponent.healthIsDirty = false;
+                }
+
+                for (i32 i = 0; i < (u32)Components::PowerType::Count; i++)
+                {
+                    bool isDirty = unitStatsComponent.powerIsDirty[i];
+                    if (!isDirty)
+                        continue;
+
+                    Components::PowerType powerType = (Components::PowerType)i;
+
+                    std::shared_ptr<Bytebuffer> unitStatsMessage = Bytebuffer::Borrow<32>();
+                    if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, entity, powerType, unitStatsComponent.basePower[i], unitStatsComponent.currentPower[i], unitStatsComponent.maxPower[i]))
+                        return;
+
+                    ECS::Util::Grid::SendToGrid(entity, unitStatsMessage, ECS::Singletons::GridUpdateFlag{ .SendToSelf = true });
+                    unitStatsComponent.powerIsDirty[i] = false;
+                }
+            });
+
+            timeSinceLastUpdate -= UPDATE_INTERVAL;
+        }
     }
 }

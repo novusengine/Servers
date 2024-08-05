@@ -37,9 +37,7 @@ namespace ECS::Singletons
     {
     public:
         GridCellEntityList players;
-        std::vector<GridUpdate> updates;
-
-        std::mutex mutex;
+        moodycamel::ConcurrentQueue<GridUpdate> updates;
     };
 
     struct GridSingleton
