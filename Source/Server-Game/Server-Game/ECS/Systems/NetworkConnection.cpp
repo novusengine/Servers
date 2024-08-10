@@ -75,8 +75,6 @@ namespace ECS::Systems
         auto currentTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
         u64 timeSinceLastPing = currentTime - netInfo.lastPingTime;
-
-        u8 networkDiff = static_cast<u8>(message.timeToProcess + message.networkSleepDiff + message.networkUpdateDiff);
         u8 serverDiff = static_cast<u8>(timeState.deltaTime * 1000.0f);
 
         if (timeSinceLastPing < Components::NetInfo::PING_INTERVAL - 1000)
@@ -101,7 +99,7 @@ namespace ECS::Systems
         netInfo.lastPingTime = currentTime;
 
         std::shared_ptr<Bytebuffer> updateStatsMessage = Bytebuffer::Borrow<64>();
-        if (!Util::MessageBuilder::Heartbeat::BuildUpdateStatsMessage(updateStatsMessage, networkDiff, serverDiff))
+        if (!Util::MessageBuilder::Heartbeat::BuildUpdateStatsMessage(updateStatsMessage, serverDiff))
             return false;
 
         networkState.server->SendPacket(socketID, updateStatsMessage);
@@ -849,7 +847,8 @@ namespace ECS::Systems
 
         // Setup NetServer
         {
-            networkState.server = std::make_unique<Network::Server>();
+            u16 port = 4000;
+            networkState.server = std::make_unique<Network::Server>(port);
             networkState.gameMessageRouter = std::make_unique<Network::GameMessageRouter>();
 
             networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_Connect,                  Network::GameMessageHandler(Network::ConnectionStatus::None,        0u, -1, &HandleOnConnected));
@@ -864,16 +863,10 @@ namespace ECS::Systems
 
             // Bind to IP/Port
             std::string ipAddress = "0.0.0.0";
-            u16 port = 4000;
-
-            Network::Socket::Result initResult = networkState.server->Init(Network::Socket::Mode::TCP, ipAddress, port);
-            if (initResult == Network::Socket::Result::SUCCESS)
+            
+            if (networkState.server->Start())
             {
                 NC_LOG_INFO("Network : Listening on ({0}, {1})", ipAddress, port);
-            }
-            else
-            {
-                NC_LOG_CRITICAL("Network : Failed to bind on ({0}, {1})", ipAddress, port);
             }
         }
     }
@@ -893,7 +886,7 @@ namespace ECS::Systems
             while (connectedEvents.try_dequeue(connectedEvent))
             {
                 const Network::ConnectionInfo& connectionInfo = connectedEvent.connectionInfo;
-                NC_LOG_INFO("Network : Client connected from (SocketID : {0}, \"{1}:{2}\")", static_cast<u32>(connectedEvent.socketID), connectionInfo.ipAddrStr, connectionInfo.port);
+                NC_LOG_INFO("Network : Client connected from (SocketID : {0}, \"{1}:{2}\")", static_cast<u32>(connectedEvent.socketID), connectionInfo.ipAddr, connectionInfo.port);
             }
         }
 
@@ -951,7 +944,7 @@ namespace ECS::Systems
             while (messageEvents.try_dequeue(messageEvent))
             {
                 auto* messageHeader = reinterpret_cast<Network::MessageHeader*>(messageEvent.message.buffer->GetDataPointer());
-                NC_LOG_INFO("Network : Message from (SocketID : {0}, Opcode : {1}, Size : {2})", static_cast<std::underlying_type<Network::SocketID>::type>(messageEvent.socketID), static_cast<std::underlying_type<Network::GameOpcode>::type>(messageHeader->opcode), messageHeader->size);
+                //NC_LOG_INFO("Network : Message from (SocketID : {0}, Opcode : {1}, Size : {2})", static_cast<std::underlying_type<Network::SocketID>::type>(messageEvent.socketID), static_cast<std::underlying_type<Network::GameOpcode>::type>(messageHeader->opcode), messageHeader->size);
 
                 // Invoke MessageHandler here
                 if (networkState.gameMessageRouter->CallHandler(messageEvent.socketID, messageEvent.message))

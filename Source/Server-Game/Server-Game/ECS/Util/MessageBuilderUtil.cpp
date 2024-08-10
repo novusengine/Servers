@@ -69,11 +69,10 @@ namespace ECS::Util::MessageBuilder
 
     namespace Heartbeat
     {
-        bool BuildUpdateStatsMessage(std::shared_ptr<Bytebuffer>& buffer, u8 networkDiff, u8 serverDiff)
+        bool BuildUpdateStatsMessage(std::shared_ptr<Bytebuffer>& buffer, u8 serverDiff)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_UpdateStats, [&buffer, networkDiff, serverDiff]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_UpdateStats, [&buffer, serverDiff]()
             {
-                buffer->PutU8(networkDiff);
                 buffer->PutU8(serverDiff);
             });
 
@@ -201,7 +200,7 @@ namespace ECS::Util::MessageBuilder
 
             if (result == 0)
             {
-                result = CreatePacket(buffer, Network::GameOpcode::Server_SendSpellCastResult, [&buffer, entity, result, castTime, castDuration]()
+                createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendSpellCastResult, [&buffer, entity, result, castTime, castDuration]()
                 {
                     buffer->PutU8(result);
                     buffer->PutF32(castTime);
