@@ -3,6 +3,7 @@
 #include "Application/ConsoleCommandHandler.h"
 
 #include <Base/Types.h>
+#include <Base/Platform.h>
 #include <Base/Util/StringUtils.h>
 #include <Base/Util/DebugHandler.h>
 
@@ -10,12 +11,26 @@
 
 #include <future>
 
+#if WIN32
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
+#endif
+
 i32 main()
 {
+#if WIN32
+    timeBeginPeriod(1);
+#endif
+
     quill::Backend::start();
 
-    auto console_sink = quill::Frontend::create_or_get_sink<quill::ConsoleSink>("console_sink_1");
-    quill::Logger* logger = quill::Frontend::create_or_get_logger("root", std::move(console_sink), "%(time:<16) LOG_%(log_level:<11) %(message)", "%H:%M:%S.%Qms", quill::Timezone::LocalTime, quill::ClockSourceType::System);
+    quill::ConsoleColours consoleColours;
+    consoleColours.set_default_colours();
+    consoleColours.set_colour(quill::LogLevel::Info, quill::ConsoleColours::white);
+
+    auto consoleSinkPtr = quill::Frontend::create_or_get_sink<quill::ConsoleSink>("consolesink", consoleColours);
+
+    quill::Logger* logger = quill::Frontend::create_or_get_logger("root", std::move(consoleSinkPtr), "%(time:<16) LOG_%(log_level:<11) %(message)", "%H:%M:%S.%Qms", quill::Timezone::LocalTime, quill::ClockSourceType::System);
     
     Application app;
     app.Start();

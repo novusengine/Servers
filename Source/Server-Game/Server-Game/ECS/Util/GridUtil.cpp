@@ -13,9 +13,7 @@ namespace ECS::Util::Grid
         Singletons::GridSingleton& gridSingleton = registry->ctx().get<Singletons::GridSingleton>();
 
         {
-            gridSingleton.cell.mutex.lock();
-            gridSingleton.cell.updates.push_back({ entity, flag, std::move(buffer) });
-            gridSingleton.cell.mutex.unlock();
+            gridSingleton.cell.updates.enqueue({ entity, flag, std::move(buffer) });
         }
     }
 }

@@ -3,7 +3,7 @@
 
 namespace ECS::Components
 {
-    enum class PowerType
+    enum class PowerType : i8
     {
         Health = -2, // This is strictly used for spells
         Mana = 0,
@@ -46,6 +46,7 @@ namespace ECS::Components
         f32 basePower[(u32)PowerType::Count];
         f32 currentPower[(u32)PowerType::Count];
         f32 maxPower[(u32)PowerType::Count];
+        bool powerIsDirty[(u32)PowerType::Count];
 
         i32 baseStat[(u32)StatType::Count];
         i32 currentStat[(u32)StatType::Count];

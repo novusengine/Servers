@@ -14,8 +14,7 @@ local function PrintError(msg)
     if callerName == nil then
         error(": " .. msg, 2)
     else
-        
-    error("[" .. callerName .. "]" .. " : " .. msg, 2)
+        error("[" .. callerName .. "]" .. " : " .. msg, 2)
     end
 end
 
@@ -208,7 +207,7 @@ Solution.Util.CreateProject = function(name, projectType, binDir, dependencies, 
         filter "platforms:Win64"
             system "Windows"
             architecture "x86_64"
-            defines { "WIN32", "WINDOWS" }
+            defines { "WIN32", "WINDOWS", "_WIN32_WINNT=0x0601" }
 
         filter { }
 

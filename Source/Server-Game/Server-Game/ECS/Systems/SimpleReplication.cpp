@@ -22,21 +22,15 @@ namespace ECS::Systems
     {
         Singletons::GridSingleton& gridSingleton = registry.ctx().emplace<Singletons::GridSingleton>();
 
-        gridSingleton.cell.mutex.lock();
         gridSingleton.cell.players.list.reserve(256);
         gridSingleton.cell.players.entering.reserve(256);
         gridSingleton.cell.players.leaving.reserve(256);
-
-        gridSingleton.cell.updates.reserve(256);
-        gridSingleton.cell.mutex.unlock();
     }
 
     void SimpleReplication::Update(entt::registry& registry, f32 deltaTime)
     {
         Singletons::GridSingleton& gridSingleton = registry.ctx().get<Singletons::GridSingleton>();
         Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
-
-        gridSingleton.cell.mutex.lock();
 
         u32 numPlayersLeaving = static_cast<u32>(gridSingleton.cell.players.leaving.size());
         u32 numPlayersEntering = static_cast<u32>(gridSingleton.cell.players.entering.size());
@@ -66,7 +60,7 @@ namespace ECS::Systems
                 // Send Destroy Message to all players in the cell
                 for (entt::entity entity : gridSingleton.cell.players.list)
                 {
-                    Network::SocketID socketID = networkState.EntityToSocketID[entity];
+                    Network::SocketID socketID = networkState.entityToSocketID[entity];
 
                     for (Singletons::GridUpdate& update : updates)
                     {
@@ -100,11 +94,9 @@ namespace ECS::Systems
                     if (!registry.valid(entity))
                         continue;
 
-                    auto& transform = registry.get<Components::Transform>(entity);
-                    auto& displayInfo = registry.get<Components::DisplayInfo>(entity);
+                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<512>();
 
-                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
-                    if (!Util::MessageBuilder::Entity::BuildEntityCreateMessage(buffer, entity, transform, displayInfo.displayID))
+                    if (!Util::MessageBuilder::Unit::BuildUnitCreate(buffer, registry, entity))
                         continue;
 
                     listUpdates.push_back({ entity, {}, std::move(buffer) });
@@ -117,14 +109,11 @@ namespace ECS::Systems
                 if (!registry.valid(entity))
                     continue;
 
-                if (!networkState.EntityToSocketID.contains(entity))
+                if (!networkState.entityToSocketID.contains(entity))
                     continue;
 
-                Components::Transform& transform = registry.get<Components::Transform>(entity);
-                auto& displayInfo = registry.get<Components::DisplayInfo>(entity);
-
-                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::Entity::BuildEntityCreateMessage(buffer, entity, transform, displayInfo.displayID))
+                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<512>();
+                if (!Util::MessageBuilder::Unit::BuildUnitCreate(buffer, registry, entity))
                     continue;
 
                 enterUpdates.push_back({ entity, {}, std::move(buffer) });
@@ -135,7 +124,7 @@ namespace ECS::Systems
             // Send Create Messages to all players in the cell
             for (entt::entity entity : gridSingleton.cell.players.list)
             {
-                Network::SocketID socketID = networkState.EntityToSocketID[entity];
+                Network::SocketID socketID = networkState.entityToSocketID[entity];
 
                 bool justEntered = gridSingleton.cell.players.entering.contains(entity);
                 if (justEntered)
@@ -166,7 +155,8 @@ namespace ECS::Systems
         {
             if (numPlayersInCell)
             {
-                for (auto& update : gridSingleton.cell.updates)
+                Singletons::GridUpdate update;
+                while (gridSingleton.cell.updates.try_dequeue(update))
                 {
                     for (entt::entity entity : gridSingleton.cell.players.list)
                     {
@@ -174,16 +164,17 @@ namespace ECS::Systems
                         if (shouldSkip)
                             continue;
 
-                        Network::SocketID socketID = networkState.EntityToSocketID[entity];
+                        Network::SocketID socketID = networkState.entityToSocketID[entity];
 
                         networkState.server->SendPacket(socketID, update.buffer);
                     }
                 }
             }
-
-            gridSingleton.cell.updates.clear();
+            else
+            {
+                Singletons::GridUpdate update;
+                while (gridSingleton.cell.updates.try_dequeue(update)) { }
+            }
         }
-
-        gridSingleton.cell.mutex.unlock();
     }
 }

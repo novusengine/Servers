@@ -1,6 +1,7 @@
 #include "Scheduler.h"
 
-#include "Server-Game/ECS/Components/Transform.h"
+#include "Server-Game/ECS/Singletons/TimeState.h"
+#include "Server-Game/ECS/Systems/CharacterLoginHandler.h"
 #include "Server-Game/ECS/Systems/DatabaseSetup.h"
 #include "Server-Game/ECS/Systems/NetworkConnection.h"
 #include "Server-Game/ECS/Systems/UpdatePower.h"
@@ -19,9 +20,12 @@ namespace ECS
 
     void Scheduler::Init(entt::registry& registry)
     {
+        registry.ctx().emplace<Singletons::TimeState>();
+
         Systems::DatabaseSetup::Init(registry);
-        Systems::SimpleReplication::Init(registry);
         Systems::NetworkConnection::Init(registry);
+        Systems::CharacterLoginHandler::Init(registry);
+        Systems::SimpleReplication::Init(registry);
         Systems::UpdatePower::Init(registry);
         Systems::UpdateSpell::Init(registry);
         Systems::UpdateScripts::Init(registry);
@@ -32,6 +36,7 @@ namespace ECS
         // TODO: You know, actually scheduling stuff and multithreading (enkiTS tasks?)
         Systems::DatabaseSetup::Update(registry, deltaTime);
         Systems::NetworkConnection::Update(registry, deltaTime);
+        Systems::CharacterLoginHandler::Update(registry, deltaTime);
         Systems::UpdatePower::Update(registry, deltaTime);
         Systems::UpdateSpell::Update(registry, deltaTime);
         Systems::UpdateScripts::Update(registry, deltaTime);

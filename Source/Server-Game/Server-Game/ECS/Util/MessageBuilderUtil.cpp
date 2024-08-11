@@ -1,5 +1,6 @@
 #include "MessageBuilderUtil.h"
 #include "Server-Game/ECS/Components/CombatLog.h"
+#include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 
 #include <entt/entt.hpp>
@@ -8,13 +9,13 @@ namespace ECS::Util::MessageBuilder
 {
     u32 AddHeader(std::shared_ptr<Bytebuffer>& buffer, Network::GameOpcode opcode, u16 size)
     {
-        Network::PacketHeader header =
+        Network::MessageHeader header =
         {
             .opcode = static_cast<Network::OpcodeType>(opcode),
             .size = size
         };
 
-        if (buffer->GetSpace() < sizeof(Network::PacketHeader))
+        if (buffer->GetSpace() < sizeof(Network::MessageHeader))
             return std::numeric_limits<u32>().max();
 
         u32 headerPos = static_cast<u32>(buffer->writtenData);
@@ -25,12 +26,12 @@ namespace ECS::Util::MessageBuilder
 
     bool ValidatePacket(const std::shared_ptr<Bytebuffer>& buffer, u32 headerPos)
     {
-        if (buffer->writtenData < headerPos + sizeof(Network::PacketHeader))
+        if (buffer->writtenData < headerPos + sizeof(Network::MessageHeader))
             return false;
 
-        Network::PacketHeader* header = reinterpret_cast<Network::PacketHeader*>(buffer->GetDataPointer() + headerPos);
+        Network::MessageHeader* header = reinterpret_cast<Network::MessageHeader*>(buffer->GetDataPointer() + headerPos);
 
-        u32 headerSize = static_cast<u32>(buffer->writtenData - headerPos) - sizeof(Network::PacketHeader);
+        u32 headerSize = static_cast<u32>(buffer->writtenData - headerPos) - sizeof(Network::MessageHeader);
         if (headerSize > std::numeric_limits<u16>().max())
             return false;
 
@@ -38,7 +39,7 @@ namespace ECS::Util::MessageBuilder
         return true;
     }
 
-    bool CreatePacket(std::shared_ptr<Bytebuffer>& buffer, Network::GameOpcode opcode, std::function<void()> func)
+    bool CreatePacket(std::shared_ptr<Bytebuffer>& buffer, Network::GameOpcode opcode, std::function<void()>&& func)
     {
         if (!buffer)
             return false;
@@ -55,79 +56,59 @@ namespace ECS::Util::MessageBuilder
 
     namespace Authentication
     {
-        bool BuildConnectedMessage(std::shared_ptr<Bytebuffer>& buffer, u8 result, entt::entity entity, const std::string* resultString)
+        bool BuildConnectedMessage(std::shared_ptr<Bytebuffer>& buffer, Network::ConnectResult result)
         {
-            static const std::string EmptyStr = "";
-            static const std::string CharacterDoesNotExist = "Character does not exist";
-            static const std::string AlreadyConnectedToACharacter = "Already connected to a character";
-            static const std::string CharacterInUse = "Character is in use";
-
-            if (!resultString)
-                resultString = &EmptyStr;
-
-            switch (result)
+            bool createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_Connected, [&buffer, result]()
             {
-                case 0: break;
-
-                default:
-                {
-                    switch (result)
-                    {
-                        case 0x1:
-                        {
-                            resultString = &CharacterDoesNotExist;
-                            break;
-                        }
-
-                        case 0x2:
-                        {
-                            resultString = &AlreadyConnectedToACharacter;
-                            break;
-                        }
-
-                        case 0x4:
-                        {
-                            resultString = &CharacterInUse;
-                            break;
-                        }
-                    }
-
-                    break;
-                }
-            }
-
-            bool createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_Connected, [&]()
-            {
-                buffer->PutU8(result);
-                buffer->Put(entity);
-                buffer->PutString(*resultString);
+                buffer->Put(result);
             });
 
             return createPacketResult;
         }
     }
 
+    namespace Heartbeat
+    {
+        bool BuildUpdateStatsMessage(std::shared_ptr<Bytebuffer>& buffer, u8 serverDiff)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_UpdateStats, [&buffer, serverDiff]()
+            {
+                buffer->PutU8(serverDiff);
+            });
+
+            return result;
+        }
+    }
+
     namespace Entity
     {
-        bool BuildEntityMoveMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const vec3& position, const quat& rotation, const Components::MovementFlags& movementFlags, f32 verticalVelocity)
+        bool BuildEntityMoveMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const vec3& position, const quat& rotation, const Components::MovementFlags movementFlags, f32 verticalVelocity)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Shared_EntityMove, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Shared_EntityMove, [&buffer, &position, &rotation, entity, movementFlags, verticalVelocity]()
             {
                 buffer->Put(entity);
                 buffer->Put(position);
                 buffer->Put(rotation);
                 buffer->Put(movementFlags);
-                buffer->Put(verticalVelocity);
+                buffer->PutF32(verticalVelocity);
             });
 
             return result;
         }
-        bool BuildEntityCreateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::Transform& transform, u32 displayID)
+        bool BuildSetMoverMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityCreate, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_SetMover, [&buffer, entity]()
             {
                 buffer->Put(entity);
-                buffer->PutU32(displayID);
+            });
+
+            return result;
+        }
+        bool BuildEntityCreateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::Transform& transform)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityCreate, [&buffer, &transform, entity]()
+            {
+                buffer->Put(entity);
                 buffer->Put(transform);
             });
 
@@ -135,52 +116,29 @@ namespace ECS::Util::MessageBuilder
         }
         bool BuildEntityDestroyMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityDestroy, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityDestroy, [&buffer, entity]()
             {
                 buffer->Put(entity);
             });
 
             return result;
         }
-        bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, const Components::UnitStatsComponent& unitStatsComponent)
+        bool BuildUnitStatsMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, Components::PowerType powerType, f32 base, f32 current, f32 max)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityResourcesUpdate, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityResourcesUpdate, [&buffer, entity, powerType, base, current, max]()
             {
-                buffer->Put(entity);
-                buffer->Put(Components::PowerType::Health);
-                buffer->PutF32(unitStatsComponent.baseHealth);
-                buffer->PutF32(unitStatsComponent.currentHealth);
-                buffer->PutF32(unitStatsComponent.maxHealth);
-            });
-
-            if (!result)
-                return false;
-
-            for (i32 i = 0; i < (u32)Components::PowerType::Count; i++)
-            {
-                Components::PowerType powerType = (Components::PowerType)i;
-
-                f32 powerValue = unitStatsComponent.currentPower[i];
-                f32 basePower = unitStatsComponent.basePower[i];
-                f32 maxPower = unitStatsComponent.maxPower[i];
-
-                u32 headerPos = AddHeader(buffer, Network::GameOpcode::Server_EntityResourcesUpdate);
-
                 buffer->Put(entity);
                 buffer->Put(powerType);
-                buffer->PutF32(basePower);
-                buffer->PutF32(powerValue);
-                buffer->PutF32(maxPower);
+                buffer->PutF32(base);
+                buffer->PutF32(current);
+                buffer->PutF32(max);
+            });
 
-                if (!ValidatePacket(buffer, headerPos))
-                    return false;
-            }
-
-            return true;
+            return result;
         }
         bool BuildEntityTargetUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, entt::entity target)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Shared_EntityTargetUpdate, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Shared_EntityTargetUpdate, [&buffer, entity, target]()
             {
                 buffer->Put(entity);
                 buffer->Put(target);
@@ -190,7 +148,7 @@ namespace ECS::Util::MessageBuilder
         }
         bool BuildEntitySpellCastMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, f32 castTime, f32 castDuration)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityCastSpell, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityCastSpell, [&buffer, entity, castTime, castDuration]()
             {
                 buffer->Put(entity);
                 buffer->PutF32(castTime);
@@ -201,13 +159,36 @@ namespace ECS::Util::MessageBuilder
         }
         bool BuildEntityDisplayInfoUpdateMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity entity, u32 displayID)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityDisplayInfoUpdate, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityDisplayInfoUpdate, [&buffer, entity, displayID]()
             {
                 buffer->Put(entity);
                 buffer->PutU32(displayID);
             });
 
             return result;
+        }
+    }
+
+    namespace Unit
+    {
+        bool BuildUnitCreate(std::shared_ptr<Bytebuffer>& buffer, entt::registry& registry, entt::entity entity)
+        {
+            Components::Transform& transform = registry.get<Components::Transform>(entity);
+            Components::UnitStatsComponent& unitStatsComponent = registry.get<Components::UnitStatsComponent>(entity);
+            Components::DisplayInfo& displayInfo = registry.get<Components::DisplayInfo>(entity);
+
+            bool failed = false;
+            failed |= !Entity::BuildEntityCreateMessage(buffer, entity, transform);
+            failed |= !Entity::BuildEntityDisplayInfoUpdateMessage(buffer, entity, displayInfo.displayID);
+
+            failed |= !Entity::BuildUnitStatsMessage(buffer, entity, Components::PowerType::Health, unitStatsComponent.baseHealth, unitStatsComponent.currentHealth, unitStatsComponent.maxHealth);
+
+            for (i32 i = 0; i < (u32)Components::PowerType::Count; i++)
+            {
+                failed |= !Entity::BuildUnitStatsMessage(buffer, entity, (Components::PowerType)i, unitStatsComponent.basePower[i], unitStatsComponent.currentPower[i], unitStatsComponent.maxPower[i]);
+            }
+
+            return !failed;
         }
     }
 
@@ -219,7 +200,7 @@ namespace ECS::Util::MessageBuilder
 
             if (result == 0)
             {
-                result = CreatePacket(buffer, Network::GameOpcode::Server_SendSpellCastResult, [&]()
+                createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendSpellCastResult, [&buffer, entity, result, castTime, castDuration]()
                 {
                     buffer->PutU8(result);
                     buffer->PutF32(castTime);
@@ -250,7 +231,7 @@ namespace ECS::Util::MessageBuilder
                     default: break;
                 }
 
-                createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendSpellCastResult, [&]()
+                createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendSpellCastResult, [&buffer, &errorString, result]()
                 {
                     buffer->PutU8(result);
                     buffer->PutString(*errorString);
@@ -277,7 +258,7 @@ namespace ECS::Util::MessageBuilder
         }
         bool BuildHealingDoneMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity source, entt::entity target, f32 healing)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_SendCombatEvent, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_SendCombatEvent, [&buffer, source, target, healing]()
             {
                 buffer->Put(Components::CombatLogEvents::HealingDone);
                 buffer->Put(source);
@@ -289,7 +270,7 @@ namespace ECS::Util::MessageBuilder
         }
         bool BuildRessurectedMessage(std::shared_ptr<Bytebuffer>& buffer, entt::entity source, entt::entity target)
         {
-            bool result = CreatePacket(buffer, Network::GameOpcode::Server_SendCombatEvent, [&]()
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_SendCombatEvent, [&buffer, source, target]()
             {
                 buffer->Put(Components::CombatLogEvents::Ressurected);
                 buffer->Put(source);
@@ -302,7 +283,18 @@ namespace ECS::Util::MessageBuilder
 
     namespace Cheat
     {
-        bool BuildCharacterCreateResultMessage(std::shared_ptr<Bytebuffer>& buffer, const std::string& name, u8 result)
+        bool BuildCheatCommandResultMessage(std::shared_ptr<Bytebuffer>& buffer, u8 result, const std::string& response)
+        {
+            bool createdPacket = CreatePacket(buffer, Network::GameOpcode::Server_SendCheatCommandResult, [&buffer, &response, result]()
+            {
+                buffer->PutU8(result);
+                buffer->PutString(response);
+            });
+
+            return createdPacket;
+        }
+
+        bool BuildCheatCreateCharacterResponse(std::shared_ptr<Bytebuffer>& buffer, u8 result)
         {
             static const std::string EmptyStr = "";
             static const std::string InvalidNameSupplied = "Character creation failed due to invalid name";
@@ -340,16 +332,9 @@ namespace ECS::Util::MessageBuilder
                 default: break;
             }
 
-            bool createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendCheatCommandResult , [&]()
-            {
-                buffer->PutU8(result);
-                buffer->PutString(*resultString);
-            });
-
-            return createPacketResult;
+            return BuildCheatCommandResultMessage(buffer, result, *resultString);
         }
-
-        bool BuildCharacterDeleteResultMessage(std::shared_ptr<Bytebuffer>& buffer, const std::string& name, u8 result)
+        bool BuildCheatDeleteCharacterResponse(std::shared_ptr<Bytebuffer>& buffer, u8 result)
         {
             static const std::string EmptyStr = "";
             static const std::string CharacterWasDeleted = "Character was deleted";
@@ -387,13 +372,7 @@ namespace ECS::Util::MessageBuilder
                 default: break;
             }
 
-            bool createPacketResult = CreatePacket(buffer, Network::GameOpcode::Server_SendCheatCommandResult, [&]()
-            {
-                buffer->PutU8(result);
-                buffer->PutString(*resultString);
-            });
-
-            return createPacketResult;
+            return BuildCheatCommandResultMessage(buffer, result, *resultString);
         }
     }
 }

@@ -9,7 +9,6 @@
 #include <entt/fwd.hpp>
 #include <robinhood/robinhood.h>
 
-
 namespace ECS::Singletons
 {
     struct GridUpdateFlag
@@ -38,9 +37,7 @@ namespace ECS::Singletons
     {
     public:
         GridCellEntityList players;
-        std::vector<GridUpdate> updates;
-
-        std::mutex mutex;
+        moodycamel::ConcurrentQueue<GridUpdate> updates;
     };
 
     struct GridSingleton

@@ -3,10 +3,14 @@
 #include "Server-Game/ECS/Singletons/DatabaseState.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
+#include <Server-Common/Database/DBController.h>
+#include <Server-Common/Database/Util/CharacterUtils.h>
+#include <Server-Common/Database/Util/CurrencyUtils.h>
+#include <Server-Common/Database/Util/PermissionUtils.h>
+
 #include <Base/Util/DebugHandler.h>
 #include <Base/Util/JsonUtils.h>
-
-#include <Server-Common/Database/DBController.h>
+#include <Base/Util/StringUtils.h>
 
 #include <entt/entt.hpp>
 
@@ -39,39 +43,35 @@ namespace ECS::Systems
 
         // Setup DatabaseState
         {
-            databaseState.controller = std::make_unique<Server::Database::DBController>();
+            databaseState.controller = std::make_unique<Database::DBController>();
 
             nlohmann::json& connection = databaseState.config["Connection"];
-            Server::Database::DBEntry dbEntry(connection["address"], connection["port"], connection["database"], connection["user"], connection["password"]);
+            Database::DBEntry dbEntry(connection["address"], connection["port"], connection["database"], connection["user"], connection["password"]);
 
-            databaseState.controller->SetDBEntry(Server::Database::DBType::Auth, dbEntry);
-            databaseState.controller->SetDBEntry(Server::Database::DBType::Character, dbEntry);
-            databaseState.controller->SetDBEntry(Server::Database::DBType::World, dbEntry);
+            databaseState.controller->SetDBEntry(Database::DBType::Auth, dbEntry);
+            databaseState.controller->SetDBEntry(Database::DBType::Character, dbEntry);
+            databaseState.controller->SetDBEntry(Database::DBType::World, dbEntry);
         }
 
-        // Load Character Table
+        auto authConnection = databaseState.controller->GetConnection(Database::DBType::Auth);
+        auto characterConnection = databaseState.controller->GetConnection(Database::DBType::Character);
+        auto worldConnection = databaseState.controller->GetConnection(Database::DBType::World);
+
+        if (authConnection == nullptr || characterConnection == nullptr || worldConnection == nullptr)
         {
+            NC_LOG_CRITICAL("[Database] : Failed to connect to the database");
+            return;
+        }
 
-            if (auto conn = databaseState.controller->GetConnection(Server::Database::DBType::Character))
-            {
-                conn->connection->prepare("CreateCharacter", "INSERT INTO public.characters (name, permissionlevel) VALUES ($1, $2) RETURNING id");
-                conn->connection->prepare("DeleteCharacter", "DELETE FROM public.characters WHERE id = $1");
+        // Load Character Tables
+        {
+            Database::Util::Permission::InitPermissionTablesPreparedStatements(characterConnection);
+            Database::Util::Currency::InitCurrencyTablesPreparedStatements(characterConnection);
+            Database::Util::Character::InitCharacterTablesPreparedStatements(characterConnection);
 
-                for (auto& [id, name, permissionLevel, position_x, position_y, position_z, position_o] : conn->Context().query<u32, std::string, u16, f32, f32, f32, f32>("SELECT id, name, permissionlevel, position_x, position_y, position_z, position_o FROM public.characters ORDER BY id"))
-                {
-                    Server::Database::CharacterDefinition character =
-                    {
-                        .id = id,
-                        .name = name,
-                        .permissionLevel = permissionLevel,
-                        .position = vec3(position_x, position_y, position_z),
-                        .orientation = position_o
-                    };
-
-                    databaseState.characterIDToDefinition.insert({ id, character });
-                    databaseState.characterNameToDefinition.insert({ name, character });
-                }
-            }
+            Database::Util::Permission::LoadPermissionTables(characterConnection, databaseState.permissionTables);
+            Database::Util::Currency::LoadCurrencyTables(characterConnection, databaseState.currencyTables);
+            Database::Util::Character::LoadCharacterTables(characterConnection, databaseState.characterTables);
         }
     }
 

@@ -5,7 +5,7 @@
 
 #include <pqxx/pqxx>
 
-namespace Server::Database
+namespace Database
 {
 	enum class DBType
 	{
@@ -61,7 +61,8 @@ namespace Server::Database
 			}
         }
 
-		pqxx::work Context() { return pqxx::work(*connection); }
+		pqxx::nontransaction NewNonTransaction() { return pqxx::nontransaction(*connection); }
+		pqxx::work NewTransaction() { return pqxx::work(*connection); }
 
 	public:
 		pqxx::connection* connection = nullptr;
