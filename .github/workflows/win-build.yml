@@ -9,6 +9,8 @@ jobs:
     
     strategy:
       fail-fast: false
+      matrix:
+        build-type: [RelDebug]
       
     steps:
     - uses: actions/checkout@v4
@@ -26,10 +28,10 @@ jobs:
 
     - name: Build
       run: |
-        msbuild /m /p:Configuration=Debug Build/Servers.sln
+        msbuild /m /p:Configuration=${{ matrix.build-type }} Build/Servers.sln
         
     - name: Upload Game Server artifact
       uses: actions/upload-artifact@v4
       with:
         name: Server-Game
-        path: Build/Bin/Servers/Debug/Server-Game.exe
+        path: Build/Bin/Servers/${{ matrix.build-type }}/Server-Game.exe
