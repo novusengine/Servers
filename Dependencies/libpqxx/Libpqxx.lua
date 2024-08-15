@@ -1,11 +1,26 @@
-local postgresRoot = ""
--- TODO: should probably not hardcode postgres dir for Linux but oh well
 if os.target() == "windows" then
     local osEnvName = "POSTGRES_ROOT"
-    postgresRoot = os.getenv(osEnvName)
+    local postgresRoot = os.getenv(osEnvName)
 
     if not postgresRoot then
-        Solution.Util.PrintError("Failed to find System Environment Variable '" .. osEnvName .. ". Please ensure Postgres is installed and that " .. osEnvName .. " have been properly configured")
+        Solution.Util.PrintError("Failed to find System Environment Variable '" .. osEnvName .. "'. Please ensure PostgreSQL is installed and that " .. osEnvName .. " has been properly configured.")
+    else
+        print("Found PostgreSQL at: " .. postgresRoot)
+    end
+else
+    -- Fetch PostgreSQL include, lib paths and version using pg_config on Linux
+    local pgInclude = io.popen("pg_config --includedir"):read("*a"):gsub("\n", "")
+    local pgIncludeServer = io.popen("pg_config --includedir-server"):read("*a"):gsub("\n", "")
+    local pgLibDir = io.popen("pg_config --libdir"):read("*a"):gsub("\n", "")
+    local postgresVersion = io.popen("pg_config --version"):read("*a"):gsub("\n", "")
+
+    if pgInclude == "" or pgLibDir == "" then
+        Solution.Util.PrintError("Failed to find PostgreSQL installation using 'pg_config'. Please ensure PostgreSQL is installed.")
+    else
+        print("PostgreSQL version: " .. postgresVersion)
+        print("PostgreSQL include dir: " .. pgInclude)
+        print("PostgreSQL include-server dir: " .. pgIncludeServer)
+        print("PostgreSQL lib dir: " .. pgLibDir)
     end
 end
 
@@ -19,13 +34,17 @@ Solution.Util.CreateStaticLib(dep.Name, Solution.Projects.Current.BinDir, dep.De
 
     local baseDir = dep.Path .. "/Libpqxx"
     local sourceDir = baseDir .. "/src"
-    local pqinclude = iif(os.istarget("windows"), postgresRoot .. "/include", { "/usr/include/postgresql", "/usr/include/postgresql/14/server" })
-    
-    if os.target() == "linux" then
-        Solution.Util.SetLibDirs({ "/usr/lib/x86_64-linux-gnu", "/usr/lib/postgresql/14/lib" })
+
+    -- Include directories setup
+    local pqInclude = {}
+    if os.target() == "windows" then
+        table.insert(pqInclude, postgresRoot .. "/include")
+    else
+        table.insert(pqInclude, pgInclude)
+        table.insert(pqInclude, pgIncludeServer)
     end
-    
-    local includeDirs = { baseDir .. "/include", pqinclude }
+
+    local includeDirs = { baseDir .. "/include", table.unpack(pqInclude) }
     local files =
     {
         sourceDir .. "/**.cxx",
@@ -34,8 +53,15 @@ Solution.Util.CreateStaticLib(dep.Name, Solution.Projects.Current.BinDir, dep.De
     Solution.Util.SetFiles(files)
     Solution.Util.SetIncludes(includeDirs)
     Solution.Util.SetDefines(defines)
-    
-    local libPath = iif(os.istarget("windows"), postgresRoot .. "/lib/libpq.lib", "pq")
+
+    -- Library link setup
+    local libPath = ""
+    if os.target() == "windows" then
+        libPath = postgresRoot .. "/lib/libpq.lib"
+    else
+        libPath = "pq"  -- on Linux the system linker will handle finding libpq based on pg_config
+        Solution.Util.SetLibDirs({pgLibDir})
+    end
     Solution.Util.SetLinks(libPath)
 end)
 
