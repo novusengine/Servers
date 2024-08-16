@@ -68,8 +68,12 @@ Solution.Util.CreateStaticLib(dep.Name, Solution.Projects.Current.BinDir, dep.De
 end)
 
 Solution.Util.CreateDep(dep.NameLow, dep.Dependencies, function()
-    local baseDir = dep.Path .. "/Libpqxx"
-    local _, _, foundLibs = getPostgresInfo()
-    Solution.Util.SetIncludes({baseDir .. "/include"})
+    local foundLibs = Solution.Util.GetDepCache(dep.NameLow, "cache")
+    if not foundLibs then
+        local _, _, foundLibs = getPostgresInfo()
+        Solution.Util.SetDepCache(dep.NameLow, "cache", foundLibs)
+    end
+    
+    Solution.Util.SetIncludes({dep.Path .. "/Libpqxx/include"})
     Solution.Util.SetLinks({ dep.Name, foundLibs })
 end)
