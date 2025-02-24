@@ -54,7 +54,7 @@ namespace Database::Util::Currency
             currencyTables.idToDefinition.insert({ id, currency });
         });
 
-        NC_LOG_INFO("Loading Table 'currency' ({0} Rows)", numRows);
+        NC_LOG_INFO("Loaded Table 'currency' ({0} Rows)", numRows);
         return numRows;
     }
 }

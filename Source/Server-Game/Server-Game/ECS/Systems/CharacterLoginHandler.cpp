@@ -2,11 +2,13 @@
 
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
+#include "Server-Game/ECS/Components/ObjectInfo.h"
+#include "Server-Game/ECS/Components/PlayerContainers.h"
+#include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Singletons/DatabaseState.h"
-#include "Server-Game/ECS/Singletons/GridSingleton.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/Util/UnitUtils.h"
@@ -34,80 +36,56 @@ namespace ECS::Systems
             return;
 
         Singletons::DatabaseState& databaseState = ctx.get<Singletons::DatabaseState>();
-        Singletons::GridSingleton& gridSingleton = ctx.get<Singletons::GridSingleton>();
 
         CharacterLoginRequest request;
         while (networkState.characterLoginRequest.try_dequeue(request))
         {
             Network::SocketID socketID = request.socketID;
-            u32 characterNameHash = request.nameHash;
-            u64 characterID = std::numeric_limits<u64>::max();
+            u32 requestedCharacterNameHash = request.nameHash;
 
-            bool characterDoesNotExist = !databaseState.characterTables.nameHashToID.contains(characterNameHash);
-            bool alreadyConnectedToACharacter = networkState.socketIDToCharacterID.contains(socketID);
-            bool characterInUse = false;
-
-            if (!characterDoesNotExist && !alreadyConnectedToACharacter)
+            bool notConnectedToACharacter = !networkState.socketIDToEntity.contains(socketID);
+            bool characterDoesExist = databaseState.characterTables.charNameHashToCharID.contains(requestedCharacterNameHash);
+            if (notConnectedToACharacter && characterDoesExist)
             {
-                characterID = databaseState.characterTables.nameHashToID[characterNameHash];
-                characterInUse = networkState.characterIDToSocketID.contains(characterID);
-            }
+                u64 requestedCharacterID = databaseState.characterTables.charNameHashToCharID[requestedCharacterNameHash];
+                bool characterIsOffline = !networkState.characterIDToSocketID.contains(requestedCharacterID);
 
-            if (characterDoesNotExist || alreadyConnectedToACharacter || characterInUse)
-            {
-                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<16>();
-                if (Util::MessageBuilder::Authentication::BuildConnectedMessage(buffer, Network::ConnectResult::Failed))
+                if (characterIsOffline)
                 {
+                    entt::entity socketEntity = registry.create();
+
+                    auto& netInfo = registry.emplace<Components::NetInfo>(socketEntity);
+                    netInfo.socketID = socketID;
+
+                    auto& objectInfo = registry.emplace<Components::ObjectInfo>(socketEntity);
+                    objectInfo.guid = GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Player, requestedCharacterID);
+
+                    networkState.socketIDToEntity[socketID] = socketEntity;
+                    networkState.characterIDToEntity[requestedCharacterID] = socketEntity;
+                    networkState.characterIDToSocketID[requestedCharacterID] = socketID;
+
+                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<16>();
+                    if (!Util::MessageBuilder::Authentication::BuildConnectedMessage(buffer, Network::ConnectResult::Success))
+                    {
+                        NC_LOG_ERROR("Failed to build character login message for character: {0}", requestedCharacterID);
+
+                        networkState.server->CloseSocketID(socketID);
+                        continue;
+                    }
+
                     networkState.server->SendPacket(socketID, buffer);
+                    registry.emplace<Tags::CharacterNeedsInitialization>(socketEntity);
+                    continue;
                 }
-
-                networkState.server->CloseSocketID(socketID);
-                continue;
             }
 
-            entt::entity socketEntity = registry.create();
-            
-            networkState.socketIDToCharacterID[socketID] = characterID;
-            networkState.socketIDToEntity[socketID] = socketEntity;
-            networkState.characterIDToSocketID[characterID] = socketID;
-            networkState.entityToSocketID[socketEntity] = socketID;
-
-            Database::CharacterDefinition& characterDefinition = databaseState.characterTables.idToDefinition[characterID];
-
-            Components::Transform& transform = registry.emplace<Components::Transform>(socketEntity);
-            transform.position = characterDefinition.position;
-            transform.rotation = quat(vec3(0.0f, characterDefinition.orientation, 0.0f));
-
-            Components::DisplayInfo& displayInfo = registry.emplace<Components::DisplayInfo>(socketEntity);
-            displayInfo.race = characterDefinition.GetRace();
-            displayInfo.gender = characterDefinition.GetGender();
-            displayInfo.displayID = UnitUtils::GetDisplayIDFromRaceGender(displayInfo.race, displayInfo.gender);
-
-            UnitUtils::AddStatsComponent(registry, socketEntity);
-
-            Components::TargetInfo& targetInfo = registry.emplace<Components::TargetInfo>(socketEntity);
-            targetInfo.target = entt::null;
-
-           registry.emplace<Components::NetInfo>(socketEntity);
-
-            std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<512>();
-
-            bool failed = false;
-            failed |= !Util::MessageBuilder::Authentication::BuildConnectedMessage(buffer, Network::ConnectResult::Success);
-            failed |= !Util::MessageBuilder::Unit::BuildUnitCreate(buffer, registry, socketEntity);
-            failed |= !Util::MessageBuilder::Entity::BuildSetMoverMessage(buffer, socketEntity);
-
-            if (failed)
+            std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<16>();
+            if (Util::MessageBuilder::Authentication::BuildConnectedMessage(buffer, Network::ConnectResult::Failed))
             {
-                NC_LOG_ERROR("Failed to build character login message for characterID: {0}", characterID);
-
-                networkState.server->CloseSocketID(socketID);
-                continue;
+                networkState.server->SendPacket(socketID, buffer);
             }
 
-            gridSingleton.cell.players.entering.insert(socketEntity);
-
-            networkState.server->SendPacket(socketID, buffer);
+            networkState.server->CloseSocketID(socketID);
         }
     }
 }

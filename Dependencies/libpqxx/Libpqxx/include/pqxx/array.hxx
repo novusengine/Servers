@@ -56,7 +56,7 @@ class array final
 {
 public:
   /// Parse an SQL array, read as text from a pqxx::result or stream.
-  /** Uses `conn` only during construction, to find out the text encoding in
+  /** Uses `cx` only during construction, to find out the text encoding in
    * which it should interpret `data`.
    *
    * Once the `array` constructor completes, destroying or moving the
@@ -65,8 +65,8 @@ public:
    * @throws pqxx::unexpected_null if the array contains a null value, and the
    * `ELEMENT` type does not support null values.
    */
-  array(std::string_view data, connection const &conn) :
-          array{data, pqxx::internal::enc_group(conn.encoding_id())}
+  array(std::string_view data, connection const &cx) :
+          array{data, pqxx::internal::enc_group(cx.encoding_id())}
   {}
 
   /// How many dimensions does this array have?
@@ -200,7 +200,11 @@ private:
           "Malformed array: does not end in the right number of '}'."};
   }
 
-  explicit array(std::string_view data, pqxx::internal::encoding_group enc)
+  // Allow fields to construct arrays passing the encoding group.
+  // Couldn't make this work through a call gate, thanks to the templating.
+  friend class ::pqxx::field;
+
+  array(std::string_view data, pqxx::internal::encoding_group enc)
   {
     using group = pqxx::internal::encoding_group;
     switch (enc)
@@ -502,10 +506,8 @@ private:
 };
 
 
-/// Low-level array parser.
-/** @warning This is not a great API.  Something nicer is on the way.
- *
- * Use this to read an array field retrieved from the database.
+/// Low-level parser for C++ arrays.  @deprecated Use @ref pqxx::array instead.
+/** Clunky old API for parsing SQL arrays.
  *
  * @warning This parser will only work reliably if your client encoding is
  * UTF-8, ASCII, or a "safe ASCII superset" (such as the EUC encodings) where
@@ -593,7 +595,7 @@ private:
   template<pqxx::internal::encoding_group>
   std::string::size_type scan_unquoted_string() const;
   template<pqxx::internal::encoding_group>
-  std::string parse_unquoted_string(std::string::size_type end) const;
+  std::string_view parse_unquoted_string(std::string::size_type end) const;
 
   template<pqxx::internal::encoding_group>
   std::string::size_type scan_glyph(std::string::size_type pos) const;

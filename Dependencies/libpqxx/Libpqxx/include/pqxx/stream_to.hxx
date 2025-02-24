@@ -121,8 +121,8 @@ public:
     transaction_base &tx, table_path path,
     std::initializer_list<std::string_view> columns = {})
   {
-    auto const &conn{tx.conn()};
-    return raw_table(tx, conn.quote_table(path), conn.quote_columns(columns));
+    auto const &cx{tx.conn()};
+    return raw_table(tx, cx.quote_table(path), cx.quote_columns(columns));
   }
 
 #if defined(PQXX_HAVE_CONCEPTS)
@@ -138,9 +138,9 @@ public:
   static stream_to
   table(transaction_base &tx, table_path path, COLUMNS const &columns)
   {
-    auto const &conn{tx.conn()};
+    auto const &cx{tx.conn()};
     return stream_to::raw_table(
-      tx, conn.quote_table(path), tx.conn().quote_columns(columns));
+      tx, cx.quote_table(path), tx.conn().quote_columns(columns));
   }
 
   /// Create a `stream_to` writing to a named table and columns.
@@ -259,14 +259,6 @@ public:
   template<typename Columns>
   [[deprecated("Use table() or raw_table() factory.")]] stream_to(
     transaction_base &, std::string_view table_name, Columns const &columns);
-
-  /// Create a stream, specifying column names as a sequence of strings.
-  /** @deprecated Use @ref table or @ref raw_table as a factory.
-   */
-  template<typename Iter>
-  [[deprecated("Use table() or raw_table() factory.")]] stream_to(
-    transaction_base &, std::string_view table_name, Iter columns_begin,
-    Iter columns_end);
 
 private:
   /// Stream a pre-quoted table name and columns list.
@@ -472,20 +464,6 @@ template<typename Columns>
 inline stream_to::stream_to(
   transaction_base &tx, std::string_view table_name, Columns const &columns) :
         stream_to{tx, table_name, std::begin(columns), std::end(columns)}
-{}
-
-
-template<typename Iter>
-inline stream_to::stream_to(
-  transaction_base &tx, std::string_view table_name, Iter columns_begin,
-  Iter columns_end) :
-        stream_to{
-          tx,
-          tx.quote_name(
-            table_name,
-            separated_list(",", columns_begin, columns_end, [&tx](auto col) {
-              return tx.quote_name(*col);
-            }))}
 {}
 } // namespace pqxx
 #endif

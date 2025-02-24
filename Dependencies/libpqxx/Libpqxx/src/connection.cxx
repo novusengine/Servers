@@ -62,20 +62,36 @@ extern "C"
 #include "pqxx/internal/header-post.hxx"
 
 
+namespace
+{
+void process_notice_raw(
+  pqxx::internal::notice_waiters *waiters, pqxx::zview msg) noexcept
+{
+  if ((waiters != nullptr) and not msg.empty())
+  {
+    auto const rbegin = std::crbegin(waiters->errorhandlers),
+               rend = std::crend(waiters->errorhandlers);
+    for (auto i{rbegin}; (i != rend) and (**i)(msg.data()); ++i);
+
+    if (waiters->notice_handler)
+      waiters->notice_handler(msg);
+  }
+}
+} // namespace
+
+
 extern "C"
 {
   // The PQnoticeProcessor that receives an error or warning from libpq and
   // sends it to the appropriate connection for processing.
-  void pqxx_notice_processor(void *conn, char const *msg) noexcept
+  void pqxx_notice_processor(void *cx, char const *msg) noexcept
   {
-    reinterpret_cast<pqxx::connection *>(conn)->process_notice(msg);
+    process_notice_raw(
+      reinterpret_cast<pqxx::internal::notice_waiters *>(cx),
+      pqxx::zview{msg});
   }
-
-
-  // There's no way in libpq to disable a connection's notice processor.  So,
-  // set an inert one to get the same effect.
-  void inert_notice_processor(void *, char const *) noexcept {}
 } // extern "C"
+
 
 using namespace std::literals;
 
@@ -100,7 +116,10 @@ pqxx::encrypt_password(char const user[], char const password[])
 
 
 pqxx::connection::connection(connection &&rhs) :
-        m_conn{rhs.m_conn}, m_unique_id{rhs.m_unique_id}
+        m_conn{rhs.m_conn},
+        m_notice_waiters{std::move(rhs.m_notice_waiters)},
+        m_notification_handlers{std::move(rhs.m_notification_handlers)},
+        m_unique_id{rhs.m_unique_id}
 {
   rhs.check_movable();
   rhs.m_conn = nullptr;
@@ -113,12 +132,22 @@ pqxx::connection::connection(
 {
   if (m_conn == nullptr)
     throw std::bad_alloc{};
+
+  set_up_notice_handlers();
+
   if (status() == CONNECTION_BAD)
   {
+    std::string const msg{PQerrorMessage(m_conn)};
     PQfinish(m_conn);
     m_conn = nullptr;
-    throw pqxx::broken_connection{PQerrorMessage(m_conn)};
+    throw pqxx::broken_connection{msg};
   }
+}
+
+
+pqxx::connection::connection(internal::pq::PGconn *raw_conn) : m_conn{raw_conn}
+{
+  set_up_notice_handlers();
 }
 
 
@@ -143,6 +172,22 @@ std::pair<bool, bool> pqxx::connection::poll_connect()
   }
 }
 
+
+void pqxx::connection::set_up_notice_handlers()
+{
+  if (not m_notice_waiters)
+    m_notice_waiters = std::make_shared<pqxx::internal::notice_waiters>();
+
+  // Our notice processor gets a pointer to our notice_waiters.  We can't
+  // just pass "this" to it, because it may get called at a time when the
+  // pqxx::connection has already been destroyed and only a pqxx::result
+  // remains.
+  if (m_conn != nullptr)
+    PQsetNoticeProcessor(
+      m_conn, pqxx_notice_processor, m_notice_waiters.get());
+}
+
+
 void pqxx::connection::complete_init()
 {
   if (m_conn == nullptr)
@@ -166,6 +211,7 @@ void pqxx::connection::complete_init()
 void pqxx::connection::init(char const options[])
 {
   m_conn = PQconnectdb(options);
+  set_up_notice_handlers();
   complete_init();
 }
 
@@ -173,6 +219,7 @@ void pqxx::connection::init(char const options[])
 void pqxx::connection::init(char const *params[], char const *values[])
 {
   m_conn = PQconnectdbParams(params, values, 0);
+  set_up_notice_handlers();
   complete_init();
 }
 
@@ -181,9 +228,6 @@ void pqxx::connection::check_movable() const
 {
   if (m_trans)
     throw pqxx::usage_error{"Moving a connection with a transaction open."};
-  if (not std::empty(m_errorhandlers))
-    throw pqxx::usage_error{
-      "Moving a connection with error handlers registered."};
   if (not std::empty(m_receivers))
     throw pqxx::usage_error{
       "Moving a connection with notification receivers registered."};
@@ -195,9 +239,6 @@ void pqxx::connection::check_overwritable() const
   if (m_trans)
     throw pqxx::usage_error{
       "Moving a connection onto one with a transaction open."};
-  if (not std::empty(m_errorhandlers))
-    throw pqxx::usage_error{
-      "Moving a connection onto one with error handlers registered."};
   if (not std::empty(m_receivers))
     throw usage_error{
       "Moving a connection onto one "
@@ -210,10 +251,13 @@ pqxx::connection &pqxx::connection::operator=(connection &&rhs)
   check_overwritable();
   rhs.check_movable();
 
+  // Close our old connection, if any.
   close();
 
   m_conn = std::exchange(rhs.m_conn, nullptr);
   m_unique_id = rhs.m_unique_id;
+  m_notice_waiters = std::move(rhs.m_notice_waiters);
+  m_notification_handlers = std::move(rhs.m_notification_handlers);
 
   return *this;
 }
@@ -233,7 +277,8 @@ pqxx::result pqxx::connection::make_result(
       throw broken_connection{"Lost connection to the database server."};
   }
   auto const enc{internal::enc_group(encoding_id())};
-  auto r{pqxx::internal::gate::result_creation::create(smart, query, enc)};
+  auto r{pqxx::internal::gate::result_creation::create(
+    smart, query, m_notice_waiters, enc)};
   pqxx::internal::gate::result_creation{r}.check_status(desc);
   return r;
 }
@@ -291,7 +336,8 @@ std::string pqxx::connection::get_variable(std::string_view var)
 std::string pqxx::connection::get_var(std::string_view var)
 {
   // (Variables can't be null, so far as I can make out.)
-  return exec(internal::concat("SHOW "sv, quote_name(var)))[0][0]
+  return exec(internal::concat("SHOW "sv, quote_name(var)))
+    .one_field()
     .as<std::string>();
 }
 
@@ -315,16 +361,6 @@ void pqxx::connection::set_up_state()
   if (server_version() <= oldest_server)
     throw feature_not_supported{
       "Unsupported server version; 9.0 is the minimum."};
-
-  // The default notice processor in libpq writes to stderr.  Ours does
-  // nothing.
-  // If the caller registers an error handler, this gets replaced with an
-  // error handler that walks down the connection's chain of handlers.  We
-  // don't do that by default because there's a danger: libpq may call the
-  // notice processor via a result object, even after the connection has been
-  // destroyed and the handlers list no longer exists.
-  PQXX_LIKELY
-  PQsetNoticeProcessor(m_conn, inert_notice_processor, nullptr);
 }
 
 
@@ -334,55 +370,16 @@ bool pqxx::connection::is_open() const noexcept
 }
 
 
-void pqxx::connection::process_notice_raw(char const msg[]) noexcept
-{
-  if ((msg == nullptr) or (*msg == '\0'))
-    return;
-  auto const rbegin = std::crbegin(m_errorhandlers),
-             rend = std::crend(m_errorhandlers);
-  for (auto i{rbegin}; (i != rend) and (**i)(msg); ++i);
-}
-
-
 void pqxx::connection::process_notice(char const msg[]) noexcept
 {
-  if (msg == nullptr)
-    return;
-  zview const view{msg};
-  // TODO: A multibyte message could end in a '\n' that's not a newline!
-  if (std::empty(view))
-    return;
-  else if (view.back() == '\n')
-    process_notice_raw(msg);
-  else
-    // Newline is missing.  Let the zview version of the code add it.
-    PQXX_UNLIKELY
-  process_notice(view);
+  process_notice(zview{msg});
 }
 
 
 void pqxx::connection::process_notice(zview msg) noexcept
 {
-  if (std::empty(msg))
-    return;
-  else if (msg[std::size(msg) - 1] == '\n')
-    process_notice_raw(msg.c_str());
-  else
-    try
-    {
-      // Add newline.
-      std::string buf;
-      buf.reserve(std::size(msg) + 1);
-      buf.assign(msg);
-      buf.push_back('\n');
-      process_notice_raw(buf.c_str());
-    }
-    catch (std::exception const &)
-    {
-      // If nothing else works, try writing the message without the newline.
-      PQXX_UNLIKELY
-      process_notice_raw(msg.c_str());
-    }
+  if (not msg.empty())
+    process_notice_raw(m_notice_waiters.get(), msg);
 }
 
 
@@ -422,6 +419,49 @@ void PQXX_COLD pqxx::connection::add_receiver(pqxx::notification_receiver *n)
 }
 
 
+void pqxx::connection::listen(
+  std::string_view channel, notification_handler handler)
+{
+  if (m_trans != nullptr)
+    throw usage_error{pqxx::internal::concat(
+      "Attempting to listen for notifications on '", channel,
+      "' while transaction is active.")};
+
+  std::string str_name{channel};
+
+  auto const pos{m_notification_handlers.lower_bound(str_name)},
+    handlers_end{std::end(m_notification_handlers)};
+
+  if (handler)
+  {
+    // Setting a handler.
+    if ((pos != handlers_end) and (pos->first == channel))
+    {
+      // Overwrite existing handler.
+      m_notification_handlers.insert_or_assign(
+        pos, std::move(str_name), std::move(handler));
+    }
+    else
+    {
+      // We had no handler installed for this name.  Start listening.
+      exec(pqxx::internal::concat("LISTEN ", quote_name(channel))).no_rows();
+      m_notification_handlers.emplace_hint(pos, channel, std::move(handler));
+    }
+  }
+  else
+  {
+    // Installing an empty handler.  That's equivalent to removing whatever
+    // handler may have been installed previously.
+    if (pos != handlers_end)
+    {
+      // Yes, we had a handler for this name.  Remove it.
+      exec(pqxx::internal::concat("UNLISTEN ", quote_name(channel))).no_rows();
+      m_notification_handlers.erase(pos);
+    }
+  }
+}
+
+
 void PQXX_COLD
 pqxx::connection::remove_receiver(pqxx::notification_receiver *T) noexcept
 {
@@ -439,7 +479,7 @@ pqxx::connection::remove_receiver(pqxx::notification_receiver *T) noexcept
     {
       PQXX_UNLIKELY
       process_notice(internal::concat(
-        "Attempt to remove unknown receiver '", needle.first, "'"));
+        "Attempt to remove unknown receiver '", needle.first, "'\n"));
     }
     else
     {
@@ -453,7 +493,7 @@ pqxx::connection::remove_receiver(pqxx::notification_receiver *T) noexcept
   }
   catch (std::exception const &e)
   {
-    PQXX_UNLIKELY
+    // TODO: Make at least an attempt to append a newline.
     process_notice(e.what());
   }
 }
@@ -553,9 +593,9 @@ using notify_ptr = std::unique_ptr<PGnotify, void (*)(void const *)>;
 
 
 /// Get one notification from a connection, or null.
-notify_ptr get_notif(pqxx::internal::pq::PGconn *conn)
+notify_ptr get_notif(pqxx::internal::pq::PGconn *cx)
 {
-  return {PQnotifies(conn), pqxx::internal::pq::pqfreemem};
+  return {PQnotifies(cx), pqxx::internal::pq::pqfreemem};
 }
 } // namespace
 
@@ -567,16 +607,20 @@ int pqxx::connection::get_notifs()
 
   // Even if somehow we receive notifications during our transaction, don't
   // deliver them.
-  if (m_trans)
+  if (m_trans != nullptr)
     PQXX_UNLIKELY
   return 0;
 
   int notifs = 0;
+
+  // Old mechanism.  This is going away.
   for (auto N{get_notif(m_conn)}; N.get(); N = get_notif(m_conn))
   {
     notifs++;
 
-    auto const Hit{m_receivers.equal_range(std::string{N->relname})};
+    std::string const channel{N->relname};
+
+    auto const Hit{m_receivers.equal_range(channel)};
     if (Hit.second != Hit.first)
     {
       std::string const payload{N->extra};
@@ -608,8 +652,14 @@ int pqxx::connection::get_notifs()
         }
     }
 
+    auto const handler{m_notification_handlers.find(N->relname)};
+    // C++20: Use "dot notation" to initialise struct fields.
+    if (handler != std::end(m_notification_handlers))
+      (handler->second)(notification{*this, channel, N->extra, N->be_pid});
+
     N.reset();
   }
+
   return notifs;
 }
 
@@ -647,18 +697,7 @@ char const *pqxx::connection::err_msg() const noexcept
 
 void PQXX_COLD pqxx::connection::register_errorhandler(errorhandler *handler)
 {
-  // Set notice processor on demand, i.e. only when the caller actually
-  // registers an error handler.
-  // We do this just to make it less likely that users fall into the trap
-  // where a result object may hold a notice processor derived from its parent
-  // connection which has already been destroyed.  Our notice processor goes
-  // through the connection's list of error handlers.  If the connection object
-  // has already been destroyed though, that list no longer exists.
-  // By setting the notice processor on demand, we absolve users who never
-  // register an error handler from ahving to care about this nasty subtlety.
-  if (std::empty(m_errorhandlers))
-    PQsetNoticeProcessor(m_conn, pqxx_notice_processor, this);
-  m_errorhandlers.push_back(handler);
+  m_notice_waiters->errorhandlers.push_back(handler);
 }
 
 
@@ -667,16 +706,16 @@ pqxx::connection::unregister_errorhandler(errorhandler *handler) noexcept
 {
   // The errorhandler itself will take care of nulling its pointer to this
   // connection.
-  m_errorhandlers.remove(handler);
-  if (std::empty(m_errorhandlers))
-    PQsetNoticeProcessor(m_conn, inert_notice_processor, nullptr);
+  m_notice_waiters->errorhandlers.remove(handler);
 }
 
 
 std::vector<pqxx::errorhandler *>
   PQXX_COLD pqxx::connection::get_errorhandlers() const
 {
-  return {std::begin(m_errorhandlers), std::end(m_errorhandlers)};
+  return {
+    std::begin(m_notice_waiters->errorhandlers),
+    std::end(m_notice_waiters->errorhandlers)};
 }
 
 
@@ -756,21 +795,29 @@ void pqxx::connection::close()
     process_notice(internal::concat(
       "Closing connection while ",
       internal::describe_object("transaction"sv, m_trans->name()),
-      " is still open."));
+      " is still open.\n"));
 
     if (not std::empty(m_receivers))
     {
       PQXX_UNLIKELY
-      process_notice("Closing connection with outstanding receivers.");
+      process_notice("Closing connection with outstanding receivers.\n");
       m_receivers.clear();
     }
 
-    std::list<errorhandler *> old_handlers;
-    m_errorhandlers.swap(old_handlers);
-    auto const rbegin{std::crbegin(old_handlers)},
-      rend{std::crend(old_handlers)};
-    for (auto i{rbegin}; i != rend; ++i)
-      pqxx::internal::gate::errorhandler_connection{**i}.unregister();
+    if (m_notice_waiters)
+    {
+      // It's a bit iffy to unregister these in this destructor.  There may
+      // still be result objects that want to process notices.  But it's an
+      // improvement over the 7.9-and-older situation where you'd simply get a
+      // stale pointer.  Better yet, this whole mechanism is going away.
+#include "pqxx/internal/ignore-deprecated-pre.hxx"
+      auto old_handlers{get_errorhandlers()};
+#include "pqxx/internal/ignore-deprecated-post.hxx"
+      auto const rbegin{std::crbegin(old_handlers)},
+        rend{std::crend(old_handlers)};
+      for (auto i{rbegin}; i != rend; ++i)
+        pqxx::internal::gate::errorhandler_connection{**i}.unregister();
+    }
 
     PQfinish(m_conn);
     m_conn = nullptr;
@@ -817,6 +864,7 @@ void pqxx::connection::unregister_transaction(transaction_base *t) noexcept
   }
   catch (std::exception const &e)
   {
+    // TODO: Make at least an attempt to append a newline.
     process_notice(e.what());
   }
   m_trans = nullptr;

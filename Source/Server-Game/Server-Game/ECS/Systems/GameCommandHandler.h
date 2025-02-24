@@ -4,7 +4,7 @@
 
 namespace ECS::Systems
 {
-    class SimpleReplication
+    class GameCommandHandler
     {
     public:
         static void Init(entt::registry& registry);

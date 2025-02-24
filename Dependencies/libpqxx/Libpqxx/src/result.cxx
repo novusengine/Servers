@@ -41,14 +41,22 @@ std::string const pqxx::result::s_empty_string;
 /// C++ wrapper for libpq's PQclear.
 void pqxx::internal::clear_result(pq::PGresult const *data) noexcept
 {
+  // This acts as a destructor, though implemented as a regular function so we
+  // can pass it into a smart pointer.  That's why I think it's kind of fair
+  // to treat the PGresult as const.
   PQclear(const_cast<pq::PGresult *>(data));
 }
 
 
 pqxx::result::result(
   std::shared_ptr<pqxx::internal::pq::PGresult> const &rhs,
-  std::shared_ptr<std::string> const &query, internal::encoding_group enc) :
-        m_data{rhs}, m_query{query}, m_encoding(enc)
+  std::shared_ptr<std::string> const &query,
+  std::shared_ptr<pqxx::internal::notice_waiters> const &notice_waiters,
+  internal::encoding_group enc) :
+        m_data{rhs},
+        m_query{query},
+        m_notice_waiters{notice_waiters},
+        m_encoding(enc)
 {}
 
 
@@ -351,6 +359,9 @@ std::string pqxx::result::status_error() const
 
 char const *pqxx::result::cmd_status() const noexcept
 {
+  // PQcmdStatus() can't take a PGresult const * because it returns a non-const
+  // pointer into the PGresult's data, and that can't be changed without
+  // breaking compatibility.
   return PQcmdStatus(const_cast<internal::pq::PGresult *>(m_data.get()));
 }
 
@@ -372,6 +383,9 @@ pqxx::oid pqxx::result::inserted_oid() const
 
 pqxx::result::size_type pqxx::result::affected_rows() const
 {
+  // PQcmdTuples() can't take a PGresult const * because it returns a non-const
+  // pointer into the PGresult's data, and that can't be changed without
+  // breaking compatibility.
   auto const rows_str{
     PQcmdTuples(const_cast<internal::pq::PGresult *>(m_data.get()))};
   return (rows_str[0] == '\0') ? 0 : size_type(atoi(rows_str));
@@ -516,6 +530,54 @@ int pqxx::result::column_type_modifier(
   pqxx::row::size_type number) const noexcept
 {
   return PQfmod(m_data.get(), number);
+}
+
+
+pqxx::row pqxx::result::one_row() const
+{
+  auto const sz{size()};
+  if (sz != 1)
+  {
+    // TODO: See whether result contains a generated statement.
+    if (not m_query or m_query->empty())
+      throw unexpected_rows{
+        pqxx::internal::concat("Expected 1 row from query, got ", sz, ".")};
+    else
+      throw unexpected_rows{pqxx::internal::concat(
+        "Expected 1 row from query '", *m_query, "', got ", sz, ".")};
+  }
+  return front();
+}
+
+
+pqxx::field pqxx::result::one_field() const
+{
+  expect_columns(1);
+  return one_row()[0];
+}
+
+
+std::optional<pqxx::row> pqxx::result::opt_row() const
+{
+  auto const sz{size()};
+  if (sz > 1)
+  {
+    // TODO: See whether result contains a generated statement.
+    if (not m_query or m_query->empty())
+      throw unexpected_rows{pqxx::internal::concat(
+        "Expected at most 1 row from query, got ", sz, ".")};
+    else
+      throw unexpected_rows{pqxx::internal::concat(
+        "Expected at most 1 row from query '", *m_query, "', got ", sz, ".")};
+  }
+  else if (sz == 1)
+  {
+    return {front()};
+  }
+  else
+  {
+    return {};
+  }
 }
 
 

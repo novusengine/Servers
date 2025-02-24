@@ -1,6 +1,8 @@
 #pragma once
 #include <Base/Container/ConcurrentQueue.h>
 
+#include <Gameplay/GameDefine.h>
+
 #include <Network/Define.h>
 
 #include <memory>
@@ -31,10 +33,10 @@ namespace ECS
             std::unique_ptr<Network::GameMessageRouter> gameMessageRouter;
 
             robin_hood::unordered_set<Network::SocketID> socketIDRequestedToClose;
-            robin_hood::unordered_map<Network::SocketID, u64> socketIDToCharacterID;
+            robin_hood::unordered_set<Network::SocketID> activeSocketIDs;
             robin_hood::unordered_map<Network::SocketID, entt::entity> socketIDToEntity;
+            robin_hood::unordered_map<u64, entt::entity> characterIDToEntity;
             robin_hood::unordered_map<u64, Network::SocketID> characterIDToSocketID;
-            robin_hood::unordered_map<entt::entity, Network::SocketID> entityToSocketID;
 
             moodycamel::ConcurrentQueue<CharacterLoginRequest> characterLoginRequest;
         };

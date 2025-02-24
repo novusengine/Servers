@@ -6,6 +6,7 @@
 #include <Server-Common/Database/DBController.h>
 #include <Server-Common/Database/Util/CharacterUtils.h>
 #include <Server-Common/Database/Util/CurrencyUtils.h>
+#include <Server-Common/Database/Util/ItemUtils.h>
 #include <Server-Common/Database/Util/PermissionUtils.h>
 
 #include <Base/Util/DebugHandler.h>
@@ -67,11 +68,13 @@ namespace ECS::Systems
         {
             Database::Util::Permission::InitPermissionTablesPreparedStatements(characterConnection);
             Database::Util::Currency::InitCurrencyTablesPreparedStatements(characterConnection);
-            Database::Util::Character::InitCharacterTablesPreparedStatements(characterConnection);
+            Database::Util::Item::Loading::InitItemTablesPreparedStatements(characterConnection);
+            Database::Util::Character::Loading::InitCharacterTablesPreparedStatements(characterConnection);
 
             Database::Util::Permission::LoadPermissionTables(characterConnection, databaseState.permissionTables);
             Database::Util::Currency::LoadCurrencyTables(characterConnection, databaseState.currencyTables);
-            Database::Util::Character::LoadCharacterTables(characterConnection, databaseState.characterTables);
+            Database::Util::Item::Loading::LoadItemTables(characterConnection, databaseState.itemTables);
+            Database::Util::Character::Loading::LoadCharacterTables(characterConnection, databaseState.characterTables, databaseState.itemTables);
         }
     }
 

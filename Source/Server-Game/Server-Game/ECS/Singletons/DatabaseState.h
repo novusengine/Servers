@@ -21,6 +21,7 @@ namespace ECS::Singletons
 
         Database::PermissionTables permissionTables;
         Database::CurrencyTables currencyTables;
+        Database::ItemTables itemTables;
         Database::CharacterTables characterTables;
     };
 }

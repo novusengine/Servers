@@ -1,6 +1,4 @@
 #pragma once
-#include "Server-Game/ECS/Singletons/GridSingleton.h"
-
 #include <Base/Types.h>
 #include <Base/Container/ConcurrentQueue.h>
 #include <Base/Memory/Bytebuffer.h>
@@ -9,5 +7,5 @@
 
 namespace ECS::Util::Grid
 {
-    void SendToGrid(entt::entity entity, std::shared_ptr<Bytebuffer>& buffer, Singletons::GridUpdateFlag flag = {});
+    void SendToNearby(entt::entity entity, std::shared_ptr<Bytebuffer>& buffer, bool sendToSelf = false);
 }

@@ -3,5 +3,5 @@
 
 namespace ECS::Tags
 {
-    struct IsMoving { };
+    struct CharacterNeedsInitialization {};
 }

@@ -19,6 +19,7 @@
 
 #include <functional>
 #include <ios>
+#include <list>
 #include <memory>
 #include <stdexcept>
 
@@ -44,6 +45,24 @@ class result_pipeline;
 class result_row;
 class result_sql_cursor;
 } // namespace pqxx::internal::gate
+
+
+namespace pqxx::internal
+{
+// 9.0: Remove this, just use the notice handler in connection/result.
+/// Various callbacks waiting for a notice to come in.
+struct notice_waiters
+{
+  std::function<void(zview)> notice_handler;
+  std::list<errorhandler *> errorhandlers;
+
+  notice_waiters() = default;
+  notice_waiters(notice_waiters const &) = delete;
+  notice_waiters(notice_waiters &&) = delete;
+  notice_waiters &operator=(notice_waiters const &) = delete;
+  notice_waiters &operator=(notice_waiters &&) = delete;
+};
+} // namespace pqxx::internal
 
 
 namespace pqxx
@@ -295,6 +314,74 @@ public:
    */
   template<typename CALLABLE> inline void for_each(CALLABLE &&func) const;
 
+  /// Check that result contains exactly `n` rows.
+  /** @return The result itself, for convenience.
+   * @throw @ref unexpected_rows if the actual count is not equal to `n`.
+   */
+  result expect_rows(size_type n) const
+  {
+    auto const sz{size()};
+    if (sz != n)
+    {
+      // TODO: See whether result contains a generated statement.
+      if (not m_query or m_query->empty())
+        throw unexpected_rows{pqxx::internal::concat(
+          "Expected ", n, " row(s) from query, got ", sz, ".")};
+      else
+        throw unexpected_rows{pqxx::internal::concat(
+          "Expected ", n, " row(s) from query '", *m_query, "', got ", sz,
+          ".")};
+    }
+    return *this;
+  }
+
+  /// Check that result contains exactly 1 row, and return that row.
+  /** @return @ref pqxx::row
+   * @throw @ref unexpected_rows if the actual count is not equal to `n`.
+   */
+  row one_row() const;
+
+  /// Expect that result contains at moost one row, and return as optional.
+  /** Returns an empty `std::optional` if the result is empty, or if it has
+   * exactly one row, a `std::optional` containing the row.
+   *
+   * @throw @ref unexpected_rows is the row count is not 0 or 1.
+   */
+  std::optional<row> opt_row() const;
+
+  /// Expect that result contains no rows.  Return result for convenience.
+  result no_rows() const
+  {
+    expect_rows(0);
+    return *this;
+  }
+
+  /// Expect that result consists of exactly `cols` columns.
+  /** @return The result itself, for convenience.
+   * @throw @ref usage_error otherwise.
+   */
+  result expect_columns(row_size_type cols) const
+  {
+    auto const actual{columns()};
+    if (actual != cols)
+    {
+      // TODO: See whether result contains a generated statement.
+      if (not m_query or m_query->empty())
+        throw usage_error{pqxx::internal::concat(
+          "Expected 1 column from query, got ", actual, ".")};
+      else
+        throw usage_error{pqxx::internal::concat(
+          "Expected 1 column from query '", *m_query, "', got ", actual, ".")};
+    }
+    return *this;
+  }
+
+  /// Expect that result consists of exactly 1 row and 1 column.
+  /** @return The one @ref pqxx::field in the result.
+   * @throw @ref usage_error otherwise.
+   */
+  field one_field() const;
+
 private:
   using data_pointer = std::shared_ptr<internal::pq::PGresult const>;
 
@@ -310,6 +397,13 @@ private:
   /// Query string.
   std::shared_ptr<std::string const> m_query;
 
+  /// The connection's notice handler.
+  /** We're not actually using this, but we need a copy here so that the
+   * actual function does not get deallocated if the connection is destroyed
+   * while this result still exists.
+   */
+  std::shared_ptr<pqxx::internal::notice_waiters> m_notice_waiters;
+
   internal::encoding_group m_encoding;
 
   static std::string const s_empty_string;
@@ -324,7 +418,9 @@ private:
   friend class pqxx::internal::gate::result_creation;
   result(
     std::shared_ptr<internal::pq::PGresult> const &rhs,
-    std::shared_ptr<std::string> const &query, internal::encoding_group enc);
+    std::shared_ptr<std::string> const &query,
+    std::shared_ptr<pqxx::internal::notice_waiters> const &waiters,
+    internal::encoding_group enc);
 
   PQXX_PRIVATE void check_status(std::string_view desc = ""sv) const;
 

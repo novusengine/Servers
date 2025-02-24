@@ -215,7 +215,7 @@ public:
 protected:
   friend class const_row_iterator;
   friend class result;
-  row(result const &r, result_size_type index, size_type cols) noexcept;
+  row(result r, result_size_type index, size_type cols) noexcept;
 
   /// Throw @ref usage_error if row size is not `expected`.
   void check_size(size_type expected) const
@@ -397,6 +397,11 @@ public:
   operator-(difference_type) const noexcept;
   [[nodiscard]] inline difference_type
   operator-(const_row_iterator const &) const noexcept;
+
+  [[nodiscard]] inline field operator[](difference_type offset) const noexcept
+  {
+    return *(*this + offset);
+  }
   //@}
 };
 
@@ -486,6 +491,10 @@ public:
   operator-(const_reverse_row_iterator const &rhs) const noexcept
   {
     return rhs.const_row_iterator::operator-(*this);
+  }
+  [[nodiscard]] inline field operator[](difference_type offset) const noexcept
+  {
+    return *(*this + offset);
   }
   //@}
 

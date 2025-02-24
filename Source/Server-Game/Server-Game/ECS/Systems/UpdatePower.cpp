@@ -1,6 +1,8 @@
 #include "UpdatePower.h"
 
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
+#include "Server-Game/ECS/Components/NetInfo.h"
+#include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Util/GridUtil.h"
@@ -94,19 +96,16 @@ namespace ECS::Systems
         timeSinceLastUpdate += deltaTime;
         if (timeSinceLastUpdate >= UPDATE_INTERVAL)
         {
-            auto view = registry.view<Components::UnitStatsComponent>();
-            view.each([&](entt::entity entity, Components::UnitStatsComponent& unitStatsComponent)
+            auto view = registry.view<const Components::NetInfo, const Components::ObjectInfo, Components::UnitStatsComponent>();
+            view.each([&](entt::entity entity, const Components::NetInfo& netInfo, const Components::ObjectInfo& objectInfo, Components::UnitStatsComponent& unitStatsComponent)
             {
-                if (!networkState.entityToSocketID.contains(entity))
-                    return;
-
                 if (unitStatsComponent.healthIsDirty)
                 {
                     std::shared_ptr<Bytebuffer> unitStatsMessage = Bytebuffer::Borrow<32>();
-                    if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, entity, Components::PowerType::Health, unitStatsComponent.baseHealth, unitStatsComponent.currentHealth, unitStatsComponent.maxHealth))
+                    if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, objectInfo.guid, Components::PowerType::Health, unitStatsComponent.baseHealth, unitStatsComponent.currentHealth, unitStatsComponent.maxHealth))
                         return;
 
-                    ECS::Util::Grid::SendToGrid(entity, unitStatsMessage, ECS::Singletons::GridUpdateFlag{ .SendToSelf = true });
+                    ECS::Util::Grid::SendToNearby(entity, unitStatsMessage, true);
                     unitStatsComponent.healthIsDirty = false;
                 }
 
@@ -119,10 +118,10 @@ namespace ECS::Systems
                     Components::PowerType powerType = (Components::PowerType)i;
 
                     std::shared_ptr<Bytebuffer> unitStatsMessage = Bytebuffer::Borrow<32>();
-                    if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, entity, powerType, unitStatsComponent.basePower[i], unitStatsComponent.currentPower[i], unitStatsComponent.maxPower[i]))
+                    if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, objectInfo.guid, powerType, unitStatsComponent.basePower[i], unitStatsComponent.currentPower[i], unitStatsComponent.maxPower[i]))
                         return;
 
-                    ECS::Util::Grid::SendToGrid(entity, unitStatsMessage, ECS::Singletons::GridUpdateFlag{ .SendToSelf = true });
+                    ECS::Util::Grid::SendToNearby(entity, unitStatsMessage, true);
                     unitStatsComponent.powerIsDirty[i] = false;
                 }
             });

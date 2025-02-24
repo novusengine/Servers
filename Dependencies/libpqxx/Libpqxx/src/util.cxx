@@ -73,7 +73,7 @@ void pqxx::internal::check_unique_register(
         concat("Started twice: ", describe_object(old_class, old_name), ".") :
         concat(
           "Started new ", describe_object(new_class, new_name), " while ",
-          describe_object(new_class, new_name), " was still active.")};
+          describe_object(old_class, old_name), " was still active.")};
 }
 
 
@@ -101,9 +101,10 @@ void pqxx::internal::check_unique_unregister(
 
 namespace
 {
-constexpr std::array<char, 16u> hex_digits{'0', '1', '2', '3', '4', '5',
-                                           '6', '7', '8', '9', 'a', 'b',
-                                           'c', 'd', 'e', 'f'};
+constexpr std::array<char, 16u> hex_digits{
+  '0', '1', '2', '3', '4', '5', '6', '7',
+  '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
+};
 
 
 /// Translate a number (must be between 0 and 16 exclusive) to a hex digit.

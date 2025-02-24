@@ -22,8 +22,8 @@
 
 
 pqxx::internal::basic_transaction::basic_transaction(
-  connection &c, zview begin_command, std::string_view tname) :
-        dbtransaction(c, tname)
+  connection &cx, zview begin_command, std::string_view tname) :
+        dbtransaction(cx, tname)
 {
   register_transaction();
   direct_exec(begin_command);
@@ -31,8 +31,8 @@ pqxx::internal::basic_transaction::basic_transaction(
 
 
 pqxx::internal::basic_transaction::basic_transaction(
-  connection &c, zview begin_command, std::string &&tname) :
-        dbtransaction(c, std::move(tname))
+  connection &cx, zview begin_command, std::string &&tname) :
+        dbtransaction(cx, std::move(tname))
 {
   register_transaction();
   direct_exec(begin_command);
@@ -40,8 +40,8 @@ pqxx::internal::basic_transaction::basic_transaction(
 
 
 pqxx::internal::basic_transaction::basic_transaction(
-  connection &c, zview begin_command) :
-        dbtransaction(c)
+  connection &cx, zview begin_command) :
+        dbtransaction(cx)
 {
   register_transaction();
   direct_exec(begin_command);
@@ -71,7 +71,7 @@ void pqxx::internal::basic_transaction::do_commit()
     process_notice(internal::concat(e.what(), "\n"));
 
     std::string msg{internal::concat(
-      "WARNING: Commit of transaction '", name(),
+      "WARNING: Commit status of transaction '", name(),
       "' is unknown. "
       "There is no way to tell whether the transaction succeeded "
       "or was aborted except to check manually.\n")};
@@ -79,9 +79,9 @@ void pqxx::internal::basic_transaction::do_commit()
     // Strip newline.  It was only needed for process_notice().
     msg.pop_back();
     throw in_doubt_error{
-      std::move(msg)
+      msg
 #if defined(PQXX_HAVE_SOURCE_LOCATION)
-        ,
+      ,
       e.location
 #endif
     };
@@ -101,7 +101,7 @@ void pqxx::internal::basic_transaction::do_commit()
       process_notice(msg);
       // Strip newline.  It was only needed for process_notice().
       msg.pop_back();
-      throw in_doubt_error{std::move(msg)};
+      throw in_doubt_error{msg};
     }
     else
     {

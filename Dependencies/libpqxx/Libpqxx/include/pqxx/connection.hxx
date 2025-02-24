@@ -19,12 +19,14 @@
 
 #include <cstddef>
 #include <ctime>
+#include <functional>
 #include <initializer_list>
 #include <list>
 #include <map>
 #include <memory>
 #include <string_view>
 #include <tuple>
+#include <utility>
 
 // Double-check in order to suppress an overzealous Visual C++ warning (#418).
 #if defined(PQXX_HAVE_CONCEPTS) && __has_include(<ranges>)
@@ -51,12 +53,11 @@
  * a @ref pqxx::connection object.  It connects to a database when you create
  * it, and it terminates that communication during destruction.
  *
- * Many things come together in this class.  Handling of error and warning
- * messages, for example, is defined by @ref pqxx::errorhandler objects in the
- * context of a connection.  Prepared statements are also defined here.  For
- * actually executing SQL on it, however, you'll also need a transaction
- * object which operates "on top of" the connection.  (See @ref transactions
- * for more about these.)
+ * Many things come together in this class.  For example, if you want custom
+ * handling of error andwarning messages, you control that in the context of a
+ * connection.  You also define prepared statements here.  For actually
+ * executing SQL, however, you'll also need a transaction object which operates
+ * "on top of" the connection.  (See @ref transactions for more about these.)
  *
  * When you connect to a database, you pass a connection string containing any
  * parameters and options, such as the server address and the database name.
@@ -119,6 +120,54 @@ class const_connection_largeobject;
 
 namespace pqxx
 {
+/// An incoming notification.
+/** PostgreSQL extends SQL with a "message bus" using the `LISTEN` and `NOTIFY`
+ * commands.  In libpqxx you use @ref connection::listen() and (optionally)
+ * @ref transaction_base::notify().
+ *
+ * When you receive a notification for which you have been listening, your
+ * handler receives it in the form of a `notification` object.
+ *
+ * @warning These structs are meant for extremely short lifespans: the fields
+ * reference memory that may become invalid as soon as your handler has been
+ * called.
+ */
+struct notification
+{
+  /// The connection which received the notification.
+  /** There will be no _backend_ transaction active on the connection when your
+   * handler gets called, but there may be a @ref nontransaction.  (This is a
+   * special transaction type in libpqxx which does not start a transaction on
+   * the backend.)
+   */
+  connection &conn;
+
+  /// Channel name.
+  /** The notification logic will only pass the notification to a handler which
+   * was registered to listen on this exact name.
+   */
+  zview channel;
+
+  /// Optional payload text.
+  /** If the notification did not carry a payload, the string will be empty.
+   */
+  zview payload;
+
+  /// Process ID of the backend that sent the notification.
+  /** This can be useful in situations where a multiple clients are listening
+   * on the same channel, and also send notifications on it.
+   *
+   * In those situations, it often makes sense for a client to ignore its own
+   * incoming notifications, but handle all others on the same channel in some
+   * way.
+   *
+   * To check for that, compare this process ID to the return value of the
+   * connection's `backendpid()`.
+   */
+  int backend_pid;
+};
+
+
 /// Flags for skipping initialisation of SSL-related libraries.
 /** When a running process makes its first SSL connection to a database through
  * libpqxx, libpq automatically initialises the OpenSSL and libcrypto
@@ -246,9 +295,9 @@ public:
 
   /// Move constructor.
   /** Moving a connection is not allowed if it has an open transaction, or has
-   * error handlers or notification receivers registered on it.  In those
-   * situations, other objects may hold references to the old object which
-   * would become invalid and might produce hard-to-diagnose bugs.
+   * error handlers or is listening for notifications.  In those situations,
+   * other objects may hold references to the old object which would become
+   * invalid and might produce hard-to-diagnose bugs.
    */
   connection(connection &&rhs);
 
@@ -283,9 +332,10 @@ public:
     {}
   }
 
+  // TODO: Once we drop notification_receiver/errorhandler, move is easier.
   /// Move assignment.
-  /** Neither connection can have an open transaction, registered error
-   * handlers, or registered notification receivers.
+  /** Neither connection can have an open transaction, `errorhandler`, or
+   * `notification_receiver`.
    */
   connection &operator=(connection &&rhs);
 
@@ -341,7 +391,7 @@ public:
   /// Process ID for backend process, or 0 if inactive.
   [[nodiscard]] int PQXX_PURE backendpid() const & noexcept;
 
-  /// Socket currently used for connection, or -1 for none.  Use with care!
+  /// Socket currently used for connection, or -1 for none.
   /** Query the current socket number.  This is intended for event loops based
    * on functions such as select() or poll(), where you're waiting for any of
    * multiple file descriptors to become ready for communication.
@@ -477,34 +527,122 @@ public:
 
   /**
    * @name Notifications and Receivers
+   *
+   * This is PostgreSQL-specific extension that goes beyond standard SQL.  It's
+   * a communications mechanism between clients on a database, akin to a
+   * transactional message bus.
+   *
+   * A notification happens on a _channel,_ identified by a name.  You can set
+   * a connection to _listen_ for notifications on the channel, using the
+   * connection's @ref listen() function.  (Internally this will issue a
+   * `LISTEN` SQL command).  Any client on the database can send a
+   * notification on that channel by executing a `NOTIFY` SQL command.  The
+   * transaction classes implement a convenience function for this, called
+   * @ref transaction_base::notify().
+   *
+   * Notifications can carry an optional _payload_ string.  This is free-form
+   * text which carries additional information to the receiver.
+   *
+   * @warning There are a few pitfalls with the channel names: case sensitivity
+   * and encodings.  They are not too hard to avoid, but the safest thing to do
+   * is use only lower-case ASCII names.
+   *
+   *
+   * ### Case sensitivity
+   *
+   * Channel names are _case-sensitive._  By default, however, PostgreSQL does
+   * convert the channel name in a `NOTIFY` or `LISTEN` command to lower-case,
+   * to give the impression that it is _not_ case-sensitive while keeping the
+   * performance cost low.
+   *
+   * Thus, a `LISTEN Hello` will pick up a notification from `NOTIFY Hello` but
+   * also one from `NOTIFY hello`, because the database converts `Hello` into
+   * `hello` going in either direction.
+   *
+   * You can prevent this conversion by putting the name in double quotes, as
+   * @ref quote_name() does.  This is what libpqxx's notification functions do.
+   * If you use libpqxx to lisen on `Hello` but raw SQL to notify `Hello`, the
+   * notification will not arrive because the notification actually uses the
+   * string `hello` instead.
+   *
+   * Confused?  Safest thing to do is to use only lower-case letters in the
+   * channel names!
+   *
+   *
+   * ### Transactions
+   *
+   * Both listening and notifying are _transactional_ in the backend: they
+   * only take effect once the back-end transaction in which you do them is
+   * committed.
+   *
+   * For an outgoing notification, this means that the transaction holds on to
+   * the outgoing message until you commit.  (A @ref nontransaction does not
+   * start a backend transaction, so if that's the transaction type you're
+   * using, the message does go out immediately.)
+   *
+   * For listening to incoming notifications, it gets a bit more complicated.
+   * To avoid complicating its internal bookkeeping, libpqxx only lets you
+   * start listening while no transaction is open.
+   *
+   * No notifications will come in while you're in a transaction... again
+   * unless it's a @ref nontransaction of course, because that does not open a
+   * transaction on the backend.
+   *
+   *
+   * ### Exceptions
+   *
+   * If your handler throws an exception, that will simply propagate up the
+   * call chain to wherever you were when you received it.
+   *
+   * This is differnt from the old `notification_receiver` mechanism which
+   * logged exceptions but did not propagate them.
+   *
+   *
+   * ### Encoding
+   *
+   * When a client sends a notification, it does so in its client encoding.  If
+   * necessary, the back-end converts them to its internal encoding.  And then
+   * when a client receives the notification, the database converts it to the
+   * receiver's client encoding.
+   *
+   * Simple enough, right?
+   *
+   * However if you should _change_ your connection's client encoding after you
+   * start listening on a channel, then any notifications you receive may have
+   * different channel names than the ones for which you are listening.
+   *
+   * If this could be a problem in your scenario, stick to names in pure
+   * ASCII.  Those will look the same in all the encodings postgres supports.
    */
   //@{
   /// Check for pending notifications and take appropriate action.
   /** This does not block.  To wait for incoming notifications, either call
-   * await_notification() (it calls this function); or wait for incoming data
-   * on the connection's socket (i.e. wait to read), and then call this
+   * @ref await_notification() (it calls this function); or wait for incoming
+   * data on the connection's socket (i.e. wait to read), and then call this
    * function repeatedly until it returns zero.  After that, there are no more
-   * pending notifications so you may want to wait again.
+   * pending notifications so you may want to wait again, or move on and do
+   * other work.
    *
    * If any notifications are pending when you call this function, it
-   * processes them by finding any receivers that match the notification string
-   * and invoking those.  If no receivers match, there is nothing to invoke but
-   * we do consider the notification processed.
+   * processes them by checking for a matching notification handler, and if it
+   * finds one, invoking it.  If there is no matching handler, nothing happens.
    *
-   * If any of the client-registered receivers throws an exception, the
-   * function will report it using the connection's errorhandlers.  It does not
-   * re-throw the exceptions.
+   * If your notifcation handler throws an exception, `get_notifs()` will just
+   * propagate it back to you.  (This is different from the old
+   * `notification_receiver` mechanism, which would merely log them.)
    *
    * @return Number of notifications processed.
    */
   int get_notifs();
 
   /// Wait for a notification to come in.
-  /** There are other events that will also terminate the wait, such as the
-   * backend failing.  It will also wake up periodically.
+  /** There are other events that will also cancel the wait, such as the
+   * backend failing.  Also, _the function will wake up by itself from time to
+   * time._  Your code must be ready to handle this; don't assume after waking
+   * up that there will always be a pending notifiation.
    *
-   * If a notification comes in, the call will process it, along with any other
-   * notifications that may have been pending.
+   * If a notification comes in, the call to this function will process it,
+   * along with any other notifications that may have been pending.
    *
    * To wait for notifications into your own event loop instead, wait until
    * there is incoming data on the connection's socket to be read, then call
@@ -515,8 +653,8 @@ public:
   int await_notification();
 
   /// Wait for a notification to come in, or for given timeout to pass.
-  /** There are other events that will also terminate the wait, such as the
-   * backend failing, or timeout expiring.
+  /** There are other events that will also cancel the wait, such as the
+   * backend failing, some kinds of signal coming in, or timeout expiring.
    *
    * If a notification comes in, the call will process it, along with any other
    * notifications that may have been pending.
@@ -525,9 +663,48 @@ public:
    * there is incoming data on the connection's socket to be read, then call
    * @ref get_notifs repeatedly until it returns zero.
    *
-   * @return Number of notifications processed
+   * If your notifcation handler throws an exception, `get_notifs()` will just
+   * propagate it back to you.  (This is different from the old
+   * `notification_receiver` mechanism, which would merely log them.)
+   *
+   * @return Number of notifications processed.
    */
-  int await_notification(std::time_t seconds, long microseconds);
+  int await_notification(std::time_t seconds, long microseconds = 0);
+
+  /// A handler callback for incoming notifications on a given channel.
+  /** Your callback must accept a @ref notification object.  This object can
+   * and will exist only for the duration of the handling of that one incoming
+   * notification.
+   *
+   * The handler can be "empty," i.e. contain no code.  Setting an empty
+   * handler on a channel disables listening on that channel.
+   */
+  using notification_handler = std::function<void(notification)>;
+
+  /// Attach a handler to a notification channel.
+  /** Issues a `LISTEN` SQL command for channel `channel`, and stores `handler`
+   * as the callback for when a notification comes in on that channel.
+   *
+   * The handler is a `std::function` (see @ref notification_handler), but you
+   * can simply pass in a lambda with the right parameters, or a function, or
+   * an object of a type you define that happens to implemnt the right function
+   * call operator.
+   *
+   * Your handler probably needs to interact with your application's data; the
+   * simple way to get that working is to pass a lambda with a closure
+   * referencing the data items you need.
+   *
+   * If the handler is empty (the default), then that stops the connection
+   * listening on the channel.  It cancels your subscription, so to speak.
+   * You can do that as many times as you like, even when you never started
+   * listening to that channel in the first place.
+   *
+   * A connection can only have one handler per channel, so if you register two
+   * different handlers on the same channel, then the second overwrites the
+   * first.
+   */
+  void listen(std::string_view channel, notification_handler handler = {});
+
   //@}
 
   /**
@@ -772,7 +949,7 @@ public:
 #endif
 
   // TODO: Make "into buffer" variant to eliminate a string allocation.
-  /// Unescape binary data, e.g. from a table field or notification payload.
+  /// Unescape binary data, e.g. from a `bytea` field.
   /** Takes a binary string as escaped by PostgreSQL, and returns a restored
    * copy of the original binary data.
    *
@@ -892,7 +1069,7 @@ public:
     return esc(std::string_view{text, maxlen});
   }
 
-  /// Unescape binary data, e.g. from a table field or notification payload.
+  /// Unescape binary data, e.g. from a `bytea` field.
   /** Takes a binary string as escaped by PostgreSQL, and returns a restored
    * copy of the original binary data.
    */
@@ -904,7 +1081,7 @@ public:
 #include "pqxx/internal/ignore-deprecated-post.hxx"
   }
 
-  /// Unescape binary data, e.g. from a table field or notification payload.
+  /// Unescape binary data, e.g. from a `bytea` field.
   /** Takes a binary string as escaped by PostgreSQL, and returns a restored
    * copy of the original binary data.
    */
@@ -936,6 +1113,9 @@ public:
   /** Set the verbosity of error messages to "terse", "normal" (the default),
    * or "verbose."
    *
+   * This affects the notices that the `connection` and its `result` objects
+   * will pass to your notice handler.
+   *
    *  If "terse", returned messages include severity, primary text, and
    * position only; this will normally fit on a single line. "normal" produces
    * messages that include the above plus any detail, hint, or context fields
@@ -944,20 +1124,34 @@ public:
    */
   void set_verbosity(error_verbosity verbosity) & noexcept;
 
-  /// Return pointers to the active errorhandlers.
-  /** The entries are ordered from oldest to newest handler.
+  // C++20: Use std::callable.
+
+  /// Set a notice handler to the connection.
+  /** When a notice comes in (a warning or error message), the connection or
+   * result object on which it happens will call the notice handler, passing
+   * the message as its argument.
    *
-   * You may use this to find errorhandlers that your application wants to
-   * delete when destroying the connection.  Be aware, however, that libpqxx
-   * may also add errorhandlers of its own, and those will be included in the
-   * list.  If this is a problem for you, derive your errorhandlers from a
-   * custom base class derived from pqxx::errorhandler.  Then use dynamic_cast
-   * to find which of the error handlers are yours.
+   * The handler must not throw any exceptions.  If it does, the program will
+   * terminate.
+   *
+   * @warning It's not just the `connection` that can call a notice handler,
+   * but any of the `result` objects that it produces as well.  So, be prepared
+   * for the possibility that the handler may still receive a call after the
+   * connection has been closed.
+   */
+  void set_notice_handler(std::function<void(zview)> handler)
+  {
+    m_notice_waiters->notice_handler = std::move(handler);
+  }
+
+  /// @deprecated Return pointers to the active errorhandlers.
+  /** The entries are ordered from oldest to newest handler.
    *
    * The pointers point to the real errorhandlers.  The container it returns
    * however is a copy of the one internal to the connection, not a reference.
    */
-  [[nodiscard]] std::vector<errorhandler *> get_errorhandlers() const;
+  [[nodiscard, deprecated("Use a notice handler instead.")]]
+  std::vector<errorhandler *> get_errorhandlers() const;
 
   /// Return a connection string encapsulating this connection's options.
   /** The connection must be currently open for this to work.
@@ -1035,7 +1229,7 @@ private:
   connection(connect_mode, zview connection_string);
 
   /// For use by @ref seize_raw_connection.
-  explicit connection(internal::pq::PGconn *raw_conn) : m_conn{raw_conn} {}
+  explicit connection(internal::pq::PGconn *raw_conn);
 
   /// Poll for ongoing connection, try to progress towards completion.
   /** Returns a pair of "now please wait to read data from socket" and "now
@@ -1049,6 +1243,7 @@ private:
   void init(char const options[]);
   // Initialise based on parameter names and values.
   void init(char const *params[], char const *values[]);
+  void set_up_notice_handlers();
   void complete_init();
 
   result make_result(
@@ -1068,8 +1263,6 @@ private:
 
   friend class internal::gate::const_connection_largeobject;
   char const *PQXX_PURE err_msg() const noexcept;
-
-  void PQXX_PRIVATE process_notice_raw(char const msg[]) noexcept;
 
   result exec_prepared(std::string_view statement, internal::c_params const &);
 
@@ -1134,12 +1327,25 @@ private:
    */
   transaction_base const *m_trans = nullptr;
 
-  std::list<errorhandler *> m_errorhandlers;
+  /// 9.0: Replace with just notice handler.
+  std::shared_ptr<pqxx::internal::notice_waiters> m_notice_waiters;
 
+  // TODO: Remove these when we retire notification_receiver.
+  // TODO: Can we make these movable?
   using receiver_list =
     std::multimap<std::string, pqxx::notification_receiver *>;
   /// Notification receivers.
   receiver_list m_receivers;
+
+  /// Notification handlers.
+  /** These are the functions we call when notifications come in.  Each
+   * corresponds to a `LISTEN` we have executed.
+   *
+   * The map does not contain any `std::function` which are empty.  If the
+   * caller registers an empty function, that simply cancels any subscription
+   * to that channel.
+   */
+  std::map<std::string, notification_handler> m_notification_handlers;
 
   /// Unique number to use as suffix for identifiers (see adorn_name()).
   int m_unique_id = 0;
@@ -1188,9 +1394,9 @@ using connection_base = connection;
  *         cg.process();
  *     }
  *
- *     pqxx::connection conn = std::move(cg).produce();
+ *     pqxx::connection cx = std::move(cg).produce();
  *
- *     // At this point, conn is a working connection.  You can no longer use
+ *     // At this point, cx is a working connection.  You can no longer use
  *     // cg at all.
  * ```
  */
