@@ -2,6 +2,7 @@
 
 #include "Server-Game/Application/EnttRegistries.h"
 #include "Server-Game/ECS/Components/CastInfo.h"
+#include "Server-Game/ECS/Components/CharacterInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
@@ -10,16 +11,21 @@
 #include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
-#include "Server-Game/ECS/GameCommands/CharacterCommands.h"
-#include "Server-Game/ECS/Singletons/DatabaseState.h"
-#include "Server-Game/ECS/Singletons/GameCommandQueue.h"
+#include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Singletons/TimeState.h"
+#include "Server-Game/ECS/Util/ContainerUtil.h"
 #include "Server-Game/ECS/Util/GridUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
+#include "Server-Game/ECS/Util/UnitUtil.h"
+#include "Server-Game/ECS/Util/Cache/CacheUtil.h"
+#include "Server-Game/ECS/Util/Network/NetworkUtil.h"
+#include "Server-Game/ECS/Util/Persistence/CharacterUtil.h"
+#include "Server-Game/ECS/Util/Persistence/ItemUtil.h"
+#include "Server-Game/Scripting/LuaManager.h"
+#include "Server-Game/Scripting/Handlers/PacketEventHandler.h"
 #include "Server-Game/Util/ServiceLocator.h"
-#include "Server-Game/Util/UnitUtils.h"
 
 #include <Server-Common/Database/DBController.h>
 #include <Server-Common/Database/Util/CharacterUtils.h>
@@ -56,7 +62,7 @@ namespace ECS::Systems
         CharacterLoginRequest characterLoginRequest =
         { 
             .socketID = socketID, 
-            .nameHash = StringUtils::fnv1a_32(charName.c_str(), charName.length())
+            .name = charName
         };
 
         networkState.characterLoginRequest.enqueue(characterLoginRequest);
@@ -113,13 +119,12 @@ namespace ECS::Systems
         return true;
     }
 
-    bool HandleOnCheatDamage(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatDamage(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        u32 damage = 0;
-        if (!message.buffer->GetU32(damage))
-            return false;
-
-        //entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+        //u32 damage = 0;
+        //if (!message.buffer->GetU32(damage))
+        //    return false;
+        //
         //entt::entity targetEntity = socketEntity;
         //if (auto* targetInfo = registry->try_get<Components::TargetInfo>(socketEntity))
         //{
@@ -151,10 +156,8 @@ namespace ECS::Systems
 
         return true;
     }
-    bool HandleOnCheatKill(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatKill(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        //entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-        //
         //entt::entity targetEntity = socketEntity;
         //if (auto* targetInfo = registry->try_get<Components::TargetInfo>(socketEntity))
         //{
@@ -186,10 +189,8 @@ namespace ECS::Systems
 
         return true;
     }
-    bool HandleOnCheatResurrect(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatResurrect(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        //entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-        //
         //entt::entity targetEntity = socketEntity;
         //if (auto* targetInfo = registry->try_get<Components::TargetInfo>(socketEntity))
         //{
@@ -216,50 +217,27 @@ namespace ECS::Systems
 
         return true;
     }
-    bool HandleOnCheatMorph(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatMorph(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         u32 displayID = 0;
         if (!message.buffer->GetU32(displayID))
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-
         auto& displayInfo = registry->get<Components::DisplayInfo>(entity);
-        if (displayID == displayInfo.displayID)
-            return true;
-
-        displayInfo.displayID = displayID;
-
-        auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
-        std::shared_ptr<Bytebuffer> displayInfoUpdateMessage = Bytebuffer::Borrow<64>();
-        if (!Util::MessageBuilder::Entity::BuildEntityDisplayInfoUpdateMessage(displayInfoUpdateMessage, objectInfo.guid, displayInfo))
-            return false;
-
-        ECS::Util::Grid::SendToNearby(entity, displayInfoUpdateMessage, true);
+        Util::Unit::UpdateDisplayID(*registry, entity, displayInfo, displayID);
 
         return true;
     }
-    bool HandleOnCheatDemorph(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatDemorph(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-
         auto& displayInfo = registry->get<Components::DisplayInfo>(entity);
 
-        u32 nativeDisplayID = UnitUtils::GetDisplayIDFromRaceGender(displayInfo.race, displayInfo.gender);
-        if (nativeDisplayID == displayInfo.displayID)
-            return true;
+        u32 nativeDisplayID = Util::Unit::GetDisplayIDFromRaceGender(displayInfo.unitRace, displayInfo.unitGender);
+        Util::Unit::UpdateDisplayID(*registry, entity, displayInfo, nativeDisplayID);
 
-        displayInfo.displayID = nativeDisplayID;
-        auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
-
-        std::shared_ptr<Bytebuffer> displayInfoUpdateMessage = Bytebuffer::Borrow<64>();
-        if (!Util::MessageBuilder::Entity::BuildEntityDisplayInfoUpdateMessage(displayInfoUpdateMessage, objectInfo.guid, displayInfo))
-            return false;
-
-        ECS::Util::Grid::SendToNearby(entity, displayInfoUpdateMessage, true);
         return true;
     }
-    bool HandleOnCheatCreateCharacter(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatCreateCharacter(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         struct Result
         {
@@ -273,17 +251,17 @@ namespace ECS::Systems
         if (!message.buffer->GetString(charName))
             return false;
 
-        entt::registry::context& ctx = ServiceLocator::GetEnttRegistries()->gameRegistry->ctx();
-        Singletons::DatabaseState& databaseState = ctx.get<Singletons::DatabaseState>();
+        entt::registry::context& ctx = registry->ctx();
+        Singletons::GameCache& gameCache = ctx.get<Singletons::GameCache>();
         Singletons::NetworkState& networkState = ctx.get<Singletons::NetworkState>();
 
-        Result result;
+        Result result = { 0 };
         u32 charNameHash = StringUtils::fnv1a_32(charName.c_str(), charName.length());
         if (!StringUtils::StringIsAlphaAndAtLeastLength(charName, 2))
         {
             result.NameIsInvalid = 1;
         }
-        else if (databaseState.characterTables.charNameHashToCharID.contains(charNameHash))
+        else if (Util::Cache::CharacterExistsByNameHash(gameCache, charNameHash))
         {
             result.CharacterAlreadyExists = 1;
         }
@@ -299,33 +277,27 @@ namespace ECS::Systems
             return true;
         }
 
-        auto& gameCommandQueue = ctx.get<Singletons::GameCommandQueue>();
-        auto* createCharacterCommand = GameCommands::Character::CharacterCreate::Create(charName, 1, [socketID](entt::registry& registry, GameCommands::GameCommandBase* gameCommandBase, bool result)
+        u64 characterID;
+        ECS::Result creationResult = Util::Persistence::Character::CharacterCreate(*registry, charName, 1, characterID);
+        
+        Result cheatCommandResult =
         {
-            Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
-            if (!networkState.activeSocketIDs.contains(socketID))
-                return;
+            .NameIsInvalid = 0,
+            .CharacterAlreadyExists = creationResult == ECS::Result::CharacterAlreadyExists,
+            .DatabaseTransactionFailed = creationResult == ECS::Result::DatabaseError,
+            .Unused = 0
+        };
 
-            Result cheatCommandResult =
-            {
-                .NameIsInvalid = 0,
-                .CharacterAlreadyExists = 0,
-                .DatabaseTransactionFailed = !result,
-                .Unused = 0
-            };
-            u8 cheatCommandResultVal = *reinterpret_cast<u8*>(&cheatCommandResult);
+        u8 cheatCommandResultVal = *reinterpret_cast<u8*>(&cheatCommandResult);
 
-            std::shared_ptr<Bytebuffer> resultMessage = Bytebuffer::Borrow<64>();
-            if (!Util::MessageBuilder::Cheat::BuildCheatCreateCharacterResponse(resultMessage, cheatCommandResultVal))
-                return;
+        std::shared_ptr<Bytebuffer> resultMessage = Bytebuffer::Borrow<64>();
+        if (!Util::MessageBuilder::Cheat::BuildCheatCreateCharacterResponse(resultMessage, cheatCommandResultVal))
+            return false;
 
-            networkState.server->SendPacket(socketID, resultMessage);
-        });
-
-        gameCommandQueue.Push(createCharacterCommand);
+        networkState.server->SendPacket(socketID, resultMessage);
         return true;
     }
-    bool HandleOnCheatDeleteCharacter(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatDeleteCharacter(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         struct Result
         {
@@ -339,13 +311,17 @@ namespace ECS::Systems
         if (!message.buffer->GetString(charName))
             return false;
 
-        entt::registry::context& ctx = ServiceLocator::GetEnttRegistries()->gameRegistry->ctx();
-        Singletons::DatabaseState& databaseState = ctx.get<Singletons::DatabaseState>();
+        entt::registry::context& ctx = registry->ctx();
+        Singletons::GameCache& gameCache = ctx.get<Singletons::GameCache>();
         Singletons::NetworkState& networkState = ctx.get<Singletons::NetworkState>();
 
-        Result result;
+        Result result = { 0 };
         u32 charNameHash = StringUtils::fnv1a_32(charName.c_str(), charName.length());
-        if (!StringUtils::StringIsAlphaAndAtLeastLength(charName, 2) || !databaseState.characterTables.charNameHashToCharID.contains(charNameHash))
+
+        u64 characterIDToDelete;
+        bool characterExists = Util::Cache::GetCharacterIDByNameHash(gameCache, charNameHash, characterIDToDelete);
+
+        if (!characterExists || !StringUtils::StringIsAlphaAndAtLeastLength(charName, 2))
         {
             // Send back that the character does not exist
             result.CharacterDoesNotExist = 1;
@@ -362,134 +338,70 @@ namespace ECS::Systems
         }
 
         // Disconnect Character if online
-        u64 characterIDToDelete = databaseState.characterTables.charNameHashToCharID[charNameHash];
-
-        auto& gameCommandQueue = ctx.get<Singletons::GameCommandQueue>();
-        auto* characterDeleteCommand = GameCommands::Character::CharacterDelete::Create(characterIDToDelete, [socketID](entt::registry& registry, GameCommands::GameCommandBase* gameCommandBase, bool result)
         {
-            Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
-            if (!networkState.activeSocketIDs.contains(socketID))
-                return;
-
-            Result cheatCommandResult =
+            Network::SocketID characterSocketID;
+            if (Util::Network::GetSocketIDFromCharacterID(networkState, characterIDToDelete, characterSocketID))
             {
-                .CharacterDoesNotExist = 0,
-                .DatabaseTransactionFailed = !result,
-                .InsufficientPermission = 0,
-                .Unused = 0
-            };
-            u8 cheatCommandResultVal = *reinterpret_cast<u8*>(&cheatCommandResult);
-
-            std::shared_ptr<Bytebuffer> resultMessage = Bytebuffer::Borrow<64>();
-            if (!Util::MessageBuilder::Cheat::BuildCheatDeleteCharacterResponse(resultMessage, cheatCommandResultVal))
-                return;
-
-            networkState.server->SendPacket(socketID, resultMessage);
-        });
-
-        gameCommandQueue.Push(characterDeleteCommand);
-        return true;
-    }
-
-    bool HandleOnCheatSetRace(Network::SocketID socketID, entt::entity entity, Network::Message& message)
-    {
-        GameDefine::UnitRace race = GameDefine::UnitRace::None;
-        if (!message.buffer->Get(race))
-            return false;
-
-        if (race == GameDefine::UnitRace::None || race > GameDefine::UnitRace::Troll)
-            return false;
-
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-        entt::registry::context& ctx = registry->ctx();
-        auto& networkState = ctx.get<Singletons::NetworkState>();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
-
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
-        {
-            auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
-            u64 characterID = objectInfo.guid.GetCounter();
-
-            auto& socketCharacterDefinition = databaseState.characterTables.charIDToDefinition[characterID];
-
-            GameDefine::UnitRace originalRace = socketCharacterDefinition.GetRace();
-            socketCharacterDefinition.SetRace(race);
-
-            auto transaction = conn->NewTransaction();
-            auto queryResult = transaction.exec(pqxx::prepped("CharacterSetRaceGenderClass"), pqxx::params{ socketCharacterDefinition.id, socketCharacterDefinition.raceGenderClass });
-            if (queryResult.affected_rows() == 0)
-            {
-                transaction.abort();
-                socketCharacterDefinition.SetRace(originalRace);
-            }
-            else
-            {
-                transaction.commit();
-
-                auto& displayInfo = registry->get<Components::DisplayInfo>(entity);
-                displayInfo.race = race;
-                displayInfo.displayID = UnitUtils::GetDisplayIDFromRaceGender(race, socketCharacterDefinition.GetGender());
-
-                std::shared_ptr<Bytebuffer> displayInfoUpdateMessage = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::Entity::BuildEntityDisplayInfoUpdateMessage(displayInfoUpdateMessage, GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Player, characterID), displayInfo))
-                    return false;
-                
-                ECS::Util::Grid::SendToNearby(entity, displayInfoUpdateMessage, true);
+                networkState.server->CloseSocketID(characterSocketID);
             }
         }
 
+        ECS::Result deletionResult = Util::Persistence::Character::CharacterDelete(*registry, characterIDToDelete);
+        result.CharacterDoesNotExist = deletionResult == ECS::Result::CharacterNotFound;
+        result.DatabaseTransactionFailed = deletionResult == ECS::Result::DatabaseError;
+
+        u8 cheatCommandResultVal = *reinterpret_cast<u8*>(&result);
+
+        std::shared_ptr<Bytebuffer> resultMessage = Bytebuffer::Borrow<64>();
+        if (!Util::MessageBuilder::Cheat::BuildCheatDeleteCharacterResponse(resultMessage, cheatCommandResultVal))
+            return false;
+
+        networkState.server->SendPacket(socketID, resultMessage);
+
         return true;
     }
-    bool HandleOnCheatSetGender(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+
+    bool HandleOnCheatSetRace(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        GameDefine::Gender gender = GameDefine::Gender::None;
-        if (!message.buffer->Get(gender))
+        GameDefine::UnitRace unitRace = GameDefine::UnitRace::None;
+        if (!message.buffer->Get(unitRace))
             return false;
 
-        if (gender == GameDefine::Gender::None || gender > GameDefine::Gender::Other)
+        if (unitRace == GameDefine::UnitRace::None || unitRace > GameDefine::UnitRace::Troll)
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-        entt::registry::context& ctx = registry->ctx();
-        auto& networkState = ctx.get<Singletons::NetworkState>();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
+        u64 characterID = objectInfo.guid.GetCounter();
 
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
-        {
-            auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
-            u64 characterID = objectInfo.guid.GetCounter();
+        if (Util::Persistence::Character::CharacterSetRace(*registry, characterID, unitRace) != ECS::Result::Success)
+            return false;
 
-            auto& socketCharacterDefinition = databaseState.characterTables.charIDToDefinition[characterID];
-
-            GameDefine::Gender originalGender = socketCharacterDefinition.GetGender();
-            socketCharacterDefinition.SetGender(gender);
-
-            auto transaction = conn->NewTransaction();
-            auto queryResult = transaction.exec(pqxx::prepped{ "CharacterSetRaceGenderClass" }, pqxx::params{ socketCharacterDefinition.id, socketCharacterDefinition.raceGenderClass });
-            if (queryResult.affected_rows() == 0)
-            {
-                transaction.abort();
-                socketCharacterDefinition.SetGender(originalGender);
-            }
-            else
-            {
-                transaction.commit();
-
-                auto& displayInfo = registry->get<Components::DisplayInfo>(entity);
-                displayInfo.gender = gender;
-                displayInfo.displayID = UnitUtils::GetDisplayIDFromRaceGender(socketCharacterDefinition.GetRace(), gender);
-
-                std::shared_ptr<Bytebuffer> displayInfoUpdateMessage = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::Entity::BuildEntityDisplayInfoUpdateMessage(displayInfoUpdateMessage, GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Player, characterID), displayInfo))
-                    return false;
-                
-                ECS::Util::Grid::SendToNearby(entity, displayInfoUpdateMessage, true);
-            }
-        }
+        auto& displayInfo = registry->get<Components::DisplayInfo>(entity);
+        Util::Unit::UpdateDisplayRace(*registry, entity, displayInfo, unitRace);
 
         return true;
     }
-    bool HandleOnCheatSetClass(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatSetGender(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        GameDefine::UnitGender unitGender = GameDefine::UnitGender::None;
+        if (!message.buffer->Get(unitGender))
+            return false;
+
+        if (unitGender == GameDefine::UnitGender::None || unitGender > GameDefine::UnitGender::Other)
+            return false;
+
+        auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
+        u64 characterID = objectInfo.guid.GetCounter();
+
+        if (Util::Persistence::Character::CharacterSetGender(*registry, characterID, unitGender) != ECS::Result::Success)
+            return false;
+
+        auto& displayInfo = registry->get<Components::DisplayInfo>(entity);
+        Util::Unit::UpdateDisplayGender(*registry, entity, displayInfo, unitGender);
+        
+        return true;
+    }
+    bool HandleOnCheatSetClass(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         GameDefine::UnitClass unitClass = GameDefine::UnitClass::None;
         if (!message.buffer->Get(unitClass))
@@ -498,37 +410,15 @@ namespace ECS::Systems
         if (unitClass == GameDefine::UnitClass::None || unitClass > GameDefine::UnitClass::Druid)
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-        entt::registry::context& ctx = registry->ctx();
-        auto& networkState = ctx.get<Singletons::NetworkState>();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
+        u64 characterID = objectInfo.guid.GetCounter();
 
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
-        {
-            auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
-            u64 characterID = objectInfo.guid.GetCounter();
-
-            auto& socketCharacterDefinition = databaseState.characterTables.charIDToDefinition[characterID];
-
-            GameDefine::UnitClass originalGameClass = socketCharacterDefinition.GetGameClass();
-            socketCharacterDefinition.SetGameClass(unitClass);
-
-            auto transaction = conn->NewTransaction();
-            auto queryResult = transaction.exec(pqxx::prepped("CharacterSetRaceGenderClass"), pqxx::params{ socketCharacterDefinition.id, socketCharacterDefinition.raceGenderClass });
-            if (queryResult.affected_rows() == 0)
-            {
-                transaction.abort();
-                socketCharacterDefinition.SetGameClass(originalGameClass);
-            }
-            else
-            {
-                transaction.commit();
-            }
-        }
+        if (Util::Persistence::Character::CharacterSetClass(*registry, characterID, unitClass) != ECS::Result::Success)
+            return false;
 
         return true;
     }
-    bool HandleOnCheatSetLevel(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatSetLevel(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         u16 level = 0;
         if (!message.buffer->Get(level))
@@ -537,46 +427,25 @@ namespace ECS::Systems
         if (level == 0)
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-        entt::registry::context& ctx = registry->ctx();
-        auto& networkState = ctx.get<Singletons::NetworkState>();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
+        u64 characterID = objectInfo.guid.GetCounter();
 
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
-        {
-            auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
-            u64 characterID = objectInfo.guid.GetCounter();
-
-            auto& socketCharacterDefinition = databaseState.characterTables.charIDToDefinition[characterID];
-
-            auto transaction = conn->NewTransaction();
-            auto queryResult = transaction.exec(pqxx::prepped("CharacterSetLevel"), pqxx::params{ socketCharacterDefinition.id, level });
-            if (queryResult.affected_rows() == 0)
-            {
-                transaction.abort();
-            }
-            else
-            {
-                transaction.commit();
-
-                socketCharacterDefinition.level = level;
-            }
-        }
+        if (Util::Persistence::Character::CharacterSetLevel(*registry, characterID, level) != ECS::Result::Success)
+            return false;
 
         return true;
     }
 
-    bool HandleOnCheatSetItemTemplate(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatSetItemTemplate(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         GameDefine::Database::ItemTemplate itemTemplate;
         if (!GameDefine::Database::ItemTemplate::Read(message.buffer, itemTemplate))
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         entt::registry::context& ctx = registry->ctx();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
 
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
         {
             auto transaction = conn->NewTransaction();
             auto queryResult = transaction.exec(pqxx::prepped("SetItemTemplate"), pqxx::params{ itemTemplate.id, itemTemplate.displayID, (u16)itemTemplate.bind, (u16)itemTemplate.rarity, (u16)itemTemplate.category, (u16)itemTemplate.type, itemTemplate.virtualLevel, itemTemplate.requiredLevel, itemTemplate.durability, itemTemplate.iconID, itemTemplate.name, itemTemplate.description, itemTemplate.armor, itemTemplate.statTemplateID, itemTemplate.armorTemplateID, itemTemplate.weaponTemplateID, itemTemplate.shieldTemplateID });
@@ -587,23 +456,22 @@ namespace ECS::Systems
             else
             {
                 transaction.commit();
-                databaseState.itemTables.templateIDToTemplateDefinition[itemTemplate.id] = itemTemplate;
+                gameCache.itemTables.templateIDToTemplateDefinition[itemTemplate.id] = itemTemplate;
             }
         }
 
         return true;
     }
-    bool HandleOnCheatSetItemStatTemplate(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatSetItemStatTemplate(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         GameDefine::Database::ItemStatTemplate itemStatTemplate;
         if (!GameDefine::Database::ItemStatTemplate::Read(message.buffer, itemStatTemplate))
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         entt::registry::context& ctx = registry->ctx();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
 
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
         {
             auto transaction = conn->NewTransaction();
             auto queryResult = transaction.exec(pqxx::prepped("SetItemStatTemplate"), pqxx::params{ itemStatTemplate.id, (u16)itemStatTemplate.statTypes[0], (u16)itemStatTemplate.statTypes[1], (u16)itemStatTemplate.statTypes[2], (u16)itemStatTemplate.statTypes[3], (u16)itemStatTemplate.statTypes[4], (u16)itemStatTemplate.statTypes[5], (u16)itemStatTemplate.statTypes[6], (u16)itemStatTemplate.statTypes[7], itemStatTemplate.statValues[0], itemStatTemplate.statValues[1], itemStatTemplate.statValues[2], itemStatTemplate.statValues[3], itemStatTemplate.statValues[4], itemStatTemplate.statValues[5], itemStatTemplate.statValues[6], itemStatTemplate.statValues[7] });
@@ -614,23 +482,22 @@ namespace ECS::Systems
             else
             {
                 transaction.commit();
-                databaseState.itemTables.statTemplateIDToTemplateDefinition[itemStatTemplate.id] = itemStatTemplate;
+                gameCache.itemTables.statTemplateIDToTemplateDefinition[itemStatTemplate.id] = itemStatTemplate;
             }
         }
 
         return true;
     }
-    bool HandleOnCheatSetItemArmorTemplate(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatSetItemArmorTemplate(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         GameDefine::Database::ItemArmorTemplate itemArmorTemplate;
         if (!GameDefine::Database::ItemArmorTemplate::Read(message.buffer, itemArmorTemplate))
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         entt::registry::context& ctx = registry->ctx();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
 
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
         {
             auto transaction = conn->NewTransaction();
             auto queryResult = transaction.exec(pqxx::prepped("SetItemArmorTemplate"), pqxx::params{ itemArmorTemplate.id, (u16)itemArmorTemplate.equipType, itemArmorTemplate.bonusArmor });
@@ -641,23 +508,22 @@ namespace ECS::Systems
             else
             {
                 transaction.commit();
-                databaseState.itemTables.armorTemplateIDToTemplateDefinition[itemArmorTemplate.id] = itemArmorTemplate;
+                gameCache.itemTables.armorTemplateIDToTemplateDefinition[itemArmorTemplate.id] = itemArmorTemplate;
             }
         }
 
         return true;
     }
-    bool HandleOnCheatSetItemWeaponTemplate(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatSetItemWeaponTemplate(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         GameDefine::Database::ItemWeaponTemplate itemWeaponTemplate;
         if (!GameDefine::Database::ItemWeaponTemplate::Read(message.buffer, itemWeaponTemplate))
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         entt::registry::context& ctx = registry->ctx();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
 
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
         {
             auto transaction = conn->NewTransaction();
             auto queryResult = transaction.exec(pqxx::prepped("SetItemWeaponTemplate"), pqxx::params{ itemWeaponTemplate.id, (u16)itemWeaponTemplate.weaponStyle, itemWeaponTemplate.minDamage, itemWeaponTemplate.maxDamage, itemWeaponTemplate.speed });
@@ -668,23 +534,22 @@ namespace ECS::Systems
             else
             {
                 transaction.commit();
-                databaseState.itemTables.weaponTemplateIDToTemplateDefinition[itemWeaponTemplate.id] = itemWeaponTemplate;
+                gameCache.itemTables.weaponTemplateIDToTemplateDefinition[itemWeaponTemplate.id] = itemWeaponTemplate;
             }
         }
 
         return true;
     }
-    bool HandleOnCheatSetItemShieldTemplate(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatSetItemShieldTemplate(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         GameDefine::Database::ItemShieldTemplate itemShieldTemplate;
         if (!GameDefine::Database::ItemShieldTemplate::Read(message.buffer, itemShieldTemplate))
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         entt::registry::context& ctx = registry->ctx();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
 
-        if (auto conn = databaseState.controller->GetConnection(Database::DBType::Character))
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
         {
             auto transaction = conn->NewTransaction();
             auto queryResult = transaction.exec(pqxx::prepped("SetItemShieldTemplate"), pqxx::params{ itemShieldTemplate.id, itemShieldTemplate.bonusArmor, itemShieldTemplate.block });
@@ -695,14 +560,14 @@ namespace ECS::Systems
             else
             {
                 transaction.commit();
-                databaseState.itemTables.shieldTemplateIDToTemplateDefinition[itemShieldTemplate.id] = itemShieldTemplate;
+                gameCache.itemTables.shieldTemplateIDToTemplateDefinition[itemShieldTemplate.id] = itemShieldTemplate;
             }
         }
 
         return true;
     }
 
-    bool HandleOnCheatAddItem(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatAddItem(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         u32 itemID = 0;
         u32 itemCount = 0;
@@ -716,87 +581,50 @@ namespace ECS::Systems
         if (itemCount == 0)
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         entt::registry::context& ctx = registry->ctx();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
 
-        bool isValidItemID = databaseState.itemTables.templateIDToTemplateDefinition.contains(itemID);
+        bool isValidItemID = Util::Cache::ItemTemplateExistsByID(gameCache, itemID);
         bool playerHasBags = registry->all_of<Components::PlayerContainers>(entity);
+
+        if (!playerHasBags || !isValidItemID)
+            return true;
+
+        auto& playerContainers = registry->get<Components::PlayerContainers>(entity);
 
         u16 containerIndex = Database::Container::INVALID_SLOT;
         u16 slotIndex = Database::Container::INVALID_SLOT;
+        bool canAddItem = Util::Container::GetFirstFreeSlotInBags(playerContainers, containerIndex, slotIndex);
+        if (!canAddItem)
+            return true;
 
-        if (isValidItemID && playerHasBags)
+        u64 characterID = registry->get<Components::ObjectInfo>(entity).guid.GetCounter();
+
+        const auto& baseContainerItem = playerContainers.equipment.GetItem(containerIndex);
+
+        u64 containerID = baseContainerItem.objectGuid.GetCounter();
+        Database::Container& container = playerContainers.bags[containerIndex];
+
+        u64 itemInstanceID;
+        if (Util::Persistence::Character::ItemAdd(*registry, entity, characterID, itemID, container, containerID, slotIndex, itemInstanceID) == ECS::Result::Success)
         {
-            auto& playerContainers = registry->get<Components::PlayerContainers>(entity);
-            u32 numBags = static_cast<u32>(playerContainers.bags.size());
-
-            for (u32 i = 0; i < numBags; i++)
+            Database::ItemInstance* itemInstance = nullptr;
+            if (Util::Cache::GetItemInstanceByID(gameCache, itemInstanceID, itemInstance))
             {
-                auto& bag = playerContainers.bags[i];
+                GameDefine::ObjectGuid itemInstanceGuid = GameDefine::ObjectGuid::CreateItem(itemInstanceID);
 
-                u16 nextFreeSlot = bag.GetNextFreeSlot();
-                if (nextFreeSlot == Database::Container::INVALID_SLOT)
-                    continue;
-
-                containerIndex = i;
-                slotIndex = nextFreeSlot;
-                break;
-            }
-
-            bool canAddItem = containerIndex != Database::Container::INVALID_SLOT && slotIndex != Database::Container::INVALID_SLOT;
-            if (canAddItem)
-            {
-                u64 characterID = registry->get<Components::ObjectInfo>(entity).guid.GetCounter();
-
-                const auto& baseContainerItem = playerContainers.equipment.GetItem(19 + containerIndex);
-                GameDefine::ObjectGuid containerGuid = baseContainerItem.objectGuid;
-                u64 containerID = containerGuid.GetCounter();
-
-                auto& gameCommandQueue = ctx.get<Singletons::GameCommandQueue>();
-                auto* createItemCommand = GameCommands::Character::CharacterCreateItem::Create(characterID, itemID, 1, containerID, (u8)slotIndex, [socketID, containerIndex](entt::registry& registry, GameCommands::GameCommandBase* gameCommandBase, bool result, u64 itemInstanceID)
+                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
+                if (Util::MessageBuilder::Item::BuildItemCreate(buffer, itemInstanceGuid, *itemInstance))
                 {
-                    Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
-                    if (!networkState.activeSocketIDs.contains(socketID))
-                        return;
-
-                    auto* createItemCommand = static_cast<GameCommands::Character::CharacterCreateItem*>(gameCommandBase);
-
-                    if (result)
-                    {
-                        entt::entity entity = networkState.socketIDToEntity[socketID];
-                        auto& databaseState = registry.ctx().get<Singletons::DatabaseState>();
-                        auto& playerContainers = registry.get<Components::PlayerContainers>(entity);
-                        auto& bag = playerContainers.bags[containerIndex];
-
-                        const auto& itemInstance = databaseState.itemTables.itemInstanceIDToDefinition[itemInstanceID];
-                        GameDefine::ObjectGuid itemInstanceGuid = GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Item, itemInstanceID);
-                        bag.AddItemToSlot(itemInstanceGuid, createItemCommand->slot);
-
-                        std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
-                        if (Util::MessageBuilder::Item::BuildItemCreate(buffer, itemInstanceGuid, itemInstance))
-                        {
-                            if (Util::MessageBuilder::Container::BuildAddToSlot(buffer, containerIndex + 1, createItemCommand->slot, itemInstanceGuid))
-                            {
-                                networkState.server->SendPacket(socketID, buffer);
-                            }
-                        }
-
-                        return;
-                    }
-
-                    // Send back that the item could not be added
-                });
-                gameCommandQueue.Push(createItemCommand);
-                return true;
+                    Singletons::NetworkState& networkState = registry->ctx().get<Singletons::NetworkState>();
+                    networkState.server->SendPacket(socketID, buffer);
+                }
             }
         }
 
-        // Send back that the item could not be added
-        
         return true;
     }
-    bool HandleOnCheatRemoveItem(Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatRemoveItem(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         u32 itemID = 0;
         u32 itemCount = 0;
@@ -810,124 +638,27 @@ namespace ECS::Systems
         if (itemCount == 0)
             return false;
 
-        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         entt::registry::context& ctx = registry->ctx();
-        auto& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
 
-        bool isValidItemID = databaseState.itemTables.templateIDToTemplateDefinition.contains(itemID);
+        bool isValidItemID = Util::Cache::ItemTemplateExistsByID(gameCache, itemID);
         bool playerHasBags = registry->all_of<Components::PlayerContainers>(entity);
 
+        if (!playerHasBags || !isValidItemID)
+            return true;
+
+        auto& playerContainers = registry->get<Components::PlayerContainers>(entity);
+        Database::Container* container = nullptr;
+        u64 containerID = 0;
         u16 containerIndex = Database::Container::INVALID_SLOT;
         u16 slotIndex = Database::Container::INVALID_SLOT;
 
-        if (isValidItemID && playerHasBags)
-        {
-            auto& playerContainers = registry->get<Components::PlayerContainers>(entity);
-            u32 numBags = static_cast<u32>(playerContainers.bags.size());
-            bool foundItem = false;
+        bool foundItem = Util::Container::GetFirstItemSlot(gameCache, playerContainers, itemID, container, containerID, containerIndex, slotIndex);
+        if (!foundItem)
+            return true;
 
-            for (u32 i = 0; i < numBags; i++)
-            {
-                auto& bag = playerContainers.bags[i];
-
-                if (bag.IsEmpty())
-                    continue;
-
-                u8 numSlots = bag.GetTotalSlots();
-                for (u8 j = 0; j < numSlots; j++)
-                {
-                    const auto& item = bag.GetItem(j);
-                    if (item.IsEmpty())
-                        continue;
-
-                    u64 itemInstanceID = item.objectGuid.GetCounter();
-                    auto& itemInstance = databaseState.itemTables.itemInstanceIDToDefinition[itemInstanceID];
-
-                    if (itemInstance.itemID == itemID)
-                    {
-                        containerIndex = i + 1;
-                        slotIndex = j;
-
-                        foundItem = true;
-                        break;
-                    }
-                }
-
-                if (foundItem)
-                    break;
-            }
-
-            if (!foundItem)
-            {
-                // Check Equipped Items
-                for (u32 i = 0; i < 19; i++)
-                {
-                    const auto& item = playerContainers.equipment.GetItem(i);
-                    if (item.IsEmpty())
-                        continue;
-
-                    u64 itemInstanceID = item.objectGuid.GetCounter();
-                    auto& itemInstance = databaseState.itemTables.itemInstanceIDToDefinition[itemInstanceID];
-
-                    if (itemInstance.itemID == itemID)
-                    {
-                        containerIndex = 0;
-                        slotIndex = i;
-                        break;
-                    }
-                }
-            }
-            
-            bool canRemoveItem = containerIndex != Database::Container::INVALID_SLOT && slotIndex != Database::Container::INVALID_SLOT;
-            if (canRemoveItem)
-            {
-                u64 characterID = registry->get<Components::ObjectInfo>(entity).guid.GetCounter();
-
-                u64 containerID = 0;
-                if (containerIndex > 0)
-                {
-                    const auto& baseContainerItem = playerContainers.equipment.GetItem(19 + (containerIndex - 1));
-                    GameDefine::ObjectGuid containerGuid = baseContainerItem.objectGuid;
-                    containerID = containerGuid.GetCounter();
-                }
-
-                auto& gameCommandQueue = ctx.get<Singletons::GameCommandQueue>();
-                auto* deleteItemCommand = GameCommands::Character::CharacterDeleteItem::Create(characterID, itemID, itemCount, containerID, (u8)slotIndex, [socketID, containerIndex, slotIndex](entt::registry& registry, GameCommands::GameCommandBase* gameCommandBase, bool result, u64 itemInstanceID)
-                {
-                    Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
-                    if (!networkState.activeSocketIDs.contains(socketID))
-                        return;
-
-                    if (result)
-                    {
-                        entt::entity entity = networkState.socketIDToEntity[socketID];
-                        auto& playerContainers = registry.get<Components::PlayerContainers>(entity);
-
-                        if (containerIndex == 0)
-                        {
-                            auto& bag = playerContainers.equipment;
-                            bag.RemoveItem((u8)slotIndex);
-                        }
-                        else
-                        {
-                            auto& bag = playerContainers.bags[containerIndex - 1];
-                            bag.RemoveItem((u8)slotIndex);
-                        }
-
-                        std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<64>();
-                        if (Util::MessageBuilder::Container::BuildRemoveFromSlot(buffer, (u8)containerIndex, (u8)slotIndex))
-                        {
-                            networkState.server->SendPacket(socketID, buffer);
-                        }
-
-                        return;
-                    }
-
-                    // Send back that the item could not be removed
-                });
-                gameCommandQueue.Push(deleteItemCommand);
-            }
-        }
+        u64 characterID = registry->get<Components::ObjectInfo>(entity).guid.GetCounter();
+        Util::Persistence::Character::ItemDelete(*registry, entity, characterID, *container, containerID, slotIndex);
 
         return true;
     }
@@ -941,7 +672,10 @@ namespace ECS::Systems
         if (!message.buffer->Get(command))
             return false;
 
-        entt::entity entity = networkState.socketIDToEntity[socketID];
+        entt::entity entity;
+        if (!Util::Network::GetEntityIDFromSocketID(networkState, socketID, entity))
+            return false;
+        
         if (!registry->valid(entity))
             return false;
 
@@ -949,92 +683,92 @@ namespace ECS::Systems
         {
             case Network::CheatCommands::Damage:
             {
-                return HandleOnCheatDamage(socketID, entity, message);
+                return HandleOnCheatDamage(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::Kill:
             {
-                return HandleOnCheatKill(socketID, entity, message);
+                return HandleOnCheatKill(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::Resurrect:
             {
-                return HandleOnCheatResurrect(socketID, entity, message);
+                return HandleOnCheatResurrect(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::Morph:
             {
-                return HandleOnCheatMorph(socketID, entity, message);
+                return HandleOnCheatMorph(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::Demorph:
             {
-                return HandleOnCheatDemorph(socketID, entity, message);
+                return HandleOnCheatDemorph(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::CreateCharacter:
             {
-                return HandleOnCheatCreateCharacter(socketID, entity, message);
+                return HandleOnCheatCreateCharacter(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::DeleteCharacter:
             {
-                return HandleOnCheatDeleteCharacter(socketID, entity, message);
+                return HandleOnCheatDeleteCharacter(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetRace:
             {
-                return HandleOnCheatSetRace(socketID, entity, message);
+                return HandleOnCheatSetRace(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetGender:
             {
-                return HandleOnCheatSetGender(socketID, entity, message);
+                return HandleOnCheatSetGender(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetClass:
             {
-                return HandleOnCheatSetClass(socketID, entity, message);
+                return HandleOnCheatSetClass(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetLevel:
             {
-                return HandleOnCheatSetLevel(socketID, entity, message);
+                return HandleOnCheatSetLevel(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetItemTemplate:
             {
-                return HandleOnCheatSetItemTemplate(socketID, entity, message);
+                return HandleOnCheatSetItemTemplate(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetItemStatTemplate:
             {
-                return HandleOnCheatSetItemStatTemplate(socketID, entity, message);
+                return HandleOnCheatSetItemStatTemplate(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetItemArmorTemplate:
             {
-                return HandleOnCheatSetItemArmorTemplate(socketID, entity, message);
+                return HandleOnCheatSetItemArmorTemplate(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetItemWeaponTemplate:
             {
-                return HandleOnCheatSetItemWeaponTemplate(socketID, entity, message);
+                return HandleOnCheatSetItemWeaponTemplate(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::SetItemShieldTemplate:
             {
-                return HandleOnCheatSetItemShieldTemplate(socketID, entity, message);
+                return HandleOnCheatSetItemShieldTemplate(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::AddItem:
             {
-                return HandleOnCheatAddItem(socketID, entity, message);
+                return HandleOnCheatAddItem(registry, socketID, entity, message);
             }
 
             case Network::CheatCommands::RemoveItem:
             {
-                return HandleOnCheatRemoveItem(socketID, entity, message);
+                return HandleOnCheatRemoveItem(registry, socketID, entity, message);
             }
 
             default: break;
@@ -1065,10 +799,9 @@ namespace ECS::Systems
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         Singletons::NetworkState& networkState = registry->ctx().get<Singletons::NetworkState>();
 
-        if (!networkState.socketIDToEntity.contains(socketID))
+        entt::entity entity;
+        if (!Util::Network::GetEntityIDFromSocketID(networkState, socketID, entity))
             return false;
-
-        entt::entity entity = networkState.socketIDToEntity[socketID];
 
         Components::Transform& transform = registry->get<Components::Transform>(entity);
         transform.position = position;
@@ -1081,12 +814,12 @@ namespace ECS::Systems
             return false;
 
         Singletons::WorldState& worldState = registry->ctx().get<Singletons::WorldState>();
-        u32 mapID = 0; // Should ideally be in the transform?
 
-        World& world = worldState.GetWorld(mapID);
+        World& world = worldState.GetWorld(transform.mapID);
         world.UpdatePlayer(objectInfo.guid, position.x, position.z);
 
-        ECS::Util::Grid::SendToNearby(entity, entityMoveMessage);
+        auto& netInfo = registry->get<Components::NetInfo>(entity);
+        ECS::Util::Grid::SendToNearby(*registry, entity, netInfo, entityMoveMessage);
         return true;
     }
     bool HandleOnEntityTargetUpdate(Network::SocketID socketID, Network::Message& message)
@@ -1118,97 +851,109 @@ namespace ECS::Systems
 
     bool HandleOnContainerSwapSlots(Network::SocketID socketID, Network::Message& message)
     {
-        u8 srcContainerIndex = 0;
-        u8 destContainerIndex = 0;
-        u8 srcSlotIndex = 0;
-        u8 dstSlotIndex = 0;
+        u16 srcContainerIndex = 0;
+        u16 dstContainerIndex = 0;
+        u16 srcSlotIndex = 0;
+        u16 dstSlotIndex = 0;
 
         bool didFail = false;
 
-        didFail |= !message.buffer->GetU8(srcContainerIndex);
-        didFail |= !message.buffer->GetU8(destContainerIndex);
-        didFail |= !message.buffer->GetU8(srcSlotIndex);
-        didFail |= !message.buffer->GetU8(dstSlotIndex);
+        didFail |= !message.buffer->GetU16(srcContainerIndex);
+        didFail |= !message.buffer->GetU16(dstContainerIndex);
+        didFail |= !message.buffer->GetU16(srcSlotIndex);
+        didFail |= !message.buffer->GetU16(dstSlotIndex);
 
         if (didFail)
             return false;
 
-        if (srcContainerIndex == destContainerIndex && srcSlotIndex == dstSlotIndex)
+        if (srcContainerIndex == dstContainerIndex && srcSlotIndex == dstSlotIndex)
             return false;
 
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
         Singletons::NetworkState& networkState = registry->ctx().get<Singletons::NetworkState>();
 
-        if (!networkState.socketIDToEntity.contains(socketID))
+        entt::entity entity;
+        if (!Util::Network::GetEntityIDFromSocketID(networkState, socketID, entity))
             return false;
 
-        entt::entity entity = networkState.socketIDToEntity[socketID];
-        if (!registry->all_of<Components::PlayerContainers>(entity))
+        if (!registry->valid(entity) || !registry->all_of<Components::PlayerContainers>(entity))
             return false;
 
         auto& playerContainers = registry->get<Components::PlayerContainers>(entity);
 
-        bool isSameContainer = srcContainerIndex == destContainerIndex;
+        Database::Container* srcContainer = nullptr;
+        u64 srcContainerID = 0;
+
+        Database::Container* dstContainer = nullptr;
+        u64 dstContainerID = 0;
+       
+
+        bool isSameContainer = srcContainerIndex == dstContainerIndex;
         if (isSameContainer)
         {
-            Database::Container* container = nullptr;
-
             if (srcContainerIndex == 0)
             {
-                container = &playerContainers.equipment;
+                srcContainer = &playerContainers.equipment;
+                srcContainerID = 0;
             }
             else
             {
-                u32 bagIndex = srcContainerIndex - 1;
-                u32 numContainers = static_cast<u32>(playerContainers.bags.size());
-                if (bagIndex >= numContainers)
+                u32 bagIndex = PLAYER_BAG_INDEX_START + srcContainerIndex - 1;
+                const Database::ContainerItem& bagContainerItem = playerContainers.equipment.GetItem(bagIndex);
+
+                if (bagContainerItem.IsEmpty())
                     return false;
 
-                container = &playerContainers.bags[bagIndex];
+                srcContainer = &playerContainers.bags[bagIndex];
+                srcContainerID = bagContainerItem.objectGuid.GetCounter();
             }
 
-            u32 numContainerSlots = container->GetTotalSlots();
+            u32 numContainerSlots = srcContainer->GetTotalSlots();
             if (srcSlotIndex >= numContainerSlots || dstSlotIndex >= numContainerSlots)
                 return false;
 
-            auto& srcItem = container->GetItem(srcSlotIndex);
+            auto& srcItem = srcContainer->GetItem(srcSlotIndex);
             if (srcItem.IsEmpty())
                 return false;
+
+            dstContainer = srcContainer; // Same container, so destination is the same as source
+            dstContainerID = srcContainerID;
         }
         else
         {
-            Database::Container* srcContainer = nullptr;
-            Database::Container* destContainer = nullptr;
-
             if (srcContainerIndex == 0)
             {
                 srcContainer = &playerContainers.equipment;
             }
             else
             {
-                u32 bagIndex = srcContainerIndex - 1;
-                u32 numContainers = static_cast<u32>(playerContainers.bags.size());
-                if (bagIndex >= numContainers)
+                u32 bagIndex = PLAYER_BAG_INDEX_START + srcContainerIndex - 1;
+                const Database::ContainerItem& bagContainerItem = playerContainers.equipment.GetItem(bagIndex);
+
+                if (bagContainerItem.IsEmpty())
                     return false;
 
                 srcContainer = &playerContainers.bags[bagIndex];
+                srcContainerID = bagContainerItem.objectGuid.GetCounter();
             }
 
-            if (destContainerIndex == 0)
+            if (dstContainerIndex == 0)
             {
-                destContainer = &playerContainers.equipment;
+                dstContainer = &playerContainers.equipment;
             }
             else
             {
-                u32 bagIndex = destContainerIndex - 1;
-                u32 numContainers = static_cast<u32>(playerContainers.bags.size());
-                if (bagIndex >= numContainers)
+                u32 bagIndex = PLAYER_BAG_INDEX_START + dstContainerIndex - 1;
+                const Database::ContainerItem& bagContainerItem = playerContainers.equipment.GetItem(bagIndex);
+
+                if (bagContainerItem.IsEmpty())
                     return false;
 
-                destContainer = &playerContainers.bags[bagIndex];
+                dstContainer = &playerContainers.bags[bagIndex];
+                dstContainerID = bagContainerItem.objectGuid.GetCounter();
             }
 
-            if (srcSlotIndex >= srcContainer->GetTotalSlots() || dstSlotIndex >= destContainer->GetTotalSlots())
+            if (srcSlotIndex >= srcContainer->GetTotalSlots() || dstSlotIndex >= dstContainer->GetTotalSlots())
                 return false;
 
             auto& srcItem = srcContainer->GetItem(srcSlotIndex);
@@ -1217,79 +962,17 @@ namespace ECS::Systems
         }
 
         auto& objectInfo = registry->get<Components::ObjectInfo>(entity);
+        u64 characterID = objectInfo.guid.GetCounter();
 
-        auto& gameCommandQueue = registry->ctx().get<Singletons::GameCommandQueue>();
-        auto* swapContainerSlotsCommand = GameCommands::Character::CharacterSwapContainerSlots::Create(objectInfo.guid.GetCounter(), srcContainerIndex, destContainerIndex, srcSlotIndex, dstSlotIndex, [socketID](entt::registry& registry, GameCommands::GameCommandBase* gameCommandBase, bool result)
+        if (Util::Persistence::Character::ItemSwap(*registry, entity, characterID, *srcContainer, srcContainerID, srcSlotIndex, *dstContainer, dstContainerID, dstSlotIndex) == ECS::Result::Success)
         {
-            Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
-            if (!networkState.activeSocketIDs.contains(socketID))
-                return;
+            std::shared_ptr<Bytebuffer> resultMessage = Bytebuffer::Borrow<64>();
+            if (!Util::MessageBuilder::Container::BuildSwapSlots(resultMessage, srcContainerIndex, dstContainerIndex, srcSlotIndex, dstSlotIndex))
+                return false;
 
-            auto* characterSwapContainerSlots = static_cast<ECS::GameCommands::Character::CharacterSwapContainerSlots*>(gameCommandBase);
+            networkState.server->SendPacket(socketID, resultMessage);
+        }
 
-            if (result)
-            {
-                entt::entity charEntity = networkState.characterIDToEntity[characterSwapContainerSlots->characterID];
-                auto& playerContainers = registry.get<Components::PlayerContainers>(charEntity);
-
-                bool isSameContainer = characterSwapContainerSlots->srcContainerIndex == characterSwapContainerSlots->destContainerIndex;
-                if (isSameContainer)
-                {
-                    Database::Container* container = nullptr;
-
-                    if (characterSwapContainerSlots->srcContainerIndex == 0)
-                    {
-                        container = &playerContainers.equipment;
-                    }
-                    else
-                    {
-                        u32 bagIndex = characterSwapContainerSlots->srcContainerIndex - 1;
-                        container = &playerContainers.bags[bagIndex];
-                    }
-
-                    container->SwapItems(characterSwapContainerSlots->srcSlotIndex, characterSwapContainerSlots->destSlotIndex);
-                }
-                else
-                {
-                    Database::Container* srcContainer = nullptr;
-                    Database::Container* destContainer = nullptr;
-
-                    if (characterSwapContainerSlots->srcContainerIndex == 0)
-                    {
-                        srcContainer = &playerContainers.equipment;
-                    }
-                    else
-                    {
-                        u32 bagIndex = characterSwapContainerSlots->srcContainerIndex - 1;
-                        srcContainer = &playerContainers.bags[bagIndex];
-                    }
-
-                    if (characterSwapContainerSlots->destContainerIndex == 0)
-                    {
-                        destContainer = &playerContainers.equipment;
-                    }
-                    else
-                    {
-                        u32 bagIndex = characterSwapContainerSlots->destContainerIndex - 1;
-                        destContainer = &playerContainers.bags[bagIndex];
-                    }
-
-                    srcContainer->SwapItems(*destContainer, characterSwapContainerSlots->srcSlotIndex, characterSwapContainerSlots->destSlotIndex);
-                }
-
-                std::shared_ptr<Bytebuffer> resultMessage = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::Container::BuildSwapSlots(resultMessage, characterSwapContainerSlots->srcContainerIndex, characterSwapContainerSlots->destContainerIndex, characterSwapContainerSlots->srcSlotIndex, characterSwapContainerSlots->destSlotIndex))
-                    return;
-
-                networkState.server->SendPacket(socketID, resultMessage);
-            }
-            else
-            {
-                // Send Swap Failed Command
-            }
-        });
-
-        gameCommandQueue.Push(swapContainerSlotsCommand);
         return true;
     }
 
@@ -1394,9 +1077,9 @@ namespace ECS::Systems
     {
         entt::registry::context& ctx = registry.ctx();
 
-        //Singletons::GridSingleton& gridSingleton = ctx.get<Singletons::GridSingleton>();
-        Singletons::NetworkState& networkState = ctx.get<Singletons::NetworkState>();
-        Singletons::WorldState& worldState = ctx.get<Singletons::WorldState>();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& worldState = ctx.get<Singletons::WorldState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
 
         // Handle 'SocketConnectedEvent'
         {
@@ -1408,7 +1091,7 @@ namespace ECS::Systems
                 const Network::ConnectionInfo& connectionInfo = connectedEvent.connectionInfo;
                 NC_LOG_INFO("Network : Client connected from (SocketID : {0}, \"{1}:{2}\")", static_cast<u32>(connectedEvent.socketID), connectionInfo.ipAddr, connectionInfo.port);
 
-                networkState.activeSocketIDs.insert(connectedEvent.socketID);
+                Util::Network::ActivateSocket(networkState, connectedEvent.socketID);
             }
         }
 
@@ -1422,62 +1105,69 @@ namespace ECS::Systems
                 Network::SocketID socketID = disconnectedEvent.socketID;
                 NC_LOG_INFO("Network : Client disconnected (SocketID : {0})", static_cast<u32>(socketID));
 
-                networkState.socketIDRequestedToClose.erase(socketID);
-                networkState.activeSocketIDs.erase(socketID);
+                Util::Network::DeactivateSocket(networkState, socketID);
 
-                if (!networkState.socketIDToEntity.contains(socketID))
+                entt::entity entity;
+                if (!Util::Network::GetEntityIDFromSocketID(networkState, socketID, entity))
                     continue;
 
-                entt::entity entity = networkState.socketIDToEntity[socketID];
-                NC_ASSERT(registry.valid(entity), "Network : Attempting to cleanup Invalid Entity during DisconnectedEvent");
+                if (!registry.valid(entity))
+                    continue;
 
-                Components::NetInfo& netInfo = registry.get<Components::NetInfo>(entity);
-                Components::ObjectInfo& objectInfo = registry.get<Components::ObjectInfo>(entity);
-
-                // Start Cleanup here
-                {
-                    networkState.socketIDToEntity.erase(socketID);
-
-                    u64 characterID = objectInfo.guid.GetCounter();
-                    networkState.characterIDToEntity.erase(characterID);
-                    networkState.characterIDToSocketID.erase(characterID);
-
-                    u32 mapID = 0; // TODO : Get from Transform
-                    World& world = worldState.GetWorld(mapID);
-                    world.guidToEntity.erase(objectInfo.guid);
-                    world.RemovePlayer(objectInfo.guid);
-
-                    registry.destroy(entity);
-                }
+                registry.emplace<Tags::CharacterNeedsDeinitialization>(entity);
             }
         }
 
         // Handle 'SocketMessageEvent'
         {
             moodycamel::ConcurrentQueue<Network::SocketMessageEvent>& messageEvents = networkState.server->GetMessageEvents();
+            Scripting::LuaManager* luaManager = ServiceLocator::GetLuaManager();
+            auto* packetEventHandler = luaManager->GetLuaHandler<Scripting::PacketEventHandler>(Scripting::LuaHandlerType::PacketEvent);
+            bool hasOnReceivedListener = packetEventHandler->HasListeners(Scripting::LuaPacketEvent::OnReceive);
 
             Network::SocketMessageEvent messageEvent;
             while (messageEvents.try_dequeue(messageEvent))
             {
-                auto* messageHeader = reinterpret_cast<Network::MessageHeader*>(messageEvent.message.buffer->GetDataPointer());
-                //NC_LOG_INFO("Network : Message from (SocketID : {0}, Opcode : {1}, Size : {2})", static_cast<std::underlying_type<Network::SocketID>::type>(messageEvent.socketID), static_cast<std::underlying_type<Network::GameOpcode>::type>(messageHeader->opcode), messageHeader->size);
-
-                if (!networkState.activeSocketIDs.contains(messageEvent.socketID))
+                if (!Util::Network::IsSocketActive(networkState, messageEvent.socketID))
                     continue;
 
-                // Invoke MessageHandler here
-                if (networkState.gameMessageRouter->CallHandler(messageEvent.socketID, messageEvent.message))
-                    continue;
+                Network::MessageHeader messageHeader;
+                if (networkState.gameMessageRouter->GetMessageHeader(messageEvent.message, messageHeader))
+                {
+                    auto gameOpcode = static_cast<Network::GameOpcode>(messageHeader.opcode);
+
+                    bool hasLuaHandlerForOpcode = packetEventHandler->HasGameOpcodeHandler(luaManager->GetInternalState(), gameOpcode);
+                    if (hasLuaHandlerForOpcode)
+                    {
+                        u32 messageReadOffset = static_cast<u32>(messageEvent.message.buffer->readData);
+                        if (packetEventHandler->CallGameOpcodeHandler(luaManager->GetInternalState(), messageHeader, messageEvent.message))
+                        {
+                            if (!networkState.gameMessageRouter->HasValidHandlerForHeader(messageHeader))
+                                continue;
+
+                            messageEvent.message.buffer->readData = messageReadOffset;
+
+                            if (networkState.gameMessageRouter->CallHandler(messageEvent.socketID, messageHeader, messageEvent.message))
+                                continue;
+                        }
+                    }
+                    else
+                    {
+                        if (networkState.gameMessageRouter->HasValidHandlerForHeader(messageHeader))
+                        {
+                            if (networkState.gameMessageRouter->CallHandler(messageEvent.socketID, messageHeader, messageEvent.message))
+                                continue;
+                        }
+                    }
+                }
 
                 // Failed to Call Handler, Close Socket
                 {
-                    if (!networkState.socketIDRequestedToClose.contains(messageEvent.socketID))
-                    {
-                        networkState.server->CloseSocketID(messageEvent.socketID);
-                        networkState.socketIDRequestedToClose.emplace(messageEvent.socketID);
-                    }
+                    Util::Network::RequestSocketToClose(networkState, messageEvent.socketID);
                 }
             }
         }
+
+        networkState.server->Update();
     }
 }

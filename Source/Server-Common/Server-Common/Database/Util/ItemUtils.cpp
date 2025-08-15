@@ -39,7 +39,6 @@ namespace Database::Util::Item
             totalRows += LoadItemArmorTemplateTable(dbConnection, itemTables);
             totalRows += LoadItemWeaponTemplateTable(dbConnection, itemTables);
             totalRows += LoadItemShieldTemplateTable(dbConnection, itemTables);
-            totalRows += LoadItemInstances(dbConnection, itemTables);
 
             NC_LOG_INFO("-- Loaded Item Tables ({0} Rows) --\n", totalRows);
         }
@@ -64,32 +63,32 @@ namespace Database::Util::Item
             itemTables.templateIDToTemplateDefinition.reserve(numRows);
 
             nonTransaction.for_stream("SELECT * FROM public.item_template", [&itemTables](u32 id, u32 displayID, u16 bind, u16 rarity, u16 category, u16 type, u16 virtuallevel, u16 requiredLevel, u32 durability, u32 iconID, const std::string& name, const std::string& description, u32 armor, u32 statTemplateID, u32 armorTemplateID, u32 weaponTemplateID, u32 shieldTemplateID)
-            {
-                ::GameDefine::Database::ItemTemplate itemTemplate =
                 {
-                    .id = id,
-                    .displayID = displayID,
-                    .bind = static_cast<u8>(bind),
-                    .rarity = static_cast<u8>(rarity),
-                    .category = static_cast<u8>(category),
-                    .type = static_cast<u8>(type),
-                    .virtualLevel = virtuallevel,
-                    .requiredLevel = requiredLevel,
-                    .durability = durability,
-                    .iconID = iconID,
+                    ::GameDefine::Database::ItemTemplate itemTemplate =
+                    {
+                        .id = id,
+                        .displayID = displayID,
+                        .bind = static_cast<u8>(bind),
+                        .rarity = static_cast<u8>(rarity),
+                        .category = static_cast<u8>(category),
+                        .type = static_cast<u8>(type),
+                        .virtualLevel = virtuallevel,
+                        .requiredLevel = requiredLevel,
+                        .durability = durability,
+                        .iconID = iconID,
 
-                    .name = name,
-                    .description = description,
+                        .name = name,
+                        .description = description,
 
-                    .armor = armor,
-                    .statTemplateID = statTemplateID,
-                    .armorTemplateID = armorTemplateID,
-                    .weaponTemplateID = weaponTemplateID,
-                    .shieldTemplateID = shieldTemplateID
-                };
+                        .armor = armor,
+                        .statTemplateID = statTemplateID,
+                        .armorTemplateID = armorTemplateID,
+                        .weaponTemplateID = weaponTemplateID,
+                        .shieldTemplateID = shieldTemplateID
+                    };
 
-                itemTables.templateIDToTemplateDefinition.insert({ id, itemTemplate });
-            });
+                    itemTables.templateIDToTemplateDefinition.insert({ id, itemTemplate });
+                });
 
             NC_LOG_INFO("Loaded Table 'item_template' ({0} Rows)", numRows);
             return numRows;
@@ -115,16 +114,16 @@ namespace Database::Util::Item
             itemTables.statTemplateIDToTemplateDefinition.reserve(numRows);
 
             nonTransaction.for_stream("SELECT * FROM public.item_stat_template", [&itemTables](u32 id, u16 statType1, u16 statType2, u16 statType3, u16 statType4, u16 statType5, u16 statType6, u16 statType7, u16 statType8, i32 statValue1, i32 statValue2, i32 statValue3, i32 statValue4, i32 statValue5, i32 statValue6, i32 statValue7, i32 statValue8)
-            {
-                ::GameDefine::Database::ItemStatTemplate itemStatTemplate =
                 {
-                    .id = id,
-                    .statTypes = { (u8)statType1, (u8)statType2, (u8)statType3, (u8)statType4, (u8)statType5, (u8)statType6, (u8)statType7, (u8)statType8 },
-                    .statValues = { statValue1, statValue2, statValue3, statValue4, statValue5, statValue6, statValue7, statValue8 }
-                };
+                    ::GameDefine::Database::ItemStatTemplate itemStatTemplate =
+                    {
+                        .id = id,
+                        .statTypes = { (u8)statType1, (u8)statType2, (u8)statType3, (u8)statType4, (u8)statType5, (u8)statType6, (u8)statType7, (u8)statType8 },
+                        .statValues = { statValue1, statValue2, statValue3, statValue4, statValue5, statValue6, statValue7, statValue8 }
+                    };
 
-                itemTables.statTemplateIDToTemplateDefinition.insert({ id, itemStatTemplate });
-            });
+                    itemTables.statTemplateIDToTemplateDefinition.insert({ id, itemStatTemplate });
+                });
 
             NC_LOG_INFO("Loaded Table 'item_stat_template' ({0} Rows)", numRows);
             return numRows;
@@ -150,16 +149,16 @@ namespace Database::Util::Item
             itemTables.armorTemplateIDToTemplateDefinition.reserve(numRows);
 
             nonTransaction.for_stream("SELECT * FROM public.item_armor_template", [&itemTables](u32 id, u16 equipType, u32 bonusArmor)
-            {
-                ::GameDefine::Database::ItemArmorTemplate itemArmorTemplate =
                 {
-                    .id = id,
-                    .equipType = static_cast<u8>(equipType),
-                    .bonusArmor = bonusArmor
-                };
+                    ::GameDefine::Database::ItemArmorTemplate itemArmorTemplate =
+                    {
+                        .id = id,
+                        .equipType = static_cast<u8>(equipType),
+                        .bonusArmor = bonusArmor
+                    };
 
-                itemTables.armorTemplateIDToTemplateDefinition.insert({ id, itemArmorTemplate });
-            });
+                    itemTables.armorTemplateIDToTemplateDefinition.insert({ id, itemArmorTemplate });
+                });
 
             NC_LOG_INFO("Loaded Table 'item_armor_template' ({0} Rows)", numRows);
             return numRows;
@@ -185,18 +184,18 @@ namespace Database::Util::Item
             itemTables.weaponTemplateIDToTemplateDefinition.reserve(numRows);
 
             nonTransaction.for_stream("SELECT * FROM public.item_weapon_template", [&itemTables](u32 id, u16 weaponStyle, u32 minDamage, u32 maxDamage, f32 speed)
-            {
-                ::GameDefine::Database::ItemWeaponTemplate itemWeaponTemplate =
                 {
-                    .id = id,
-                    .weaponStyle = static_cast<u8>(weaponStyle),
-                    .minDamage = minDamage,
-                    .maxDamage = maxDamage,
-                    .speed = speed
-                };
+                    ::GameDefine::Database::ItemWeaponTemplate itemWeaponTemplate =
+                    {
+                        .id = id,
+                        .weaponStyle = static_cast<u8>(weaponStyle),
+                        .minDamage = minDamage,
+                        .maxDamage = maxDamage,
+                        .speed = speed
+                    };
 
-                itemTables.weaponTemplateIDToTemplateDefinition.insert({ id, itemWeaponTemplate });
-            });
+                    itemTables.weaponTemplateIDToTemplateDefinition.insert({ id, itemWeaponTemplate });
+                });
 
             NC_LOG_INFO("Loaded Table 'item_weapon_template' ({0} Rows)", numRows);
             return numRows;
@@ -234,49 +233,6 @@ namespace Database::Util::Item
             });
 
             NC_LOG_INFO("Loaded Table 'item_shield_template' ({0} Rows)", numRows);
-            return numRows;
-        }
-        u64 LoadItemInstances(std::shared_ptr<DBConnection>& dbConnection, Database::ItemTables& itemTables)
-        {
-            NC_LOG_INFO("Loading Table 'item_instances'");
-
-            pqxx::nontransaction nonTransaction = dbConnection->NewNonTransaction();
-
-            auto result = nonTransaction.exec("SELECT COUNT(*) FROM public.item_instances");
-            u64 numRows = result[0][0].as<u64>();
-
-            itemTables.itemInstanceIDToDefinition.clear();
-            itemTables.itemInstanceIDToContainer.clear();
-
-            if (numRows == 0)
-            {
-                NC_LOG_INFO("Skipped Table 'item_instances'");
-                return 0;
-            }
-
-            itemTables.itemInstanceIDToDefinition.reserve(numRows);
-            itemTables.itemInstanceIDToContainer.reserve(numRows);
-
-            nonTransaction.for_stream("SELECT * FROM public.item_instances", [&itemTables](u64 id, u32 itemID, u64 ownerID, u16 count, u16 durability)
-            {
-                ItemInstance itemInstance =
-                {
-                    .id = id,
-                    .ownerID = ownerID,
-                    .itemID = itemID,
-                    .count = count,
-                    .durability = durability
-                };
-
-                auto& itemTemplate = itemTables.templateIDToTemplateDefinition[itemID];
-
-                if (itemTemplate.category == 5)
-                    itemTables.itemInstanceIDToContainer[id] = Container(itemTemplate.durability);
-
-                itemTables.itemInstanceIDToDefinition[id] = itemInstance;
-            });
-
-            NC_LOG_INFO("Loaded Table 'item_instances' ({0} Rows)", numRows);
             return numRows;
         }
     }

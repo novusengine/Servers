@@ -10,7 +10,7 @@ namespace ECS::Components
     public:
         u32 displayID;
 
-        GameDefine::UnitRace race = GameDefine::UnitRace::None;
-        GameDefine::Gender gender = GameDefine::Gender::None;
+        GameDefine::UnitRace unitRace = GameDefine::UnitRace::None;
+        GameDefine::UnitGender unitGender = GameDefine::UnitGender::None;
     };
 }

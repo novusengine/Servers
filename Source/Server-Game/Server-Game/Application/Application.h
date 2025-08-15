@@ -15,6 +15,10 @@ namespace ECS
 {
     class Scheduler;
 }
+namespace Scripting
+{
+    class LuaManager;
+}
 
 class Application
 {
@@ -42,6 +46,7 @@ private:
     enki::TaskScheduler* _taskScheduler = nullptr;
 
     ECS::Scheduler* _ecsScheduler = nullptr;
+    Scripting::LuaManager* _luaManager = nullptr;
 
     nlohmann::json _cvarJson;
     nlohmann::json _databaseJson;

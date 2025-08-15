@@ -21,7 +21,7 @@ namespace ECS
     struct CharacterLoginRequest
     {
         Network::SocketID socketID;
-        u32 nameHash;
+        std::string name;
     };
 
     namespace Singletons

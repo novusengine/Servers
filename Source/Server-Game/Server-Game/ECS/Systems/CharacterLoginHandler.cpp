@@ -8,12 +8,18 @@
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
-#include "Server-Game/ECS/Singletons/DatabaseState.h"
+#include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
-#include "Server-Game/Util/UnitUtils.h"
+#include "Server-Game/ECS/Util/UnitUtil.h"
+#include "Server-Game/ECS/Util/Cache/CacheUtil.h"
+#include "Server-Game/ECS/Util/Network/NetworkUtil.h"
+
+#include <Server-Common/Database/DBController.h>
+#include <Server-Common/Database/Util/CharacterUtils.h>
 
 #include <Base/Util/DebugHandler.h>
+#include <Base/Util/StringUtils.h>
 
 #include <Network/Server.h>
 
@@ -29,28 +35,28 @@ namespace ECS::Systems
     void CharacterLoginHandler::Update(entt::registry& registry, f32 deltaTime)
     {
         entt::registry::context& ctx = registry.ctx();
-        Singletons::NetworkState& networkState = ctx.get<Singletons::NetworkState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
 
         u32 approxRequests = static_cast<u32>(networkState.characterLoginRequest.size_approx());
         if (approxRequests == 0)
             return;
 
-        Singletons::DatabaseState& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
 
         CharacterLoginRequest request;
         while (networkState.characterLoginRequest.try_dequeue(request))
         {
             Network::SocketID socketID = request.socketID;
-            u32 requestedCharacterNameHash = request.nameHash;
+            u32 requestedCharacterNameHash = StringUtils::fnv1a_32(request.name.c_str(), request.name.length());
 
-            bool notConnectedToACharacter = !networkState.socketIDToEntity.contains(socketID);
-            bool characterDoesExist = databaseState.characterTables.charNameHashToCharID.contains(requestedCharacterNameHash);
-            if (notConnectedToACharacter && characterDoesExist)
+            bool notConnectedToACharacter = !Util::Network::IsSocketLinkedToEntity(networkState, socketID);
+            bool characterIsOffline = !Util::Cache::CharacterExistsByNameHash(gameCache, requestedCharacterNameHash);
+
+            if (notConnectedToACharacter && characterIsOffline)
             {
-                u64 requestedCharacterID = databaseState.characterTables.charNameHashToCharID[requestedCharacterNameHash];
-                bool characterIsOffline = !networkState.characterIDToSocketID.contains(requestedCharacterID);
-
-                if (characterIsOffline)
+                pqxx::result databaseResult;
+                if (Database::Util::Character::CharacterGetInfoByName(databaseConn, request.name, databaseResult))
                 {
                     entt::entity socketEntity = registry.create();
 
@@ -58,23 +64,23 @@ namespace ECS::Systems
                     netInfo.socketID = socketID;
 
                     auto& objectInfo = registry.emplace<Components::ObjectInfo>(socketEntity);
-                    objectInfo.guid = GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Player, requestedCharacterID);
+
+                    u64 characterID = databaseResult[0][0].as<u64>();
+                    objectInfo.guid = GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Player, characterID);
 
                     networkState.socketIDToEntity[socketID] = socketEntity;
-                    networkState.characterIDToEntity[requestedCharacterID] = socketEntity;
-                    networkState.characterIDToSocketID[requestedCharacterID] = socketID;
+                    networkState.characterIDToEntity[characterID] = socketEntity;
+                    networkState.characterIDToSocketID[characterID] = socketID;
+
+                    Util::Cache::CharacterCreate(gameCache, characterID, request.name, socketEntity);
 
                     std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<16>();
-                    if (!Util::MessageBuilder::Authentication::BuildConnectedMessage(buffer, Network::ConnectResult::Success))
+                    if (Util::MessageBuilder::Authentication::BuildConnectedMessage(buffer, Network::ConnectResult::Success))
                     {
-                        NC_LOG_ERROR("Failed to build character login message for character: {0}", requestedCharacterID);
-
-                        networkState.server->CloseSocketID(socketID);
-                        continue;
+                        networkState.server->SendPacket(socketID, buffer);
+                        registry.emplace<Tags::CharacterNeedsInitialization>(socketEntity);
                     }
 
-                    networkState.server->SendPacket(socketID, buffer);
-                    registry.emplace<Tags::CharacterNeedsInitialization>(socketEntity);
                     continue;
                 }
             }

@@ -1,7 +1,7 @@
 #include "Application.h"
 #include "Server-Game/ECS/Scheduler.h"
 #include "Server-Game/ECS/Singletons/TimeState.h"
-#include "Server-Game/Scripting/LuaUtil.h"
+#include "Server-Game/Scripting/LuaManager.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
 #include <Base/Types.h>
@@ -138,7 +138,10 @@ bool Application::Init()
     _ecsScheduler = new ECS::Scheduler();
     _ecsScheduler->Init(*_registries.gameRegistry);
 
-    Scripting::LuaUtil::DoString("print(\"Hello World :o\")");
+    _luaManager = new Scripting::LuaManager();
+    ServiceLocator::SetLuaManager(_luaManager);
+    _luaManager->Init();
+
     return true;
 }
 
@@ -168,11 +171,17 @@ bool Application::Tick(f32 deltaTime)
 
             case MessageInbound::Type::DoString:
             {
-                if (!Scripting::LuaUtil::DoString(message.data))
+                if (!ServiceLocator::GetLuaManager()->DoString(message.data))
                 {
                     NC_LOG_ERROR("Failed to run Lua DoString");
                 }
                 
+                break;
+            }
+
+            case MessageInbound::Type::ReloadScripts:
+            {
+                ServiceLocator::GetLuaManager()->SetDirty();
                 break;
             }
 

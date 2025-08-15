@@ -1,14 +1,16 @@
-#include "UnitUtils.h"
+#include "UnitUtil.h"
 
+#include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
+#include "Server-Game/ECS/Components/Tags.h"
 
 #include <entt/entt.hpp>
 
 using namespace ECS;
 
-namespace UnitUtils
+namespace ECS::Util::Unit
 {
-    u32 GetDisplayIDFromRaceGender(GameDefine::UnitRace race, GameDefine::Gender gender)
+    u32 GetDisplayIDFromRaceGender(GameDefine::UnitRace race, GameDefine::UnitGender unitGender)
     {
         u32 displayID = 0;
 
@@ -58,9 +60,38 @@ namespace UnitUtils
             default: break;
         }
 
-        displayID += 1 * (gender != GameDefine::Gender::Male);
+        displayID += 1 * (unitGender != GameDefine::UnitGender::Male);
 
         return displayID;
+    }
+
+    void UpdateDisplayID(entt::registry& registry, entt::entity entity, Components::DisplayInfo& displayInfo, u32 displayID, bool forceDirty)
+    {
+        // If the displayID is the same, we don't need to update it
+        forceDirty = forceDirty && displayInfo.displayID != displayID;
+        displayInfo.displayID = displayID;
+
+        if (forceDirty)
+            registry.emplace_or_replace<Tags::CharacterNeedsDisplayUpdate>(entity);
+    }
+
+    void UpdateDisplayRaceGender(entt::registry& registry, entt::entity entity, Components::DisplayInfo& displayInfo, GameDefine::UnitRace race, GameDefine::UnitGender gender, bool forceDirty)
+    {
+        displayInfo.unitRace = race;
+        displayInfo.unitGender = gender;
+
+        u32 displayID = GetDisplayIDFromRaceGender(race, gender);
+        UpdateDisplayID(registry, entity, displayInfo, displayID, forceDirty);
+    }
+
+    void UpdateDisplayRace(entt::registry& registry, entt::entity entity, Components::DisplayInfo& displayInfo, GameDefine::UnitRace race, bool forceDirty)
+    {
+        UpdateDisplayRaceGender(registry, entity, displayInfo, race, displayInfo.unitGender, forceDirty);
+    }
+
+    void UpdateDisplayGender(entt::registry& registry, entt::entity entity, Components::DisplayInfo& displayInfo, GameDefine::UnitGender gender, bool forceDirty)
+    {
+        UpdateDisplayRaceGender(registry, entity, displayInfo, displayInfo.unitRace, gender, forceDirty);
     }
 
     Components::UnitStatsComponent& AddStatsComponent(entt::registry& registry, entt::entity entity)

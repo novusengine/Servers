@@ -6,8 +6,8 @@
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Util/GridUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
+#include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
-#include "Server-Game/Util/UnitUtils.h"
 
 #include <Base/Util/DebugHandler.h>
 

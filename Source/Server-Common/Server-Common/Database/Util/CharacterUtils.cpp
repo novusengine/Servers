@@ -16,6 +16,8 @@ namespace Database::Util::Character
 
             try
             {
+                dbConnection->connection->prepare("CharacterGetInfoByID", "SELECT * FROM public.characters WHERE id = $1");
+                dbConnection->connection->prepare("CharacterGetInfoByName", "SELECT * FROM public.characters WHERE name = $1");
                 dbConnection->connection->prepare("CharacterCreate", "INSERT INTO public.characters (name, racegenderclass) VALUES ($1, $2) RETURNING id");
                 dbConnection->connection->prepare("CharacterDelete", "DELETE FROM public.characters WHERE id = $1");
                 dbConnection->connection->prepare("CharacterSetRaceGenderClass", "UPDATE public.characters SET racegenderclass = $2 WHERE id = $1");
@@ -39,6 +41,9 @@ namespace Database::Util::Character
                 dbConnection->connection->prepare("CharacterDeleteAllItem", "DELETE FROM public.character_items WHERE charid = $1");
                 dbConnection->connection->prepare("CharacterDeleteAllItemInstances", "DELETE FROM public.item_instances WHERE ownerid = $1");
 
+                dbConnection->connection->prepare("CharacterGetItemInstances", "SELECT * FROM public.item_instances WHERE ownerid = $1 ORDER BY id ASC");
+                dbConnection->connection->prepare("CharacterGetItemsInContainer", "SELECT * FROM public.character_items WHERE charid = $1 and container = $2 ORDER BY slot ASC");
+
                 NC_LOG_INFO("Loaded Prepared Statements Character Tables\n");
             }
             catch (const pqxx::sql_error& e)
@@ -53,64 +58,13 @@ namespace Database::Util::Character
             NC_LOG_INFO("-- Loading Character Tables --");
 
             u64 totalRows = 0;
-            totalRows += LoadCharacterData(dbConnection, characterTables);
             totalRows += LoadCharacterPermissions(dbConnection, characterTables);
             totalRows += LoadCharacterPermissionGroups(dbConnection, characterTables);
             totalRows += LoadCharacterCurrency(dbConnection, characterTables);
-            totalRows += LoadCharacterItems(dbConnection, characterTables, itemTables);
 
             NC_LOG_INFO("-- Loaded Character Tables ({0} rows) --\n", totalRows);
         }
 
-        u64 LoadCharacterData(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables)
-        {
-            NC_LOG_INFO("Loading Table 'characters'...");
-
-            pqxx::nontransaction nonTransaction = dbConnection->NewNonTransaction();
-
-            auto result = nonTransaction.exec("SELECT COUNT(*) FROM public.characters");
-            u64 numRows = result[0][0].as<u64>();
-
-            characterTables.charIDToDefinition.clear();
-            characterTables.charNameHashToCharID.clear();
-
-            if (numRows == 0)
-            {
-                NC_LOG_INFO("Skipped Table 'characters'");
-                return 0;
-            }
-
-            characterTables.charIDToDefinition.reserve(numRows);
-            characterTables.charNameHashToCharID.reserve(numRows);
-
-            nonTransaction.for_stream("SELECT * FROM public.characters", [&characterTables](u64 id, u32 accountID, const std::string& name, u32 totalTime, u32 levelTime, u32 logoutTime, u32 flags, u16 raceGenderClass, u16 level, u64 experiencePoints, u16 mapID, f32 posX, f32 posY, f32 posZ, f32 orientation)
-            {
-                Database::CharacterDefinition character =
-                {
-                    .id = id,
-                    .accountid = accountID,
-                    .name = name,
-                    .totalTime = totalTime,
-                    .levelTime = levelTime,
-                    .logoutTime = logoutTime,
-                    .flags = flags,
-                    .raceGenderClass = raceGenderClass,
-                    .level = level,
-                    .experiencePoints = experiencePoints,
-                    .mapID = mapID,
-                    .position = vec3(posX, posY, posZ),
-                    .orientation = orientation
-                };
-
-                u32 characterNameHash = StringUtils::fnv1a_32(character.name.c_str(), character.name.size());
-
-                characterTables.charIDToDefinition.insert({ character.id, character });
-                characterTables.charNameHashToCharID.insert({ characterNameHash, character.id });
-            });
-
-            NC_LOG_INFO("Loaded Table 'characters' ({0} Rows)", numRows);
-            return numRows;
-        }
         u64 LoadCharacterPermissions(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables)
         {
             NC_LOG_INFO("Loading Table 'character_permissions'");
@@ -201,77 +155,49 @@ namespace Database::Util::Character
             NC_LOG_INFO("Loaded Table 'character_currency' ({0} Rows)", numRows);
             return numRows;
         }
-
-        u64 LoadCharacterItems(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables, Database::ItemTables& itemTables)
-        {
-            NC_LOG_INFO("Loading Table 'character_items'");
-
-            pqxx::nontransaction nonTransaction = dbConnection->NewNonTransaction();
-
-            auto result = nonTransaction.exec("SELECT COUNT(*) FROM public.character_items");
-            u64 numRows = result[0][0].as<u64>();
-
-            characterTables.charIDToBaseContainer.clear();
-
-            if (numRows == 0)
-            {
-                NC_LOG_INFO("Skipped Table 'character_items'");
-                return 0;
-            }
-
-            characterTables.charIDToBaseContainer.reserve(numRows);
-            itemTables.itemInstanceIDToContainer.reserve(numRows);
-
-            nonTransaction.for_stream("SELECT * FROM public.character_items", [&characterTables, &itemTables](u64 charID, u64 containerID, u16 slot, u64 itemInstanceID)
-            {
-                if (!itemTables.itemInstanceIDToDefinition.contains(itemInstanceID))
-                    return;
-
-                if (containerID == 0)
-                {
-                    if (!characterTables.charIDToBaseContainer.contains(charID))
-                        characterTables.charIDToBaseContainer[charID] = Container(CHARACTER_BASE_CONTAINER_SIZE);
-
-                    Container& baseContainer = characterTables.charIDToBaseContainer[charID];
-
-                    GameDefine::ObjectGuid itemObjectGuid = GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Item, itemInstanceID);
-                    baseContainer.AddItemToSlot(itemObjectGuid, (u8)slot);
-                }
-                else
-                {
-                    const ItemInstance& containerItemInstance = itemTables.itemInstanceIDToDefinition[containerID];
-
-                    if (!itemTables.templateIDToTemplateDefinition.contains(containerItemInstance.itemID))
-                        return;
-
-                    const GameDefine::Database::ItemTemplate& containerItemTemplate = itemTables.templateIDToTemplateDefinition[containerItemInstance.itemID];
-
-                    // 5 == Container
-                    bool isContainer = containerItemTemplate.category == 5;
-                    u32 slots = containerItemTemplate.durability;
-                    if (!isContainer || (isContainer && slots == 0))
-                        return;
-
-                    if (!itemTables.itemInstanceIDToContainer.contains(containerID))
-                        itemTables.itemInstanceIDToContainer[containerID] = Container(slots);
-
-                    Container& container = itemTables.itemInstanceIDToContainer[containerID];
-
-                    GameDefine::ObjectGuid itemObjectGuid = GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Item, itemInstanceID);
-                    container.AddItemToSlot(itemObjectGuid, (u8)slot);
-                }
-            });
-
-            NC_LOG_INFO("Loaded Table 'character_items' ({0} Rows)", numRows);
-            return numRows;
-        }
     }
 
-    bool CharacterCreate(pqxx::work& transaction, const std::string& name, u16 racegenderclass, u64& characterID)
+    bool CharacterGetInfoByID(std::shared_ptr<DBConnection>& dbConnection, u64 characterID, pqxx::result& result)
     {
         try
         {
-            auto queryResult = transaction.exec(pqxx::prepped("CharacterCreate"), pqxx::params{ name, racegenderclass });
+            pqxx::nontransaction nonTransaction = dbConnection->NewNonTransaction();
+            result = nonTransaction.exec(pqxx::prepped("CharacterGetInfoByID"), pqxx::params{ characterID });
+            if (result.empty())
+                return false;
+
+            return true;
+        }
+        catch (const pqxx::sql_error& e)
+        {
+            NC_LOG_WARNING("{0}", e.what());
+            return false;
+        }
+    }
+
+    bool CharacterGetInfoByName(std::shared_ptr<DBConnection>& dbConnection, const std::string& name, pqxx::result& result)
+    {
+        try
+        {
+            pqxx::nontransaction nonTransaction = dbConnection->NewNonTransaction();
+            result = nonTransaction.exec(pqxx::prepped("CharacterGetInfoByName"), pqxx::params{ name });
+            if (result.empty())
+                return false;
+
+            return true;
+        }
+        catch (const pqxx::sql_error& e)
+        {
+            NC_LOG_WARNING("{0}", e.what());
+            return false;
+        }
+    }
+
+    bool CharacterCreate(pqxx::work& transaction, const std::string& name, u16 raceGenderClass, u64& characterID)
+    {
+        try
+        {
+            auto queryResult = transaction.exec(pqxx::prepped("CharacterCreate"), pqxx::params{ name, raceGenderClass });
             if (queryResult.empty())
                 return false;
 
@@ -299,6 +225,41 @@ namespace Database::Util::Character
             transaction.exec(pqxx::prepped("CharacterDeleteAllPermissionGroup"), pqxx::params{ characterID });
             transaction.exec(pqxx::prepped("CharacterDeleteAllItem"), pqxx::params{ characterID });
             transaction.exec(pqxx::prepped("CharacterDeleteAllItemInstances"), pqxx::params{ characterID });
+
+            return true;
+        }
+        catch (const pqxx::sql_error& e)
+        {
+            NC_LOG_WARNING("{0}", e.what());
+            return false;
+        }
+    }
+
+    bool CharacterSetRaceGenderClass(pqxx::work& transaction, u64 characterID, u16 raceGenderClass)
+    {
+        try
+        {
+            auto params = pqxx::params{ characterID, raceGenderClass };
+            auto queryResult = transaction.exec(pqxx::prepped("CharacterSetRaceGenderClass"), pqxx::params{ characterID, raceGenderClass });
+            if (queryResult.affected_rows() == 0)
+                return false;
+
+            return true;
+        }
+        catch (const pqxx::sql_error& e)
+        {
+            NC_LOG_WARNING("{0}", e.what());
+            return false;
+        }
+    }
+
+    bool CharacterSetLevel(pqxx::work& transaction, u64 characterID, u16 level)
+    {
+        try
+        {
+            auto queryResult = transaction.exec(pqxx::prepped("CharacterSetLevel"), pqxx::params{ characterID, level });
+            if (queryResult.affected_rows() == 0)
+                return false;
 
             return true;
         }
@@ -352,6 +313,37 @@ namespace Database::Util::Character
                 return false;
 
             return true;
+        }
+        catch (const pqxx::sql_error& e)
+        {
+            NC_LOG_WARNING("{0}", e.what());
+            return false;
+        }
+    }
+
+    bool CharacterGetItems(std::shared_ptr<DBConnection>& dbConnection, u64 characterID, pqxx::result& result)
+    {
+        try
+        {
+            pqxx::nontransaction nonTransaction = dbConnection->NewNonTransaction();
+
+            result = nonTransaction.exec(pqxx::prepped("CharacterGetItemInstances"), characterID);
+            return result.affected_rows() > 0;
+        }
+        catch (const pqxx::sql_error& e)
+        {
+            NC_LOG_WARNING("{0}", e.what());
+            return false;
+        }
+    }
+    bool CharacterGetItemsInContainer(std::shared_ptr<DBConnection>& dbConnection, u64 characterID, u64 containerID, pqxx::result& result)
+    {
+        try
+        {
+            pqxx::nontransaction nonTransaction = dbConnection->NewNonTransaction();
+
+            result = nonTransaction.exec(pqxx::prepped("CharacterGetItemsInContainer"), pqxx::params{ characterID, containerID });
+            return result.affected_rows() > 0;
         }
         catch (const pqxx::sql_error& e)
         {

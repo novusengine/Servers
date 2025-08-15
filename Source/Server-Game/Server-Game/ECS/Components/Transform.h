@@ -15,6 +15,7 @@ namespace ECS::Components
     struct Transform
     {
     public:
+        u16 mapID = 0;
         vec3 position = vec3(0.0f, 0.0f, 0.0f);
         quat rotation = quat(1.0f, 0.0f, 0.0f, 0.0f);
         vec3 scale = vec3(1.0f, 1.0f, 1.0f);

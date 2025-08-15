@@ -1,0 +1,94 @@
+declare class point
+    x : number
+end
+
+declare class vec2 extends point
+    y : number
+end
+
+declare class vec3 extends vec2
+    z : number
+end
+
+declare class vec4 extends vec3
+    w : number
+end
+
+declare Engine :
+{
+    Name : string,
+    Version : vector
+}
+
+type PacketEvent =
+{
+    Invalid     : number,
+    OnHandle    : number,
+    OnReceived  : number,
+    Count       : number
+};
+declare PacketEvent : PacketEvent
+
+type GameOpcode =
+{
+    Invalid : number,
+
+    Client_Connect : number,
+    Server_Connected : number,
+
+    Shared_Ping : number,
+    Server_UpdateStats : number,
+
+    Client_SendCheatCommand : number,
+    Server_SendCheatCommandResult : number,
+
+    Server_SetMover : number,
+    Server_EntityCreate : number,
+    Server_EntityDestroy : number,
+    Server_EntityDisplayInfoUpdate : number,
+    Shared_EntityMove : number,
+    Shared_EntityMoveStop : number,
+    Server_EntityResourcesUpdate : number,
+    Shared_EntityTargetUpdate : number,
+    Server_EntityCastSpell : number,
+
+    Server_ItemCreate : number,
+    Server_ContainerCreate : number,
+
+    Client_ContainerSwapSlots : number,
+    Server_ContainerAddToSlot : number,
+    Server_ContainerRemoveFromSlot : number,
+    Server_ContainerSwapSlots : number,
+
+    Client_LocalRequestSpellCast : number,
+    Server_SendSpellCastResult : number,
+
+    Server_SendCombatEvent : number,
+
+    Count : number
+};
+declare GameOpcode : GameOpcode
+
+declare class Packet
+    function GetOpcode(self) : GameOpcode
+    function GetSize(self) : number
+
+    function GetI8(self) : number
+    function GetI16(self) : number
+    function GetI32(self) : number
+    function GetI64(self) : number
+
+    function GetU8(self) : number
+    function GetU16(self) : number
+    function GetU32(self) : number
+    function GetU64(self) : number
+
+    function GetF32(self) : number
+    function GetF64(self) : number
+
+    function GetString(self) : number
+    function GetBytes(self, numBytes : number) : { number }
+end
+
+declare function RegisterPacketHandler(event : PacketEvent, gameOpcode : GameOpcode, callback : ((gameOpcode : GameOpcode, size : number, packet : Packet) -> boolean)) : ()
+declare function RegisterPacketEvent(event : PacketEvent, callback : ((event : PacketEvent, ...any) -> boolean)) : ()

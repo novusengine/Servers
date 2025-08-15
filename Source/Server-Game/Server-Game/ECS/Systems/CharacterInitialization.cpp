@@ -1,6 +1,7 @@
 #include "CharacterInitialization.h"
 
 #include "Server-Game/ECS/Components/CastInfo.h"
+#include "Server-Game/ECS/Components/CharacterInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
@@ -10,13 +11,18 @@
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Components/VisibilityInfo.h"
 #include "Server-Game/ECS/Components/VisibilityUpdateInfo.h"
-#include "Server-Game/ECS/Singletons/DatabaseState.h"
+#include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Util/GridUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
+#include "Server-Game/ECS/Util/UnitUtil.h"
+#include "Server-Game/ECS/Util/Cache/CacheUtil.h"
+#include "Server-Game/ECS/Util/Network/NetworkUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
-#include "Server-Game/Util/UnitUtils.h"
+
+#include <Server-Common/Database/DBController.h>
+#include <Server-Common/Database/Util/CharacterUtils.h>
 
 #include <Base/Util/DebugHandler.h>
 
@@ -33,125 +39,216 @@ namespace ECS::Systems
     void CharacterInitialization::Update(entt::registry& registry, f32 deltaTime)
     {
         entt::registry::context& ctx = registry.ctx();
-        Singletons::DatabaseState& databaseState = ctx.get<Singletons::DatabaseState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
         Singletons::NetworkState& networkState = registry.ctx().get<Singletons::NetworkState>();
         Singletons::WorldState& worldState = ctx.get<Singletons::WorldState>();
-        
-        auto view = registry.view<Components::ObjectInfo, Components::NetInfo, Tags::CharacterNeedsInitialization>();
-        view.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::NetInfo& netInfo)
+
+        auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
+
+        // Handle Deinitizialization of Characters
         {
-            u64 characterID = objectInfo.guid.GetCounter();
-            Database::CharacterDefinition& characterDefinition = databaseState.characterTables.charIDToDefinition[characterID];
-
-            Components::Transform& transform = registry.emplace<Components::Transform>(entity);
-            transform.position = characterDefinition.position;
-            transform.rotation = quat(vec3(0.0f, characterDefinition.orientation, 0.0f));
-
-            registry.emplace<Components::VisibilityInfo>(entity);
-            auto& visibilityUpdateInfo = registry.emplace<Components::VisibilityUpdateInfo>(entity);
-            visibilityUpdateInfo.updateInterval = 0.25f;
-            visibilityUpdateInfo.timeSinceLastUpdate = visibilityUpdateInfo.updateInterval;
-
-            Components::DisplayInfo& displayInfo = registry.emplace<Components::DisplayInfo>(entity);
-            displayInfo.race = characterDefinition.GetRace();
-            displayInfo.gender = characterDefinition.GetGender();
-            displayInfo.displayID = UnitUtils::GetDisplayIDFromRaceGender(displayInfo.race, displayInfo.gender);
-
-            UnitUtils::AddStatsComponent(registry, entity);
-
-            Components::TargetInfo& targetInfo = registry.emplace<Components::TargetInfo>(entity);
-            targetInfo.target = entt::null;
-
-            registry.emplace<Components::PlayerContainers>(entity);
-
-            std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<4096>();
-
-            bool failed = false;
-            failed |= !Util::MessageBuilder::Unit::BuildUnitCreate(buffer, registry, entity, objectInfo.guid);
-            failed |= !Util::MessageBuilder::Entity::BuildSetMoverMessage(buffer, objectInfo.guid);
-
-            bool hasBaseContainer = databaseState.characterTables.charIDToBaseContainer.contains(characterID);
-            if (hasBaseContainer)
+            auto view = registry.view<Components::ObjectInfo, Components::NetInfo, Tags::CharacterNeedsDeinitialization>();
+            view.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::NetInfo& netInfo)
             {
-                const auto& baseContainer = databaseState.characterTables.charIDToBaseContainer[characterID];
+                u64 characterID = objectInfo.guid.GetCounter();
 
-                auto& playerContainers = registry.get<Components::PlayerContainers>(entity);
-                playerContainers.equipment = baseContainer; // Copy Database Container
-
-                u32 numEquipmentSlots = 19;
-
-                for (u32 i = 0; i < numEquipmentSlots; i++)
+                if (auto* playerContainers = registry.try_get<Components::PlayerContainers>(entity))
                 {
-                    const auto& containerItem = playerContainers.equipment.GetItem(i);
-                    if (containerItem.IsEmpty())
-                        continue;
-
-                    u64 itemInstanceID = containerItem.objectGuid.GetCounter();
-                    const auto& itemInstance = databaseState.itemTables.itemInstanceIDToDefinition[itemInstanceID];
-
-                    failed |= !Util::MessageBuilder::Item::BuildItemCreate(buffer, containerItem.objectGuid, itemInstance);
-                }
-
-                u32 firstBagIndex = 19;
-                u32 numBags = 5;
-                playerContainers.bags.resize(numBags);
-
-                for (u32 i = 0; i < numBags; ++i)
-                {
-                    u32 bagSlotIndex = firstBagIndex + i;
-
-                    const auto& containerItem = playerContainers.equipment.GetItem(bagSlotIndex);
-                    if (containerItem.IsEmpty())
-                        continue;
-
-                    u64 containerInstanceID = containerItem.objectGuid.GetCounter();
-                    if (!databaseState.itemTables.itemInstanceIDToContainer.contains(containerInstanceID))
-                        continue;
-
-                    const auto& container = databaseState.itemTables.itemInstanceIDToContainer[containerInstanceID];
-                    auto& playerBagContainer = playerContainers.bags[i];
-                    playerBagContainer = container; // Copy Database Container
-
-                    u8 numSlots = playerBagContainer.GetTotalSlots();
-                    u8 numFreeSlots = playerBagContainer.GetFreeSlots();
-                    
-                    if (numSlots != numFreeSlots)
+                    for (const auto& [bagIndex, bagContainer] : playerContainers->bags)
                     {
-                        for (u32 j = 0; j < numSlots; j++)
+                        u16 numContainerSlots = bagContainer.GetTotalSlots();
+                        for (u16 containerSlot = 0; containerSlot < numContainerSlots; containerSlot++)
                         {
-                            const auto& item = playerBagContainer.GetItem(j);
+                            const Database::ContainerItem& item = bagContainer.GetItem(containerSlot);
                             if (item.IsEmpty())
                                 continue;
 
                             u64 itemInstanceID = item.objectGuid.GetCounter();
-                            const auto& itemInstance = databaseState.itemTables.itemInstanceIDToDefinition[itemInstanceID];
-                            failed |= !Util::MessageBuilder::Item::BuildItemCreate(buffer, item.objectGuid, itemInstance);
+                            Util::Cache::ItemInstanceDelete(gameCache, itemInstanceID);
                         }
                     }
 
-                    const auto& containerItemInstance = databaseState.itemTables.itemInstanceIDToDefinition[containerInstanceID];
-                    failed |= !Util::MessageBuilder::Container::BuildContainerCreate(buffer, i + 1, containerItemInstance.itemID, containerItem.objectGuid, playerBagContainer);
+                    u16 numEquipmentSlots = playerContainers->equipment.GetTotalSlots();
+                    for (u16 equipmentSlot = 0; equipmentSlot < numEquipmentSlots; equipmentSlot++)
+                    {
+                        const Database::ContainerItem& item = playerContainers->equipment.GetItem(equipmentSlot);
+                        if (item.IsEmpty())
+                            continue;
+
+                        u64 itemInstanceID = item.objectGuid.GetCounter();
+                        Util::Cache::ItemInstanceDelete(gameCache, itemInstanceID);
+                    }
                 }
 
-                failed |= !Util::MessageBuilder::Container::BuildContainerCreate(buffer, 0, 0, GameDefine::ObjectGuid::Empty, playerContainers.equipment);
-            }
+                if (auto* characterInfo = registry.try_get<Components::CharacterInfo>(entity))
+                {
+                    Util::Cache::CharacterDelete(registry, gameCache, characterID, *characterInfo);
+                }
 
-            if (failed)
+                // Network Cleanup
+                {
+                    Util::Network::UnlinkSocketFromEntity(networkState, netInfo.socketID);
+                    Util::Network::UnlinkCharacterFromSocket(networkState, characterID);
+                    Util::Network::UnlinkCharacterFromEntity(networkState, characterID);
+                }
+
+                // Grid Cleanup
+                if (auto* transform = registry.try_get<Components::Transform>(entity))
+                {
+                    World& world = worldState.GetWorld(transform->mapID);
+                    world.guidToEntity.erase(objectInfo.guid);
+                    world.RemovePlayer(objectInfo.guid);
+
+                    registry.destroy(entity);
+                }
+            });
+
+            registry.clear<Tags::CharacterNeedsDeinitialization>();
+        }
+
+        // Handle Initialization of Characters
+        {
+            auto view = registry.view<Components::ObjectInfo, Components::NetInfo, Tags::CharacterNeedsInitialization>();
+            view.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::NetInfo& netInfo)
             {
-                NC_LOG_ERROR("Failed to build character initialization message for character: {0}", characterID);
-                networkState.server->CloseSocketID(netInfo.socketID);
-                return;
-            }
+                u64 characterID = objectInfo.guid.GetCounter();
+                pqxx::result databaseResult;
 
-            World& world = worldState.GetWorld(characterDefinition.mapID);
+                if (!Database::Util::Character::CharacterGetInfoByID(databaseConn, characterID, databaseResult))
+                {
+                    Util::Network::RequestSocketToClose(networkState, netInfo.socketID);
+                    return;
+                }
 
-            world.guidToEntity[objectInfo.guid] = entity;
-            world.AddPlayer(objectInfo.guid, characterDefinition.position.x, characterDefinition.position.z);
+                auto& characterInfo = registry.emplace<Components::CharacterInfo>(entity);
+                characterInfo.name = databaseResult[0][2].as<std::string>();
+                characterInfo.accountID = databaseResult[0][1].as<u32>();
+                characterInfo.totalTime = databaseResult[0][3].as<u32>();
+                characterInfo.levelTime = databaseResult[0][4].as<u32>();
+                characterInfo.logoutTime = databaseResult[0][5].as<u32>();
+                characterInfo.flags = databaseResult[0][6].as<u32>();
+                characterInfo.level = databaseResult[0][8].as<u16>();
+                characterInfo.experiencePoints = databaseResult[0][9].as<u64>();
 
-            //gridSingleton.cell.players.entering.insert(entity);
-            networkState.server->SendPacket(netInfo.socketID, buffer);
-        });
+                auto& transform = registry.emplace<Components::Transform>(entity);
+                transform.mapID = databaseResult[0][10].as<u16>();
+                transform.position = vec3(databaseResult[0][11].as<f32>(), databaseResult[0][12].as<f32>(), databaseResult[0][13].as<f32>());
 
-        registry.clear<Tags::CharacterNeedsInitialization>();
+                f32 orientation = databaseResult[0][14].as<f32>();
+                transform.rotation = quat(vec3(0.0f, orientation, 0.0f));
+
+                registry.emplace<Components::VisibilityInfo>(entity);
+                auto& visibilityUpdateInfo = registry.emplace<Components::VisibilityUpdateInfo>(entity);
+                visibilityUpdateInfo.updateInterval = 0.25f;
+                visibilityUpdateInfo.timeSinceLastUpdate = visibilityUpdateInfo.updateInterval;
+
+                Components::DisplayInfo& displayInfo = registry.emplace<Components::DisplayInfo>(entity);
+
+                u16 raceGenderClass = databaseResult[0][7].as<u16>();
+                GameDefine::UnitRace unitRace = static_cast<GameDefine::UnitRace>(raceGenderClass & 0x7F);
+                GameDefine::UnitGender unitGender = static_cast<GameDefine::UnitGender>((raceGenderClass >> 7) & 0x3);
+                GameDefine::UnitClass unitClass = static_cast<GameDefine::UnitClass>((raceGenderClass >> 9) & 0x7F);
+
+                characterInfo.unitClass = unitClass;
+                Util::Unit::UpdateDisplayRaceGender(registry, entity, displayInfo, unitRace, unitGender);
+
+                Util::Unit::AddStatsComponent(registry, entity);
+
+                Components::TargetInfo& targetInfo = registry.emplace<Components::TargetInfo>(entity);
+                targetInfo.target = entt::null;
+
+                registry.emplace<Components::PlayerContainers>(entity);
+
+                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<4096>();
+
+                bool failed = false;
+                failed |= !Util::MessageBuilder::Unit::BuildUnitCreate(buffer, registry, entity, objectInfo.guid);
+                failed |= !Util::MessageBuilder::Entity::BuildSetMoverMessage(buffer, objectInfo.guid);
+
+                if (Database::Util::Character::CharacterGetItems(databaseConn, characterID, databaseResult))
+                {
+                    databaseResult.for_each([&](u64 itemInstanceID, u32 itemID, u64 ownerID, u16 count, u16 durability)
+                    {
+                        Database::ItemInstance itemInstance =
+                        {
+                            .id = itemInstanceID,
+                            .ownerID = ownerID,
+                            .itemID = itemID,
+                            .count = count,
+                            .durability = durability
+                        };
+
+                        Util::Cache::ItemInstanceCreate(gameCache, itemInstanceID, itemInstance);
+                    });
+
+                    if (Database::Util::Character::CharacterGetItemsInContainer(databaseConn, characterID, PLAYER_BASE_CONTAINER_ID, databaseResult))
+                    {
+                        auto& playerContainers = registry.get<Components::PlayerContainers>(entity);
+
+                        databaseResult.for_each([&](u64 characterID, u64 containerID, u16 slotIndex, u64 itemInstanceID)
+                        {
+                            Database::ItemInstance* itemInstance = nullptr;
+                            if (!Util::Cache::GetItemInstanceByID(gameCache, itemInstanceID, itemInstance))
+                                return;
+
+                            GameDefine::ObjectGuid itemGuid = GameDefine::ObjectGuid::CreateItem(itemInstanceID);
+                            playerContainers.equipment.AddItemToSlot(itemGuid, slotIndex);
+
+                            if (slotIndex >= PLAYER_BAG_INDEX_START)
+                                return;
+
+                            failed |= !Util::MessageBuilder::Item::BuildItemCreate(buffer, itemGuid, *itemInstance);
+                        });
+
+                        for (ItemEquipSlot_t bagIndex = PLAYER_BAG_INDEX_START; bagIndex <= PLAYER_BAG_INDEX_END; bagIndex++)
+                        {
+                            if (playerContainers.equipment.IsSlotEmpty(bagIndex))
+                                continue;
+
+                            GameDefine::ObjectGuid containerGuid = playerContainers.equipment.GetItem(bagIndex).objectGuid;
+                            u64 containerID = containerGuid.GetCounter();
+
+                            Database::ItemInstance* containerItemInstance = nullptr;
+                            if (!Util::Cache::GetItemInstanceByID(gameCache, containerID, containerItemInstance))
+                                continue;
+
+                            playerContainers.bags.emplace(bagIndex, Database::Container(containerItemInstance->durability));
+                            Database::Container& container = playerContainers.bags[bagIndex];
+
+                            if (Database::Util::Character::CharacterGetItemsInContainer(databaseConn, characterID, containerID, databaseResult))
+                            {
+                                databaseResult.for_each([&](u64 characterID, u64 containerID, u16 slotIndex, u64 itemInstanceID)
+                                {
+                                    Database::ItemInstance* itemInstance = nullptr;
+                                    if (!Util::Cache::GetItemInstanceByID(gameCache, itemInstanceID, itemInstance))
+                                        return;
+
+                                    GameDefine::ObjectGuid itemGuid = GameDefine::ObjectGuid::CreateItem(itemInstanceID);
+                                    container.AddItemToSlot(itemGuid, slotIndex);
+
+                                    failed |= !Util::MessageBuilder::Item::BuildItemCreate(buffer, itemGuid, *itemInstance);
+                                });
+                            }
+                        }
+                    }
+
+                    registry.emplace_or_replace<Tags::CharacterNeedsContainerUpdate>(entity);
+                }
+
+                if (failed)
+                {
+                    NC_LOG_ERROR("Failed to build character initialization message for character: {0}", characterID);
+                    networkState.server->CloseSocketID(netInfo.socketID);
+                    return;
+                }
+
+                World& world = worldState.GetWorld(transform.mapID);
+                world.InitPlayer(objectInfo.guid, entity, transform.position.x, transform.position.z);
+
+                networkState.server->SendPacket(netInfo.socketID, buffer);
+            });
+
+            registry.clear<Tags::CharacterNeedsInitialization>();
+        }
     }
 }

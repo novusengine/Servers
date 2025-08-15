@@ -7,8 +7,8 @@
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Util/GridUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
+#include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
-#include "Server-Game/Util/UnitUtils.h"
 
 #include <Base/Util/DebugHandler.h>
 
@@ -71,14 +71,14 @@ namespace ECS::Systems
                 {
                     case Components::PowerType::Rage:
                     {
-                        powerValue = UnitUtils::HandleRageRegen(powerValue, 1.0f, deltaTime);
+                        powerValue = Util::Unit::HandleRageRegen(powerValue, 1.0f, deltaTime);
                         break;
                     }
 
                     case Components::PowerType::Focus:
                     case Components::PowerType::Energy:
                     {
-                        powerValue = UnitUtils::HandleEnergyRegen(powerValue, maxPower, 1.0f, deltaTime);
+                        powerValue = Util::Unit::HandleEnergyRegen(powerValue, maxPower, 1.0f, deltaTime);
                         break;
                     }
 
@@ -96,8 +96,8 @@ namespace ECS::Systems
         timeSinceLastUpdate += deltaTime;
         if (timeSinceLastUpdate >= UPDATE_INTERVAL)
         {
-            auto view = registry.view<const Components::NetInfo, const Components::ObjectInfo, Components::UnitStatsComponent>();
-            view.each([&](entt::entity entity, const Components::NetInfo& netInfo, const Components::ObjectInfo& objectInfo, Components::UnitStatsComponent& unitStatsComponent)
+            auto view = registry.view<const Components::ObjectInfo, const Components::NetInfo, Components::UnitStatsComponent>();
+            view.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::NetInfo& netInfo, Components::UnitStatsComponent& unitStatsComponent)
             {
                 if (unitStatsComponent.healthIsDirty)
                 {
@@ -105,7 +105,7 @@ namespace ECS::Systems
                     if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, objectInfo.guid, Components::PowerType::Health, unitStatsComponent.baseHealth, unitStatsComponent.currentHealth, unitStatsComponent.maxHealth))
                         return;
 
-                    ECS::Util::Grid::SendToNearby(entity, unitStatsMessage, true);
+                    ECS::Util::Grid::SendToNearby(registry, entity, netInfo, unitStatsMessage, true);
                     unitStatsComponent.healthIsDirty = false;
                 }
 
@@ -121,7 +121,7 @@ namespace ECS::Systems
                     if (!Util::MessageBuilder::Entity::BuildUnitStatsMessage(unitStatsMessage, objectInfo.guid, powerType, unitStatsComponent.basePower[i], unitStatsComponent.currentPower[i], unitStatsComponent.maxPower[i]))
                         return;
 
-                    ECS::Util::Grid::SendToNearby(entity, unitStatsMessage, true);
+                    ECS::Util::Grid::SendToNearby(registry, entity, netInfo, unitStatsMessage, true);
                     unitStatsComponent.powerIsDirty[i] = false;
                 }
             });

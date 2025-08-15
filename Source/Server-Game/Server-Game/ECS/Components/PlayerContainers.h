@@ -11,7 +11,8 @@ namespace ECS
 {
     enum class ItemEquipSlot : u8
     {
-        Helm,
+        EquipmentStart = 0,
+        Helm = EquipmentStart,
         Necklace,
         Shoulders,
         Cloak,
@@ -30,21 +31,31 @@ namespace ECS
         MainHand,
         OffHand,
         Ranged,
+        EquipmentEnd = Ranged,
         MainBag,
+        BagStart = MainBag,
         Bag1,
         Bag2,
         Bag3,
         Bag4,
+        BagEnd = Bag4,
         Count
     };
+    using ItemEquipSlot_t = std::underlying_type_t<ItemEquipSlot>;
+    static constexpr ItemEquipSlot_t PLAYER_EQUIPMENT_INDEX_START = std::underlying_type_t<ItemEquipSlot>(ItemEquipSlot::EquipmentStart);
+    static constexpr ItemEquipSlot_t PLAYER_EQUIPMENT_INDEX_END = std::underlying_type_t<ItemEquipSlot>(ItemEquipSlot::EquipmentEnd);
+    static constexpr ItemEquipSlot_t PLAYER_BAG_INDEX_START = std::underlying_type_t<ItemEquipSlot>(ItemEquipSlot::BagStart);
+    static constexpr ItemEquipSlot_t PLAYER_BAG_INDEX_END = std::underlying_type_t<ItemEquipSlot>(ItemEquipSlot::BagEnd);
+    static constexpr ItemEquipSlot_t PLAYER_BAG_SLOT_COUNT = std::underlying_type_t<ItemEquipSlot>(ItemEquipSlot::Count);
+    static constexpr u8 PLAYER_BASE_CONTAINER_ID = 0;
 
     namespace Components
     {
         struct PlayerContainers
         {
         public:
-            Database::Container equipment = Database::Container((u8)ItemEquipSlot::Count);
-            std::vector<Database::Container> bags;
+            Database::Container equipment = Database::Container(PLAYER_BAG_SLOT_COUNT);
+            robin_hood::unordered_map<u16, Database::Container> bags;
         };
     }
 }

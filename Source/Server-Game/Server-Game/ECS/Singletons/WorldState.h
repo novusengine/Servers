@@ -16,10 +16,19 @@ namespace ECS
     struct World
     {
     public:
+        bool InitPlayer(GameDefine::ObjectGuid guid, entt::entity entity, f32 x, f32 z)
+        {
+            if (guidToEntity.contains(guid))
+                return false;
+
+            guidToEntity[guid] = entity;
+            AddPlayer(guid, x, z);
+            return true;
+        }
         void AddPlayer(GameDefine::ObjectGuid guid, f32 x, f32 z)
         {
-            vec2 minPos = vec2(x, z) - 5.0f; // DEFAULT_VISIBILITY_DISTANCE;
-            vec2 maxPos = vec2(x, z) + 5.0f; // DEFAULT_VISIBILITY_DISTANCE;
+            vec2 minPos = vec2(x, z) - 1.0f;
+            vec2 maxPos = vec2(x, z) + 1.0f;
             visTreePlayers->Insert(reinterpret_cast<f32*>(&minPos), reinterpret_cast<f32*>(&maxPos), guid);
         }
         void RemovePlayer(GameDefine::ObjectGuid guid)
@@ -43,10 +52,11 @@ namespace ECS
 
         void AddUnit(GameDefine::ObjectGuid guid, f32 x, f32 z)
         {
-            vec2 minPos = vec2(x, z) - 5.0f; // DEFAULT_VISIBILITY_DISTANCE;
-            vec2 maxPos = vec2(x, z) + 5.0f; // DEFAULT_VISIBILITY_DISTANCE;
+            vec2 minPos = vec2(x, z) - 1.0f;
+            vec2 maxPos = vec2(x, z) + 1.0f;
             visTreeUnits->Insert(reinterpret_cast<f32*>(&minPos), reinterpret_cast<f32*>(&maxPos), guid);
         }
+
         void RemoveUnit(GameDefine::ObjectGuid guid)
         {
             visTreeUnits->Remove(guid);

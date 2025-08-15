@@ -66,10 +66,10 @@ namespace ECS
 
         namespace Container
         {
-            bool BuildContainerCreate(std::shared_ptr<Bytebuffer>& buffer, u8 containerIndex, u32 itemID, GameDefine::ObjectGuid guid, const Database::Container& container);
-            bool BuildAddToSlot(std::shared_ptr<Bytebuffer>& buffer, u8 containerIndex, u8 slot, GameDefine::ObjectGuid itemGuid);
-            bool BuildRemoveFromSlot(std::shared_ptr<Bytebuffer>& buffer, u8 containerIndex, u8 slot);
-            bool BuildSwapSlots(std::shared_ptr<Bytebuffer>& buffer, u8 srcContainerIndex, u8 destContainerIndex, u8 srcSlot, u8 destSlot);
+            bool BuildContainerCreate(std::shared_ptr<Bytebuffer>& buffer, u16 containerIndex, u32 itemID, GameDefine::ObjectGuid guid, const Database::Container& container);
+            bool BuildAddToSlot(std::shared_ptr<Bytebuffer>& buffer, u16 containerIndex, u16 slot, GameDefine::ObjectGuid itemGuid);
+            bool BuildRemoveFromSlot(std::shared_ptr<Bytebuffer>& buffer, u16 containerIndex, u16 slot);
+            bool BuildSwapSlots(std::shared_ptr<Bytebuffer>& buffer, u16 srcContainerIndex, u16 destContainerIndex, u16 srcSlot, u16 destSlot);
         }
 
         namespace Spell

@@ -6,37 +6,12 @@
 
 #include <robinhood/robinhood.h>
 
+#include <entt/fwd.hpp>
+
 namespace Database
 {
     static constexpr u32 CHARACTER_BASE_CONTAINER_SIZE = 24;
 
-    struct CharacterDefinition
-    {
-    public:
-        u64 id = 0;
-        u32 accountid = 0;
-        std::string name = "";
-        u32 totalTime = 0;
-        u32 levelTime = 0;
-        u32 logoutTime = 0;
-        u32 flags = 0;
-        u16 raceGenderClass = 0;
-        u16 level = 0;
-        u64 experiencePoints = 0;
-        u16 mapID = 0;
-        vec3 position = vec3(0.0f);
-        f32 orientation = 0.0f;
-
-    public:
-        GameDefine::UnitRace GetRace() const { return static_cast<GameDefine::UnitRace>(raceGenderClass & 0x7F); }
-        void SetRace(GameDefine::UnitRace race) { raceGenderClass = (raceGenderClass & 0xFF80) | static_cast<u16>(race); }
-
-        GameDefine::Gender GetGender() const { return static_cast<GameDefine::Gender>((raceGenderClass >> 7) & 0x3); }
-        void SetGender(GameDefine::Gender gender) { raceGenderClass = (raceGenderClass & 0xFE7F) | (static_cast<u16>(gender) << 7); }
-
-        GameDefine::UnitClass GetGameClass() const { return static_cast<GameDefine::UnitClass>((raceGenderClass >> 9) & 0x7f); }
-        void SetGameClass(GameDefine::UnitClass gameClass) { raceGenderClass = (raceGenderClass & 0x1FF) | (static_cast<u16>(gameClass) << 9); }
-    };
     struct CharacterCurrency
     {
     public:
@@ -87,7 +62,7 @@ namespace Database
     {
     public:
         Container() = default;
-        Container(u8 numSlots) : _slots(numSlots), _freeSlots(numSlots)
+        Container(u16 numSlots) : _slots(numSlots), _freeSlots(numSlots)
         {
             _items.resize(numSlots);
         }
@@ -100,7 +75,7 @@ namespace Database
         {
             if (IsFull()) return INVALID_SLOT;
 
-            for (u8 i = 0; i < _slots; ++i)
+            for (u16 i = 0; i < _slots; ++i)
             {
                 if (_items[i].IsEmpty())
                     return i;
@@ -114,7 +89,7 @@ namespace Database
         * @param slotIndex The slot to check
         * @return true if the slot is empty
         */
-        bool IsSlotEmpty(u8 slotIndex) const
+        bool IsSlotEmpty(u16 slotIndex) const
         {
 #if defined(NC_DEBUG)
             NC_ASSERT(slotIndex < _slots, "Container::IsSlotEmpty - Called with slotIndex ({0}) when the container can only hold {1} items", slotIndex, _slots);
@@ -136,7 +111,7 @@ namespace Database
             if (slot == INVALID_SLOT)
                 return INVALID_SLOT;
 
-            return AddItemToSlot(itemGuid, static_cast<u8>(slot));
+            return AddItemToSlot(itemGuid, slot);
         }
 
         /**
@@ -145,7 +120,7 @@ namespace Database
         * @param slotIndex The desired slot
         * @return The slot where item was added, or INVALID_SLOT if slot was occupied/invalid
         */
-        u16 AddItemToSlot(GameDefine::ObjectGuid itemGuid, u8 slotIndex)
+        u16 AddItemToSlot(GameDefine::ObjectGuid itemGuid, u16 slotIndex)
         {
 #if defined(NC_DEBUG)
             NC_ASSERT(slotIndex < _slots, "Container::AddItemToSlot - Called with slotIndex ({0}) when the container can only hold {1} items", slotIndex, _slots);
@@ -153,17 +128,19 @@ namespace Database
             if (slotIndex >= _slots || !_items[slotIndex].IsEmpty())
                 return INVALID_SLOT;
 
-            _items[slotIndex] = { itemGuid };
             --_freeSlots;
+            _items[slotIndex] = { itemGuid };
+            _dirtySlots.insert(slotIndex);
+
             return slotIndex;
         }
 
         /**
         * Removes an item from a specific slot
         * @param slotIndex The slot to remove from
-        * @return The GUID of the removed item, or empty GUID if slot was already empty
+        * @return A boolean specifying if there was an item to remove
         */
-        bool RemoveItem(u8 slotIndex)
+        bool RemoveItem(u16 slotIndex)
         {
 #if defined(NC_DEBUG)
             NC_ASSERT(slotIndex < _slots, "Container::RemoveItem - Called with slotIndex ({0}) when the container can only hold {1} items", slotIndex, _slots);
@@ -171,12 +148,15 @@ namespace Database
             if (slotIndex >= _slots || _items[slotIndex].IsEmpty())
                 return false;
 
-            _items[slotIndex].Clear();
             ++_freeSlots;
+
+            _items[slotIndex].Clear();
+            _dirtySlots.insert(slotIndex);
+
             return true;
         }
 
-        bool SwapItems(u8 srcSlotIndex, u8 destSlotIndex)
+        bool SwapItems(u16 srcSlotIndex, u16 destSlotIndex)
         {
 #if defined(NC_DEBUG)
             NC_ASSERT(srcSlotIndex < _slots, "Container::SwapItems - Called with srcSlotIndex ({0}) when the container can only hold {1} items", srcSlotIndex, _slots);
@@ -186,13 +166,14 @@ namespace Database
                 return false;
 
             std::swap(_items[srcSlotIndex], _items[destSlotIndex]);
+
             return true;
         }
 
-        bool SwapItems(Container& destContainer, u8 srcSlotIndex, u8 destSlotIndex)
+        bool SwapItems(Container& destContainer, u16 srcSlotIndex, u16 destSlotIndex)
         {
-            u8 numSrcSlots = _slots;
-            u8 numDestSlots = destContainer._slots;
+            u16 numSrcSlots = _slots;
+            u16 numDestSlots = destContainer._slots;
 #if defined(NC_DEBUG)
             NC_ASSERT(srcSlotIndex < numSrcSlots, "Container::SwapItems - Called with srcSlotIndex ({0}) when the container can only hold {1} items", srcSlotIndex, numSrcSlots);
             NC_ASSERT(destSlotIndex < numDestSlots, "Container::SwapItems - Called with destSlotIndex ({0}) when the container can only hold {1} items", destSlotIndex, numDestSlots);
@@ -202,17 +183,22 @@ namespace Database
             
             bool srcSlotEmpty = _items[srcSlotIndex].IsEmpty();
             bool destSlotEmpty = destContainer._items[destSlotIndex].IsEmpty();
+            bool isSameContainer = this == &destContainer;
+
             std::swap(_items[srcSlotIndex], destContainer._items[destSlotIndex]);
 
-            if (srcSlotEmpty && !destSlotEmpty)
+            if (!isSameContainer)
             {
-                --_freeSlots;
-                ++destContainer._freeSlots;
-            }
-            else if (!srcSlotEmpty && destSlotEmpty)
-            {
-                ++_freeSlots;
-                --destContainer._freeSlots;
+                if (srcSlotEmpty && !destSlotEmpty)
+                {
+                    --_freeSlots;
+                    ++destContainer._freeSlots;
+                }
+                else if (!srcSlotEmpty && destSlotEmpty)
+                {
+                    ++_freeSlots;
+                    --destContainer._freeSlots;
+                }
             }
 
             return true;
@@ -223,7 +209,7 @@ namespace Database
         * @param slotIndex The slot to check
         * @return The GUID of the item in the slot
         */
-        ContainerItem& GetItem(u8 slotIndex)
+        const ContainerItem& GetItem(u16 slotIndex) const
         {
 #if defined(NC_DEBUG)
             NC_ASSERT(slotIndex < _slots, "Container::GetItemGuid - Called with slotIndex ({0}) when the container can only hold {1} items", slotIndex, _slots);
@@ -253,22 +239,34 @@ namespace Database
          * Gets the total number of slots in the container
          * @return Total slot count
          */
-        u8 GetTotalSlots() const { return _slots; }
+        u16 GetTotalSlots() const { return _slots; }
 
         /**
         * Gets the number of free slots in the container
         * @return Number of available slots
         */
-        u8 GetFreeSlots() const { return _freeSlots; }
+        u16 GetFreeSlots() const { return _freeSlots; }
+
+        bool IsUninitialized() const { return _isUninitialized; }
+        robin_hood::unordered_set<u16>& GetDirtySlots() { return _dirtySlots; }
+
+        void ClearDirtySlots()
+        {
+            _isUninitialized = false;
+            _dirtySlots.clear();
+        }
 
     public:
         static constexpr u16 INVALID_SLOT = 0xFFFF;
 
     private:
-        u8 _slots = 0;
-        u8 _freeSlots = 0;
+        u16 _slots = 0;
+        u16 _freeSlots = 0;
 
         std::vector<ContainerItem> _items;
+
+        bool _isUninitialized = true;
+        robin_hood::unordered_set<u16> _dirtySlots;
     };
 
     struct ItemInstance
@@ -313,17 +311,15 @@ namespace Database
         robin_hood::unordered_map<u32, GameDefine::Database::ItemWeaponTemplate> weaponTemplateIDToTemplateDefinition;
         robin_hood::unordered_map<u32, GameDefine::Database::ItemShieldTemplate> shieldTemplateIDToTemplateDefinition;
         robin_hood::unordered_map<u64, ItemInstance> itemInstanceIDToDefinition;
-        robin_hood::unordered_map<u64, Container> itemInstanceIDToContainer;
     };
 
     struct CharacterTables
     {
     public:
-        robin_hood::unordered_map<u64, Database::CharacterDefinition> charIDToDefinition;
+        robin_hood::unordered_map<u64, entt::entity> charIDToEntity;
         robin_hood::unordered_map<u32, u64> charNameHashToCharID;
         robin_hood::unordered_map<u64, std::vector<u16>> charIDToPermissions;
         robin_hood::unordered_map<u64, std::vector<u16>> charIDToPermissionGroups;
         robin_hood::unordered_map<u64, std::vector<CharacterCurrency>> charIDToCurrency;
-        robin_hood::unordered_map<u64, Container> charIDToBaseContainer;
     };
 }

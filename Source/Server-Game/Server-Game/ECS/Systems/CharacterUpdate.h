@@ -4,7 +4,7 @@
 
 namespace ECS::Systems
 {
-    class GameCommandHandler
+    class CharacterUpdate
     {
     public:
         static void Init(entt::registry& registry);

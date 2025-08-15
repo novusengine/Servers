@@ -5,7 +5,15 @@
 
 #include <entt/fwd.hpp>
 
-namespace ECS::Util::Grid
+namespace ECS
 {
-    void SendToNearby(entt::entity entity, std::shared_ptr<Bytebuffer>& buffer, bool sendToSelf = false);
+    namespace Components
+    {
+        struct NetInfo;
+    }
+
+    namespace Util::Grid
+    {
+        void SendToNearby(entt::registry& registry, const entt::entity entity, const Components::NetInfo& netInfo, std::shared_ptr<Bytebuffer>& buffer, bool sendToSelf = false);
+    }
 }

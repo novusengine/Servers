@@ -5,16 +5,14 @@
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/Transform.h"
-#include "Server-Game/ECS/Components/Transform.h"
-#include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Components/VisibilityInfo.h"
 #include "Server-Game/ECS/Components/VisibilityUpdateInfo.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
+#include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
-#include "Server-Game/Util/UnitUtils.h"
 
 #include <Base/Util/DebugHandler.h>
 

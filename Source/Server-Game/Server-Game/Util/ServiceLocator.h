@@ -7,7 +7,11 @@ namespace enki
 }
 
 struct EnttRegistries;
-class GameConsole;
+
+namespace Scripting
+{
+    class LuaManager;
+}
 
 class ServiceLocator
 {
@@ -26,8 +30,16 @@ public:
     }
     static void SetEnttRegistries(EnttRegistries* enttRegistries);
 
+    static Scripting::LuaManager* GetLuaManager()
+    {
+        assert(_luaManager != nullptr);
+        return _luaManager;
+    }
+    static void SetLuaManager(Scripting::LuaManager* luaManager);
+
 private:
     ServiceLocator() { }
+    static Scripting::LuaManager* _luaManager;
     static enki::TaskScheduler* _taskScheduler;
     static EnttRegistries* _enttRegistries;
 };

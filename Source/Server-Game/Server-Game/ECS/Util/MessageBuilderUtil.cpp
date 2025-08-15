@@ -109,7 +109,9 @@ namespace ECS::Util::MessageBuilder
             bool result = CreatePacket(buffer, Network::GameOpcode::Server_EntityCreate, [&buffer, &transform, &objectGuid]()
             {
                 buffer->Serialize(objectGuid);
-                buffer->Put(transform);
+                buffer->Put(transform.position);
+                buffer->Put(transform.rotation);
+                buffer->Put(transform.scale);
             });
 
             return result;
@@ -211,28 +213,28 @@ namespace ECS::Util::MessageBuilder
 
     namespace Container
     {
-        bool BuildContainerCreate(std::shared_ptr<Bytebuffer>& buffer, u8 containerIndex, u32 itemID, GameDefine::ObjectGuid guid, const Database::Container& container)
+        bool BuildContainerCreate(std::shared_ptr<Bytebuffer>& buffer, u16 containerIndex, u32 itemID, GameDefine::ObjectGuid guid, const Database::Container& container)
         {
             bool result = CreatePacket(buffer, Network::GameOpcode::Server_ContainerCreate, [&buffer, &container, containerIndex, itemID, &guid]()
             {
-                buffer->PutU8(containerIndex);
+                buffer->PutU16(containerIndex);
                 buffer->PutU32(itemID);
                 buffer->Serialize(guid);
 
                 const auto& items = container.GetItems();
-                u8 numSlots = container.GetTotalSlots();
-                u8 numSlotsFree = container.GetFreeSlots();
+                u16 numSlots = container.GetTotalSlots();
+                u16 numSlotsFree = container.GetFreeSlots();
 
-                buffer->PutU8(numSlots);
-                buffer->PutU8(numSlotsFree);
+                buffer->PutU16(numSlots);
+                buffer->PutU16(numSlotsFree);
 
-                for (u32 i = 0; i < numSlots; i++)
+                for (u16 i = 0; i < numSlots; i++)
                 {
                     const auto& item = items[i];
                     if (item.IsEmpty())
                         continue;
 
-                    buffer->PutU8(i);
+                    buffer->PutU16(i);
                     buffer->Serialize(item.objectGuid);
                 }
             });
@@ -240,37 +242,37 @@ namespace ECS::Util::MessageBuilder
             return result;
         }
 
-        bool BuildAddToSlot(std::shared_ptr<Bytebuffer>& buffer, u8 containerIndex, u8 slot, GameDefine::ObjectGuid itemGuid)
+        bool BuildAddToSlot(std::shared_ptr<Bytebuffer>& buffer, u16 containerIndex, u16 slot, GameDefine::ObjectGuid itemGuid)
         {
             bool result = CreatePacket(buffer, Network::GameOpcode::Server_ContainerAddToSlot, [&buffer, containerIndex, slot, itemGuid]()
             {
-                buffer->PutU8(containerIndex);
-                buffer->PutU8(slot);
+                buffer->PutU16(containerIndex);
+                buffer->PutU16(slot);
                 buffer->Serialize(itemGuid);
             });
 
             return result;
         }
 
-        bool BuildRemoveFromSlot(std::shared_ptr<Bytebuffer>& buffer, u8 containerIndex, u8 slot)
+        bool BuildRemoveFromSlot(std::shared_ptr<Bytebuffer>& buffer, u16 containerIndex, u16 slot)
         {
             bool result = CreatePacket(buffer, Network::GameOpcode::Server_ContainerRemoveFromSlot, [&buffer, containerIndex, slot]()
             {
-                buffer->PutU8(containerIndex);
-                buffer->PutU8(slot);
+                buffer->PutU16(containerIndex);
+                buffer->PutU16(slot);
             });
 
             return result;
         }
 
-        bool BuildSwapSlots(std::shared_ptr<Bytebuffer>& buffer, u8 srcContainerIndex, u8 destContainerIndex, u8 srcSlot, u8 destSlot)
+        bool BuildSwapSlots(std::shared_ptr<Bytebuffer>& buffer, u16 srcContainerIndex, u16 destContainerIndex, u16 srcSlot, u16 destSlot)
         {
             bool result = CreatePacket(buffer, Network::GameOpcode::Server_ContainerSwapSlots, [&buffer, srcContainerIndex, destContainerIndex, srcSlot, destSlot]()
             {
-                buffer->PutU8(srcContainerIndex);
-                buffer->PutU8(destContainerIndex);
-                buffer->PutU8(srcSlot);
-                buffer->PutU8(destSlot);
+                buffer->PutU16(srcContainerIndex);
+                buffer->PutU16(destContainerIndex);
+                buffer->PutU16(srcSlot);
+                buffer->PutU16(destSlot);
             });
 
             return result;

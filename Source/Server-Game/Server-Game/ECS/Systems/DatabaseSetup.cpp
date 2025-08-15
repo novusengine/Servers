@@ -1,6 +1,6 @@
 #include "DatabaseSetup.h"
 
-#include "Server-Game/ECS/Singletons/DatabaseState.h"
+#include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
 #include <Server-Common/Database/DBController.h>
@@ -21,7 +21,7 @@ namespace ECS::Systems
     {
         entt::registry::context& ctx = registry.ctx();
 
-        Singletons::DatabaseState& databaseState = ctx.emplace<Singletons::DatabaseState>();
+        auto& gameCache = ctx.emplace<Singletons::GameCache>();
 
         // Setup Database Settings
         {
@@ -36,27 +36,27 @@ namespace ECS::Systems
                 { "password",  "postgres" }
             };
 
-            if (!JsonUtils::LoadFromPathOrCreate(databaseState.config, fallback, "Data/config/Database.json"))
+            if (!JsonUtils::LoadFromPathOrCreate(gameCache.config, fallback, "Data/config/Database.json"))
             {
                 NC_LOG_CRITICAL("[Database] : Failed to create config file");
             }
         }
 
-        // Setup DatabaseState
+        // Setup GameCache Database Controller
         {
-            databaseState.controller = std::make_unique<Database::DBController>();
+            gameCache.dbController = std::make_unique<Database::DBController>();
 
-            nlohmann::json& connection = databaseState.config["Connection"];
+            nlohmann::json& connection = gameCache.config["Connection"];
             Database::DBEntry dbEntry(connection["address"], connection["port"], connection["database"], connection["user"], connection["password"]);
 
-            databaseState.controller->SetDBEntry(Database::DBType::Auth, dbEntry);
-            databaseState.controller->SetDBEntry(Database::DBType::Character, dbEntry);
-            databaseState.controller->SetDBEntry(Database::DBType::World, dbEntry);
+            gameCache.dbController->SetDBEntry(Database::DBType::Auth, dbEntry);
+            gameCache.dbController->SetDBEntry(Database::DBType::Character, dbEntry);
+            gameCache.dbController->SetDBEntry(Database::DBType::World, dbEntry);
         }
 
-        auto authConnection = databaseState.controller->GetConnection(Database::DBType::Auth);
-        auto characterConnection = databaseState.controller->GetConnection(Database::DBType::Character);
-        auto worldConnection = databaseState.controller->GetConnection(Database::DBType::World);
+        auto authConnection = gameCache.dbController->GetConnection(Database::DBType::Auth);
+        auto characterConnection = gameCache.dbController->GetConnection(Database::DBType::Character);
+        auto worldConnection = gameCache.dbController->GetConnection(Database::DBType::World);
 
         if (authConnection == nullptr || characterConnection == nullptr || worldConnection == nullptr)
         {
@@ -71,10 +71,10 @@ namespace ECS::Systems
             Database::Util::Item::Loading::InitItemTablesPreparedStatements(characterConnection);
             Database::Util::Character::Loading::InitCharacterTablesPreparedStatements(characterConnection);
 
-            Database::Util::Permission::LoadPermissionTables(characterConnection, databaseState.permissionTables);
-            Database::Util::Currency::LoadCurrencyTables(characterConnection, databaseState.currencyTables);
-            Database::Util::Item::Loading::LoadItemTables(characterConnection, databaseState.itemTables);
-            Database::Util::Character::Loading::LoadCharacterTables(characterConnection, databaseState.characterTables, databaseState.itemTables);
+            Database::Util::Permission::LoadPermissionTables(characterConnection, gameCache.permissionTables);
+            Database::Util::Currency::LoadCurrencyTables(characterConnection, gameCache.currencyTables);
+            Database::Util::Item::Loading::LoadItemTables(characterConnection, gameCache.itemTables);
+            Database::Util::Character::Loading::LoadCharacterTables(characterConnection, gameCache.characterTables, gameCache.itemTables);
         }
     }
 

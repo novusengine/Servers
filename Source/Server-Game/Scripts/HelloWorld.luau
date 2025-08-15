@@ -1,0 +1,10 @@
+RegisterPacketHandler(GameOpcode.Client_Connect, function(gameOpcode : GameOpcode, size : u32, packet : Packet)
+    local name = packet:GetString()
+    if not name then
+        print("Failed to read string")
+        return false
+    end
+    
+    print(`Client_Connect : {name}`)
+    return true
+end)

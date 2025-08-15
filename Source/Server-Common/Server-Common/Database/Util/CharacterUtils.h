@@ -16,17 +16,21 @@ namespace Database
             void InitCharacterTablesPreparedStatements(std::shared_ptr<DBConnection>& dbConnection);
 
             void LoadCharacterTables(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables, Database::ItemTables& itemTables);
-            u64 LoadCharacterData(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables);
             u64 LoadCharacterPermissions(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables);
             u64 LoadCharacterPermissionGroups(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables);
             u64 LoadCharacterCurrency(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables);
-            u64 LoadCharacterItems(std::shared_ptr<DBConnection>& dbConnection, Database::CharacterTables& characterTables, Database::ItemTables& itemTables);
         }
 
-        bool CharacterCreate(pqxx::work& transaction, const std::string& name, u16 racegenderclass, u64& characterID);
+        bool CharacterGetInfoByID(std::shared_ptr<DBConnection>& dbConnection, u64 characterID, pqxx::result& result);
+        bool CharacterGetInfoByName(std::shared_ptr<DBConnection>& dbConnection, const std::string& name, pqxx::result& result);
+        bool CharacterCreate(pqxx::work& transaction, const std::string& name, u16 raceGenderClass, u64& characterID);
         bool CharacterDelete(pqxx::work& transaction, u64 characterID);
+        bool CharacterSetRaceGenderClass(pqxx::work& transaction, u64 characterID, u16 raceGenderClass);
+        bool CharacterSetLevel(pqxx::work& transaction, u64 characterID, u16 level);
         bool CharacterAddItem(pqxx::work& transaction, u64 characterID, u64 itemInstanceID, u64 containerID, u16 slot);
         bool CharacterDeleteItem(pqxx::work& transaction, u64 characterID, u64 itemInstanceID);
         bool CharacterSwapContainerSlots(pqxx::work& transaction, u64 characterID, u64 srcContainerID, u64 destContainerID, u16 srcSlot, u16 destSlot);
+        bool CharacterGetItems(std::shared_ptr<DBConnection>& dbConnection, u64 characterID, pqxx::result& result);
+        bool CharacterGetItemsInContainer(std::shared_ptr<DBConnection>& dbConnection, u64 characterID, u64 containerID, pqxx::result& result);
     }
 }
