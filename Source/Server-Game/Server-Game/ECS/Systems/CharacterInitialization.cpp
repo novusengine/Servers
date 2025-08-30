@@ -1,11 +1,13 @@
 #include "CharacterInitialization.h"
 
+#include "Server-Game/ECS/Components/AABB.h"
 #include "Server-Game/ECS/Components/CastInfo.h"
 #include "Server-Game/ECS/Components/CharacterInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
+#include "Server-Game/ECS/Components/ProximityTrigger.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
@@ -134,6 +136,9 @@ namespace ECS::Systems
                 transform.mapID = databaseResult[0][10].as<u16>();
                 transform.position = vec3(databaseResult[0][11].as<f32>(), databaseResult[0][12].as<f32>(), databaseResult[0][13].as<f32>());
 
+                auto& aabb = registry.emplace<Components::AABB>(entity);
+                aabb.extents = vec3(3.0f, 5.0f, 2.0f); // TODO: Create proper data for this
+
                 f32 orientation = databaseResult[0][14].as<f32>();
                 transform.rotation = quat(vec3(0.0f, orientation, 0.0f));
 
@@ -231,8 +236,27 @@ namespace ECS::Systems
                             }
                         }
                     }
+                }
+                registry.emplace_or_replace<Tags::CharacterNeedsContainerUpdate>(entity);
 
-                    registry.emplace_or_replace<Tags::CharacterNeedsContainerUpdate>(entity);
+                for (auto& trigger : gameCache.proximityTriggerTables.triggers)
+                {
+                    if (!gameCache.proximityTriggerTables.triggerIDToEntity.contains(trigger.id))
+                        continue;
+
+                    entt::entity triggerEntity = gameCache.proximityTriggerTables.triggerIDToEntity[trigger.id];
+                    if (registry.all_of<Tags::ProximityTriggerIsServerSideOnly>(triggerEntity))
+                        continue;
+
+                    auto& triggerTransform = registry.get<Components::Transform>(triggerEntity);
+                    auto& triggerAABB = registry.get<Components::AABB>(triggerEntity);
+                    auto& proximityTrigger = registry.get<Components::ProximityTrigger>(triggerEntity);
+
+                    if (triggerTransform.mapID != transform.mapID)
+                        continue;
+
+                    if (!Util::MessageBuilder::ProximityTrigger::BuildProximityTriggerCreate(buffer, trigger.id, trigger.name, trigger.flags, triggerTransform.mapID, triggerTransform.position, triggerAABB.extents))
+                        continue;
                 }
 
                 if (failed)

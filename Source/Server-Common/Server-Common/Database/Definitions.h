@@ -4,6 +4,8 @@
 
 #include <Gameplay/GameDefine.h>
 
+#include <Meta/Generated/Game/ProximityTriggerEnum.h>
+
 #include <robinhood/robinhood.h>
 
 #include <entt/fwd.hpp>
@@ -288,6 +290,17 @@ namespace Database
         u16 slot = 0;
     };
 
+    struct ProximityTrigger
+    {
+    public:
+        u32 id = 0;
+        std::string name = "";
+        Generated::ProximityTriggerFlagEnum flags = Generated::ProximityTriggerFlagEnum::None;
+        u16 mapID = 0;
+        vec3 position = vec3(0.0f, 0.0f, 0.0f);
+        vec3 extents = vec3(1.0f, 1.0f, 1.0f);
+    };
+
     struct PermissionTables
     {
     public:
@@ -321,5 +334,12 @@ namespace Database
         robin_hood::unordered_map<u64, std::vector<u16>> charIDToPermissions;
         robin_hood::unordered_map<u64, std::vector<u16>> charIDToPermissionGroups;
         robin_hood::unordered_map<u64, std::vector<CharacterCurrency>> charIDToCurrency;
+    };
+
+    struct ProximityTriggersTables
+    {
+    public:
+        std::vector<ProximityTrigger> triggers;
+        robin_hood::unordered_map<u32, entt::entity> triggerIDToEntity;
     };
 }

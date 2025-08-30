@@ -6,6 +6,7 @@
 #include "Server-Game/ECS/Systems/CharacterUpdate.h"
 #include "Server-Game/ECS/Systems/DatabaseSetup.h"
 #include "Server-Game/ECS/Systems/NetworkConnection.h"
+#include "Server-Game/ECS/Systems/ProximityTrigger.h"
 #include "Server-Game/ECS/Systems/Replication.h"
 #include "Server-Game/ECS/Systems/UpdatePower.h"
 #include "Server-Game/ECS/Systems/UpdateScripts.h"
@@ -30,6 +31,7 @@ namespace ECS
         Systems::CharacterLoginHandler::Init(registry);
         Systems::CharacterInitialization::Init(registry);
         Systems::CharacterUpdate::Init(registry);
+        Systems::ProximityTrigger::Init(registry);
         Systems::UpdatePower::Init(registry);
         Systems::UpdateSpell::Init(registry);
         Systems::UpdateScripts::Init(registry);
@@ -43,6 +45,7 @@ namespace ECS
         Systems::CharacterLoginHandler::Update(registry, deltaTime);
         Systems::CharacterInitialization::Update(registry, deltaTime);
         Systems::CharacterUpdate::Update(registry, deltaTime);
+        Systems::ProximityTrigger::Update(registry, deltaTime);
         Systems::UpdatePower::Update(registry, deltaTime);
         Systems::UpdateSpell::Update(registry, deltaTime);
         Systems::Replication::Update(registry, deltaTime);

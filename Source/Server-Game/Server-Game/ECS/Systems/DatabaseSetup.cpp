@@ -8,6 +8,7 @@
 #include <Server-Common/Database/Util/CurrencyUtils.h>
 #include <Server-Common/Database/Util/ItemUtils.h>
 #include <Server-Common/Database/Util/PermissionUtils.h>
+#include <Server-Common/Database/Util/ProximityTriggerUtils.h>
 
 #include <Base/Util/DebugHandler.h>
 #include <Base/Util/JsonUtils.h>
@@ -70,11 +71,13 @@ namespace ECS::Systems
             Database::Util::Currency::InitCurrencyTablesPreparedStatements(characterConnection);
             Database::Util::Item::Loading::InitItemTablesPreparedStatements(characterConnection);
             Database::Util::Character::Loading::InitCharacterTablesPreparedStatements(characterConnection);
+            Database::Util::ProximityTrigger::Loading::InitProximityTriggersTablesPreparedStatements(characterConnection);
 
             Database::Util::Permission::LoadPermissionTables(characterConnection, gameCache.permissionTables);
             Database::Util::Currency::LoadCurrencyTables(characterConnection, gameCache.currencyTables);
             Database::Util::Item::Loading::LoadItemTables(characterConnection, gameCache.itemTables);
             Database::Util::Character::Loading::LoadCharacterTables(characterConnection, gameCache.characterTables, gameCache.itemTables);
+            Database::Util::ProximityTrigger::Loading::LoadProximityTriggersTables(characterConnection, gameCache.proximityTriggerTables);
         }
     }
 

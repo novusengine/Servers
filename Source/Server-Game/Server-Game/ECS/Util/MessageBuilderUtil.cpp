@@ -368,6 +368,34 @@ namespace ECS::Util::MessageBuilder
         }
     }
 
+    namespace ProximityTrigger
+    {
+        bool BuildProximityTriggerCreate(std::shared_ptr<Bytebuffer>& buffer, u32 triggerID, const std::string& name, Generated::ProximityTriggerFlagEnum flags, u16 mapID, const vec3& position, const vec3& extents)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_TriggerCreate, [&, triggerID, mapID]()
+            {
+                buffer->PutU32(triggerID);
+                buffer->PutString(name);
+                buffer->Put(flags);
+                buffer->PutU16(mapID);
+                buffer->Put(position);
+                buffer->Put(extents);
+            });
+
+            return result;
+        }
+
+        bool BuildProximityTriggerDelete(std::shared_ptr<Bytebuffer>& buffer, u32 triggerID)
+        {
+            bool result = CreatePacket(buffer, Network::GameOpcode::Server_TriggerDestroy, [&buffer, triggerID]()
+            {
+                buffer->PutU32(triggerID);
+            });
+
+            return result;
+        }
+    }
+
     namespace Cheat
     {
         bool BuildCheatCommandResultMessage(std::shared_ptr<Bytebuffer>& buffer, u8 result, const std::string& response)
