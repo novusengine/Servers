@@ -7,9 +7,11 @@
 #include <Base/Types.h>
 #include <Base/Memory/Bytebuffer.h>
 
-#include "Gameplay/GameDefine.h"
-#include "Gameplay/Network/Define.h"
-#include "Gameplay/Network/Opcode.h"
+#include <Gameplay/GameDefine.h>
+#include <Gameplay/Network/Define.h>
+#include <Gameplay/Network/Opcode.h>
+
+#include <Meta/Generated/Game/ProximityTriggerEnum.h>
 
 #include <entt/fwd.hpp>
 
@@ -82,6 +84,12 @@ namespace ECS
             bool BuildDamageDealtMessage(std::shared_ptr<Bytebuffer>& buffer, GameDefine::ObjectGuid sourceGuid, GameDefine::ObjectGuid targetGuid, f32 damage);
             bool BuildHealingDoneMessage(std::shared_ptr<Bytebuffer>& buffer, GameDefine::ObjectGuid sourceGuid, GameDefine::ObjectGuid targetGuid, f32 healing);
             bool BuildRessurectedMessage(std::shared_ptr<Bytebuffer>& buffer, GameDefine::ObjectGuid sourceGuid, GameDefine::ObjectGuid targetGuid);
+        }
+
+        namespace ProximityTrigger
+        {
+            bool BuildProximityTriggerCreate(std::shared_ptr<Bytebuffer>& buffer, u32 triggerID, const std::string& name, Generated::ProximityTriggerFlagEnum flags, u16 mapID, const vec3& position, const vec3& extents);
+            bool BuildProximityTriggerDelete(std::shared_ptr<Bytebuffer>& buffer, u32 triggerID);
         }
 
         namespace Cheat

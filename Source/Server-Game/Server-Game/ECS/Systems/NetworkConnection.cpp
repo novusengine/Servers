@@ -1,23 +1,28 @@
 #include "NetworkConnection.h"
 
 #include "Server-Game/Application/EnttRegistries.h"
+#include "Server-Game/ECS/Components/AABB.h"
 #include "Server-Game/ECS/Components/CastInfo.h"
 #include "Server-Game/ECS/Components/CharacterInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
+#include "Server-Game/ECS/Components/ProximityTrigger.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
-#include "Server-Game/ECS/Singletons/WorldState.h"
+#include "Server-Game/ECS/Singletons/ProximityTriggers.h"
 #include "Server-Game/ECS/Singletons/TimeState.h"
+#include "Server-Game/ECS/Singletons/WorldState.h"
+#include "Server-Game/ECS/Util/CollisionUtil.h"
 #include "Server-Game/ECS/Util/ContainerUtil.h"
 #include "Server-Game/ECS/Util/GridUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
+#include "Server-Game/ECS/Util/ProximityTriggerUtil.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
@@ -30,6 +35,7 @@
 #include <Server-Common/Database/DBController.h>
 #include <Server-Common/Database/Util/CharacterUtils.h>
 #include <Server-Common/Database/Util/ItemUtils.h>
+#include <Server-Common/Database/Util/ProximityTriggerUtils.h>
 
 #include <Base/Util/DebugHandler.h>
 #include <Base/Util/StringUtils.h>
@@ -663,6 +669,93 @@ namespace ECS::Systems
         return true;
     }
 
+    bool HandleOnCheatTriggerCreate(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        std::string name;
+        u16 flags;
+        u16 mapID;
+        vec3 position;
+        vec3 extents;
+
+        if (!message.buffer->GetString(name))
+            return false;
+
+        if (!message.buffer->GetU16(flags))
+            return false;
+
+        if (!message.buffer->GetU16(mapID))
+            return false;
+
+        if (!message.buffer->Get(position))
+            return false;
+
+        if (!message.buffer->Get(extents))
+            return false;
+
+        auto& ctx = registry->ctx();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+
+        auto conn = gameCache.dbController->GetConnection(::Database::DBType::Character);
+        if (!conn)
+            return true;
+
+        auto transaction = conn->NewTransaction();
+
+        u32 triggerID;
+        if (Database::Util::ProximityTrigger::ProximityTriggerCreate(transaction, name, flags, mapID, position, extents, triggerID))
+        {
+            transaction.commit();
+
+            entt::entity triggerEntity = registry->create();
+
+            auto& transform = registry->emplace<Components::Transform>(triggerEntity);
+            transform.mapID = mapID;
+            transform.position = position;
+
+            registry->emplace<Components::AABB>(triggerEntity, vec3(0, 0, 0), extents);
+            auto& proximityTrigger = registry->emplace<Components::ProximityTrigger>(triggerEntity);
+            proximityTrigger.triggerID = triggerID;
+            proximityTrigger.name = name;
+            proximityTrigger.flags = static_cast<Generated::ProximityTriggerFlagEnum>(flags);
+            registry->emplace<Tags::ProximityTriggerNeedsInitialization>(triggerEntity);
+
+            gameCache.proximityTriggerTables.triggerIDToEntity[triggerID] = triggerEntity;
+        }
+
+        return true;
+    }
+
+    bool HandleOnCheatTriggerDestroy(entt::registry* registry, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        u32 triggerID;
+
+        if (!message.buffer->GetU32(triggerID))
+            return false;
+
+        auto& ctx = registry->ctx();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+        auto& proximityTriggers = ctx.get<Singletons::ProximityTriggers>();
+
+        if (!gameCache.proximityTriggerTables.triggerIDToEntity.contains(triggerID))
+            return true;
+
+        auto conn = gameCache.dbController->GetConnection(::Database::DBType::Character);
+        if (!conn)
+            return true;
+
+        auto transaction = conn->NewTransaction();
+        if (Database::Util::ProximityTrigger::ProximityTriggerDelete(transaction, triggerID))
+        {
+            transaction.commit();
+
+            proximityTriggers.triggerIDsToDestroy.insert(triggerID);
+        }
+
+        return true;
+    }
+
     bool HandleOnSendCheatCommand(Network::SocketID socketID, Network::Message& message)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -769,6 +862,16 @@ namespace ECS::Systems
             case Network::CheatCommands::RemoveItem:
             {
                 return HandleOnCheatRemoveItem(registry, socketID, entity, message);
+            }
+
+            case Network::CheatCommands::TriggerAdd:
+            {
+                return HandleOnCheatTriggerCreate(registry, socketID, entity, message);
+            }
+
+            case Network::CheatCommands::TriggerRemove:
+            {
+                return HandleOnCheatTriggerDestroy(registry, socketID, entity, message);
             }
 
             default: break;
@@ -1039,6 +1142,41 @@ namespace ECS::Systems
         return true;
     }
 
+    bool HandleOnTriggerEnter(Network::SocketID socketID, Network::Message& message)
+    {
+        u32 triggerID;
+
+        if (!message.buffer->GetU32(triggerID))
+            return false;
+
+        entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+        auto& ctx = registry->ctx();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+
+        entt::entity triggerEntity;
+        if (!gameCache.proximityTriggerTables.triggerIDToEntity.contains(triggerID))
+            return false;
+
+        triggerEntity = gameCache.proximityTriggerTables.triggerIDToEntity[triggerID];
+
+        entt::entity playerEntity;
+        if (!Util::Network::GetEntityIDFromSocketID(networkState, socketID, playerEntity))
+            return false;
+
+        auto& playerTransform = registry->get<Components::Transform>(playerEntity);
+        auto& playerAABB = registry->get<Components::AABB>(playerEntity);
+        auto& triggerTransform = registry->get<Components::Transform>(triggerEntity);
+        auto& triggerAABB = registry->get<Components::AABB>(triggerEntity);
+
+        if (!Util::Collision::Overlaps(playerTransform, playerAABB, triggerTransform, triggerAABB))
+            return false; // This might be a malicious client sending fake packets, do we want to do something about this?
+
+        Util::ProximityTrigger::AddPlayerToTrigger(*registry, triggerEntity, playerEntity);
+
+        return true;
+    }
+
     void NetworkConnection::Init(entt::registry& registry)
     {
         entt::registry::context& ctx = registry.ctx();
@@ -1062,6 +1200,8 @@ namespace ECS::Systems
             networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_ContainerSwapSlots,       Network::GameMessageHandler(Network::ConnectionStatus::Connected,   0u, -1, &HandleOnContainerSwapSlots));
             
             networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_LocalRequestSpellCast,    Network::GameMessageHandler(Network::ConnectionStatus::Connected,   0u, -1, &HandleOnRequestSpellCast));
+
+            networkState.gameMessageRouter->SetMessageHandler(Network::GameOpcode::Client_TriggerEnter,             Network::GameMessageHandler(Network::ConnectionStatus::Connected,   0u, -1, &HandleOnTriggerEnter));
 
             // Bind to IP/Port
             std::string ipAddress = "0.0.0.0";

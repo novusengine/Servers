@@ -25,6 +25,7 @@ namespace ECS
             Database::CurrencyTables currencyTables;
             Database::ItemTables itemTables;
             Database::CharacterTables characterTables;
+            Database::ProximityTriggersTables proximityTriggerTables;
         };
     }
 

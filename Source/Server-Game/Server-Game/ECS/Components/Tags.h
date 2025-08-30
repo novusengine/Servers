@@ -7,4 +7,8 @@ namespace ECS::Tags
     struct CharacterNeedsDeinitialization {};
     struct CharacterNeedsContainerUpdate {};
     struct CharacterNeedsDisplayUpdate {};
+    
+    struct ProximityTriggerNeedsInitialization {};
+    struct ProximityTriggerIsServerSideOnly {};
+    struct ProximityTriggerIsClientSide {};
 }
