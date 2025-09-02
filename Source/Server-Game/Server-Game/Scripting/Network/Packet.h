@@ -2,7 +2,6 @@
 #include <Base/Types.h>
 #include <Base/Memory/Bytebuffer.h>
 
-#include <Gameplay/Network/Opcode.h>
 #include <Network/Define.h>
 
 #include <lualib.h>

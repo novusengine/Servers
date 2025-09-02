@@ -11,6 +11,6 @@ namespace ECS::Components
     struct ObjectInfo
     {
     public:
-        GameDefine::ObjectGuid guid = GameDefine::ObjectGuid::Empty;
+        ObjectGUID guid = ObjectGUID::Empty;
     };
 }

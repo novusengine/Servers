@@ -9,9 +9,12 @@ namespace Database
 
     namespace Util::Currency
     {
-        void InitCurrencyTablesPreparedStatements(std::shared_ptr<DBConnection>& dbConnection);
+        namespace Loading
+        {
+            void InitCurrencyTablesPreparedStatements(std::shared_ptr<DBConnection>& dbConnection);
 
-        void LoadCurrencyTables(std::shared_ptr<DBConnection>& dbConnection, Database::CurrencyTables& currencyTables);
-        u64 LoadCurrencyTable(std::shared_ptr<DBConnection>& dbConnection, Database::CurrencyTables& currencyTables);
+            void LoadCurrencyTables(std::shared_ptr<DBConnection>& dbConnection, Database::CurrencyTables& currencyTables);
+            u64 LoadCurrencyTable(std::shared_ptr<DBConnection>& dbConnection, Database::CurrencyTables& currencyTables);
+        }
     }
 }

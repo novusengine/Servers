@@ -5,6 +5,8 @@
 #include "Server-Game/Scripting/Systems/LuaSystemBase.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
+#include <Meta/Generated/Shared/NetworkPacket.h>
+
 #include <lualib.h>
 
 namespace Scripting
@@ -18,7 +20,6 @@ namespace Scripting
 
         // Set Event Handlers
         {
-            SetEventHandler(static_cast<u32>(LuaPacketEvent::OnReceive), std::bind(&PacketEventHandler::OnPacketReceived, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
         }
 
         CreatePacketEventTable(state);
@@ -65,7 +66,7 @@ namespace Scripting
         funcRefList.push_back(funcHandle);
     }
 
-    void PacketEventHandler::RegisterHandlerCallback(lua_State* state, ::Network::GameOpcode opcode, i32 funcHandle)
+    void PacketEventHandler::RegisterHandlerCallback(lua_State* state, ::Network::OpcodeType opcode, i32 funcHandle)
     {
         u64 key = reinterpret_cast<u64>(state);
         _luaStateToOpcodeFuncRef[key][opcode] = funcHandle;
@@ -75,10 +76,9 @@ namespace Scripting
     {
         LuaState ctx(state);
 
-        u32 opcode = ctx.Get(0u, 1);
+        ::Network::OpcodeType opcode = ctx.Get(0u, 1);
 
-        ::Network::GameOpcode gameOpcode = static_cast<::Network::GameOpcode>(opcode);
-        if (gameOpcode == ::Network::GameOpcode::Invalid || gameOpcode >= ::Network::GameOpcode::Count)
+        if (opcode == ::Generated::InvalidPacket::PACKET_ID || opcode >= 1024)
         {
             return 0;
         }
@@ -92,12 +92,12 @@ namespace Scripting
 
         LuaManager* luaManager = ServiceLocator::GetLuaManager();
         auto packetEventHandler = luaManager->GetLuaHandler<PacketEventHandler>(LuaHandlerType::PacketEvent);
-        packetEventHandler->RegisterHandlerCallback(state, gameOpcode, funcHandle);
+        packetEventHandler->RegisterHandlerCallback(state, opcode, funcHandle);
 
         return 0;
     }
 
-    bool PacketEventHandler::HasGameOpcodeHandler(lua_State* state, ::Network::GameOpcode opcode) const
+    bool PacketEventHandler::HasGameOpcodeHandler(lua_State* state, ::Network::OpcodeType opcode) const
     {
         u64 key = reinterpret_cast<u64>(state);
         if (!_luaStateToOpcodeFuncRef.contains(key))
@@ -112,9 +112,8 @@ namespace Scripting
         LuaState ctx(state);
 
         u64 key = reinterpret_cast<u64>(state);
-        auto gameOpcode = static_cast<::Network::GameOpcode>(header.opcode);
 
-        i32 funcRef = _luaStateToOpcodeFuncRef[key][gameOpcode];
+        i32 funcRef = _luaStateToOpcodeFuncRef[key][header.opcode];
         ctx.GetRawI(LUA_REGISTRYINDEX, funcRef);
         ctx.Push((u32)header.opcode);
         ctx.Push((u32)header.size);
@@ -124,6 +123,8 @@ namespace Scripting
             return false;
 
         bool success = ctx.Get(false);
+        ctx.Pop();
+
         return success;
     }
     
@@ -153,28 +154,6 @@ namespace Scripting
         return 0;
     }
 
-    i32 PacketEventHandler::OnPacketReceived(lua_State* state, u32 eventID, LuaEventData* data)
-    {
-        //LuaManager* luaManager = ServiceLocator::GetLuaManager();
-        //auto eventData = reinterpret_cast<LuaPacketEventOnReceiveData*>(data);
-        //
-        //u32 id = eventID;
-        //u64 key = reinterpret_cast<u64>(state);
-        //
-        //LuaState ctx(state);
-        //
-        //std::vector<i32>& funcRefList = _eventToLuaStateFuncRefList[id][key];
-        //for (i32 funcHandle : funcRefList)
-        //{
-        //    ctx.GetRawI(LUA_REGISTRYINDEX, funcHandle);
-        //    ctx.Push(id);
-        //    //ctx.Push(eventData->motd.c_str());
-        //    ctx.PCall(1);
-        //}
-
-        return 0;
-    }
-
     void PacketEventHandler::CreatePacketEventTable(lua_State* state)
     {
         LuaState ctx(state);
@@ -183,7 +162,6 @@ namespace Scripting
         {
             u32 value = 0;
             ctx.SetTable("Invalid", value++);
-            ctx.SetTable("OnHandle", value++);
             ctx.SetTable("OnReceived", value++);
             ctx.SetTable("Count", value);
         });
@@ -192,43 +170,12 @@ namespace Scripting
     {
         LuaState ctx(state);
 
-        ctx.CreateTableAndPopulate("GameOpcode", [&]()
-        {
-            u32 value = 0;
-            ctx.SetTable("Invalid", value++);
-            ctx.SetTable("Client_Connect", value++);
-            ctx.SetTable("Server_Connected", value++);
-
-            ctx.SetTable("Shared_Ping", value++);
-            ctx.SetTable("Server_UpdateStats", value++);
-
-            ctx.SetTable("Client_SendCheatCommand", value++);
-            ctx.SetTable("Server_SendCheatCommandResult", value++);
-
-            ctx.SetTable("Server_SetMover", value++);
-            ctx.SetTable("Server_EntityCreate", value++);
-            ctx.SetTable("Server_EntityDestroy", value++);
-            ctx.SetTable("Server_EntityDisplayInfoUpdate", value++);
-            ctx.SetTable("Shared_EntityMove", value++);
-            ctx.SetTable("Shared_EntityMoveStop", value++);
-            ctx.SetTable("Server_EntityResourcesUpdate", value++);
-            ctx.SetTable("Shared_EntityTargetUpdate", value++);
-            ctx.SetTable("Server_EntityCastSpell", value++);
-
-            ctx.SetTable("Server_ItemCreate", value++);
-            ctx.SetTable("Server_ContainerCreate", value++);
-
-            ctx.SetTable("Client_ContainerSwapSlots", value++);
-            ctx.SetTable("Server_ContainerAddToSlot", value++);
-            ctx.SetTable("Server_ContainerRemoveFromSlot", value++);
-            ctx.SetTable("Server_ContainerSwapSlots", value++);
-
-            ctx.SetTable("Client_LocalRequestSpellCast", value++);
-            ctx.SetTable("Server_SendSpellCastResult", value++);
-
-            ctx.SetTable("Server_SendCombatEvent", value++);
-
-            ctx.SetTable("Count", value);
-        });
+        //ctx.CreateTableAndPopulate(Generated::GameOpcodeEnumMeta::EnumName.data(), [&]()
+        //{
+        //    for (const auto& pair : Generated::GameOpcodeEnumMeta::EnumList)
+        //    {
+        //        ctx.SetTable(pair.first.data(), pair.second);
+        //    }
+        //});
     }
 }

@@ -9,8 +9,8 @@ namespace ECS::Components
 {
     struct CastInfo
     {
-        GameDefine::ObjectGuid caster;
-        GameDefine::ObjectGuid target;
+        ObjectGUID caster;
+        ObjectGUID target;
 
         f32 castTime = 0.0f;
         f32 duration = 0.0f;

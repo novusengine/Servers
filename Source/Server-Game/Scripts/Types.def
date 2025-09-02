@@ -23,51 +23,10 @@ declare Engine :
 type PacketEvent =
 {
     Invalid     : number,
-    OnHandle    : number,
     OnReceived  : number,
     Count       : number
 };
 declare PacketEvent : PacketEvent
-
-type GameOpcode =
-{
-    Invalid : number,
-
-    Client_Connect : number,
-    Server_Connected : number,
-
-    Shared_Ping : number,
-    Server_UpdateStats : number,
-
-    Client_SendCheatCommand : number,
-    Server_SendCheatCommandResult : number,
-
-    Server_SetMover : number,
-    Server_EntityCreate : number,
-    Server_EntityDestroy : number,
-    Server_EntityDisplayInfoUpdate : number,
-    Shared_EntityMove : number,
-    Shared_EntityMoveStop : number,
-    Server_EntityResourcesUpdate : number,
-    Shared_EntityTargetUpdate : number,
-    Server_EntityCastSpell : number,
-
-    Server_ItemCreate : number,
-    Server_ContainerCreate : number,
-
-    Client_ContainerSwapSlots : number,
-    Server_ContainerAddToSlot : number,
-    Server_ContainerRemoveFromSlot : number,
-    Server_ContainerSwapSlots : number,
-
-    Client_LocalRequestSpellCast : number,
-    Server_SendSpellCastResult : number,
-
-    Server_SendCombatEvent : number,
-
-    Count : number
-};
-declare GameOpcode : GameOpcode
 
 declare class Packet
     function GetOpcode(self) : GameOpcode

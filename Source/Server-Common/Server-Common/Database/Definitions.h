@@ -4,7 +4,7 @@
 
 #include <Gameplay/GameDefine.h>
 
-#include <Meta/Generated/Game/ProximityTriggerEnum.h>
+#include <Meta/Generated/Shared/ProximityTriggerEnum.h>
 
 #include <robinhood/robinhood.h>
 
@@ -50,14 +50,14 @@ namespace Database
     struct ContainerItem
     {
     public:
-        bool IsEmpty() const { return !objectGuid.IsValid(); }
+        bool IsEmpty() const { return !objectGUID.IsValid(); }
         void Clear()
         {
-            objectGuid = GameDefine::ObjectGuid::Empty;
+            objectGUID = ObjectGUID::Empty;
         }
 
     public:
-        GameDefine::ObjectGuid objectGuid = GameDefine::ObjectGuid::Empty;
+        ObjectGUID objectGUID = ObjectGUID::Empty;
     };
 
     struct Container
@@ -104,25 +104,25 @@ namespace Database
 
         /**
         * Attempts to add an item to the next available slot
-        * @param itemGuid The item to add
+        * @param itemGUID The item to add
         * @return Slot where item was added, or INVALID_SLOT if container is full
         */
-        u16 AddItem(GameDefine::ObjectGuid itemGuid)
+        u16 AddItem(ObjectGUID itemGUID)
         {
             u16 slot = GetNextFreeSlot();
             if (slot == INVALID_SLOT)
                 return INVALID_SLOT;
 
-            return AddItemToSlot(itemGuid, slot);
+            return AddItemToSlot(itemGUID, slot);
         }
 
         /**
         * Attempts to add an item to a specific slot
-        * @param itemGuid The item to add
+        * @param itemGUID The item to add
         * @param slotIndex The desired slot
         * @return The slot where item was added, or INVALID_SLOT if slot was occupied/invalid
         */
-        u16 AddItemToSlot(GameDefine::ObjectGuid itemGuid, u16 slotIndex)
+        u16 AddItemToSlot(ObjectGUID itemGUID, u16 slotIndex)
         {
 #if defined(NC_DEBUG)
             NC_ASSERT(slotIndex < _slots, "Container::AddItemToSlot - Called with slotIndex ({0}) when the container can only hold {1} items", slotIndex, _slots);
@@ -131,7 +131,7 @@ namespace Database
                 return INVALID_SLOT;
 
             --_freeSlots;
-            _items[slotIndex] = { itemGuid };
+            _items[slotIndex] = { itemGUID };
             _dirtySlots.insert(slotIndex);
 
             return slotIndex;
@@ -214,7 +214,7 @@ namespace Database
         const ContainerItem& GetItem(u16 slotIndex) const
         {
 #if defined(NC_DEBUG)
-            NC_ASSERT(slotIndex < _slots, "Container::GetItemGuid - Called with slotIndex ({0}) when the container can only hold {1} items", slotIndex, _slots);
+            NC_ASSERT(slotIndex < _slots, "Container::GetItemGUID - Called with slotIndex ({0}) when the container can only hold {1} items", slotIndex, _slots);
 #endif
             return _items[slotIndex];
         }
@@ -251,7 +251,10 @@ namespace Database
 
         bool IsUninitialized() const { return _isUninitialized; }
         robin_hood::unordered_set<u16>& GetDirtySlots() { return _dirtySlots; }
-
+        void SetSlotAsDirty(u16 slotIndex)
+        {
+            _dirtySlots.insert(slotIndex);
+        }
         void ClearDirtySlots()
         {
             _isUninitialized = false;
@@ -336,10 +339,17 @@ namespace Database
         robin_hood::unordered_map<u64, std::vector<CharacterCurrency>> charIDToCurrency;
     };
 
-    struct ProximityTriggersTables
+    struct CreatureTables
     {
     public:
-        std::vector<ProximityTrigger> triggers;
-        robin_hood::unordered_map<u32, entt::entity> triggerIDToEntity;
+        robin_hood::unordered_map<u32, GameDefine::Database::CreatureTemplate> templateIDToDefinition;
+    };
+    
+    struct MapTables
+    {
+    public:
+        robin_hood::unordered_map<u32, GameDefine::Database::Map> idToDefinition;
+        robin_hood::unordered_map<u32, GameDefine::Database::MapLocation> locationIDToDefinition;
+        robin_hood::unordered_map<u32, u32> locationNameHashToID;
     };
 }

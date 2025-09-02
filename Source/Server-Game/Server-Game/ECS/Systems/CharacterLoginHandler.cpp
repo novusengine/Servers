@@ -1,15 +1,16 @@
 #include "CharacterLoginHandler.h"
 
 #include "Server-Game/ECS/Components/DisplayInfo.h"
+#include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
-#include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
+#include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
@@ -20,6 +21,8 @@
 
 #include <Base/Util/DebugHandler.h>
 #include <Base/Util/StringUtils.h>
+
+#include <Meta/Generated/Shared/NetworkPacket.h>
 
 #include <Network/Server.h>
 
@@ -36,6 +39,7 @@ namespace ECS::Systems
     {
         entt::registry::context& ctx = registry.ctx();
         auto& gameCache = ctx.get<Singletons::GameCache>();
+        auto& worldState = ctx.get<Singletons::WorldState>();
         auto& networkState = ctx.get<Singletons::NetworkState>();
 
         u32 approxRequests = static_cast<u32>(networkState.characterLoginRequest.size_approx());
@@ -58,38 +62,35 @@ namespace ECS::Systems
                 pqxx::result databaseResult;
                 if (Database::Util::Character::CharacterGetInfoByName(databaseConn, request.name, databaseResult))
                 {
-                    entt::entity socketEntity = registry.create();
-
-                    auto& netInfo = registry.emplace<Components::NetInfo>(socketEntity);
-                    netInfo.socketID = socketID;
-
-                    auto& objectInfo = registry.emplace<Components::ObjectInfo>(socketEntity);
-
                     u64 characterID = databaseResult[0][0].as<u64>();
-                    objectInfo.guid = GameDefine::ObjectGuid(GameDefine::ObjectGuid::Type::Player, characterID);
+                    u16 mapID = databaseResult[0][10].as<u16>();
 
-                    networkState.socketIDToEntity[socketID] = socketEntity;
-                    networkState.characterIDToEntity[characterID] = socketEntity;
-                    networkState.characterIDToSocketID[characterID] = socketID;
-
-                    Util::Cache::CharacterCreate(gameCache, characterID, request.name, socketEntity);
-
-                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<16>();
-                    if (Util::MessageBuilder::Authentication::BuildConnectedMessage(buffer, Network::ConnectResult::Success))
+                    if (Util::Cache::MapExistsByID(gameCache, mapID))
                     {
-                        networkState.server->SendPacket(socketID, buffer);
-                        registry.emplace<Tags::CharacterNeedsInitialization>(socketEntity);
-                    }
+                        worldState.AddWorldTransferRequest(WorldTransferRequest{
+                            .socketID = socketID,
 
-                    continue;
+                            .characterName = request.name,
+                            .characterID = characterID,
+
+                            .targetMapID = mapID
+                        });
+
+                        u32 charNameHash = StringUtils::fnv1a_32(request.name.c_str(), request.name.length());
+                        gameCache.characterTables.charNameHashToCharID[charNameHash] = characterID;
+
+                        Util::Network::SendPacket(networkState, socketID, Generated::ConnectResultPacket{
+                            .result = static_cast<u8>(Network::ConnectResult::Success)
+                        });
+
+                        continue;
+                    }
                 }
             }
 
-            std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<16>();
-            if (Util::MessageBuilder::Authentication::BuildConnectedMessage(buffer, Network::ConnectResult::Failed))
-            {
-                networkState.server->SendPacket(socketID, buffer);
-            }
+            Util::Network::SendPacket(networkState, socketID, Generated::ConnectResultPacket{
+                .result = static_cast<u8>(Network::ConnectResult::Failed)
+            });
 
             networkState.server->CloseSocketID(socketID);
         }

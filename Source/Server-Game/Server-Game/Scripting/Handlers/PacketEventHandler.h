@@ -5,7 +5,9 @@
 
 #include <Base/Types.h>
 
-#include <Gameplay/Network/Opcode.h>
+#include <Meta/Generated/Shared/NetworkEnum.h>
+
+#include <Network/Define.h>
 
 #include <robinhood/robinhood.h>
 
@@ -26,9 +28,9 @@ namespace Scripting
         void SetEventHandler(u32 eventID, EventHandlerFn fn);
         void CallEvent(lua_State* state, u32 eventID, LuaEventData* data);
         void RegisterEventCallback(lua_State* state, u32 eventID, i32 funcHandle);
-        void RegisterHandlerCallback(lua_State* state, ::Network::GameOpcode opcode, i32 funcHandle);
+        void RegisterHandlerCallback(lua_State* state, ::Network::OpcodeType opcode, i32 funcHandle);
 
-        bool HasGameOpcodeHandler(lua_State* state, ::Network::GameOpcode opcode) const;
+        bool HasGameOpcodeHandler(lua_State* state, ::Network::OpcodeType opcode) const;
         bool CallGameOpcodeHandler(lua_State* state, ::Network::MessageHeader& header, ::Network::Message& message);
 
         bool HasListeners(LuaPacketEvent eventID) const { return _eventToLuaStateFuncRefList[(u32)eventID].size() > 0; }
@@ -40,15 +42,12 @@ namespace Scripting
     private:
         void Register(lua_State* state);
 
-    private: // Event Handlers (Called by CallEvent)
-        i32 OnPacketReceived(lua_State* state, u32 eventID, LuaEventData* data);
-
     private: // Utility Functions
         void CreatePacketEventTable(lua_State* state);
         void CreateGameOpcodeTable(lua_State* state);
 
     private:
-        robin_hood::unordered_map<u64, robin_hood::unordered_map<::Network::GameOpcode, i32>> _luaStateToOpcodeFuncRef;
+        robin_hood::unordered_map<u64, robin_hood::unordered_map<::Network::OpcodeType, i32>> _luaStateToOpcodeFuncRef;
     };
 
     static LuaMethod packetEventMethods[] =

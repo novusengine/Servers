@@ -3,7 +3,7 @@
 
 #include "Server-Game/ECS/Components/CharacterInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
-#include "Server-Game/ECS/Components/Tags.h"
+#include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 
@@ -16,11 +16,10 @@
 
 namespace ECS::Util::Persistence::Character
 {
-    Result CharacterCreate(entt::registry& registry, const std::string& name, u16 raceGenderClass, u64& characterID)
+    Result CharacterCreate(Singletons::GameCache& gameCache, const std::string& name, u16 raceGenderClass, u64& characterID)
     {
         characterID = std::numeric_limits<u64>::max();
 
-        auto& gameCache = registry.ctx().get<Singletons::GameCache>();
         u32 charNameHash = StringUtils::fnv1a_32(name.c_str(), name.length());
 
         if (Util::Cache::CharacterExistsByID(gameCache, characterID))
@@ -39,11 +38,8 @@ namespace ECS::Util::Persistence::Character
         return Result::Success;
     }
 
-    Result CharacterDelete(entt::registry& registry, u64 characterID)
+    Result CharacterDelete(Singletons::GameCache& gameCache, u64 characterID)
     {
-        auto& ctx = registry.ctx();
-        auto& gameCache = ctx.get<Singletons::GameCache>();
-        
         if (!Util::Cache::CharacterExistsByID(gameCache, characterID))
             return Result::CharacterNotFound;
 
@@ -60,10 +56,8 @@ namespace ECS::Util::Persistence::Character
         return Result::Success;
     }
 
-    ECS::Result CharacterSetRace(entt::registry& registry, u64 characterID, GameDefine::UnitRace unitRace)
+    ECS::Result CharacterSetRace(Singletons::GameCache& gameCache, entt::registry& registry, u64 characterID, GameDefine::UnitRace unitRace)
     {
-        auto& gameCache = registry.ctx().get<Singletons::GameCache>();
-
         entt::entity characterEntity = entt::null;
         if (!Util::Cache::GetEntityByCharacterID(gameCache, characterID, characterEntity))
             return Result::CharacterNotFound;
@@ -90,10 +84,8 @@ namespace ECS::Util::Persistence::Character
         return ECS::Result::Success;
     }
 
-    ECS::Result CharacterSetGender(entt::registry& registry, u64 characterID, GameDefine::UnitGender unitGender)
+    ECS::Result CharacterSetGender(Singletons::GameCache& gameCache, entt::registry& registry, u64 characterID, GameDefine::UnitGender unitGender)
     {
-        auto& gameCache = registry.ctx().get<Singletons::GameCache>();
-
         entt::entity characterEntity = entt::null;
         if (!Util::Cache::GetEntityByCharacterID(gameCache, characterID, characterEntity))
             return Result::CharacterNotFound;
@@ -118,10 +110,8 @@ namespace ECS::Util::Persistence::Character
         return ECS::Result::Success;
     }
 
-    ECS::Result CharacterSetClass(entt::registry& registry, u64 characterID, GameDefine::UnitClass unitClass)
+    ECS::Result CharacterSetClass(Singletons::GameCache& gameCache, entt::registry& registry, u64 characterID, GameDefine::UnitClass unitClass)
     {
-        auto& gameCache = registry.ctx().get<Singletons::GameCache>();
-
         entt::entity characterEntity = entt::null;
         if (!Util::Cache::GetEntityByCharacterID(gameCache, characterID, characterEntity))
             return Result::CharacterNotFound;
@@ -148,10 +138,8 @@ namespace ECS::Util::Persistence::Character
         return ECS::Result::Success;
     }
 
-    ECS::Result CharacterSetLevel(entt::registry& registry, u64 characterID, u16 level)
+    ECS::Result CharacterSetLevel(Singletons::GameCache& gameCache, entt::registry& registry, u64 characterID, u16 level)
     {
-        auto& gameCache = registry.ctx().get<Singletons::GameCache>();
-
         entt::entity characterEntity = entt::null;
         if (!Util::Cache::GetEntityByCharacterID(gameCache, characterID, characterEntity))
             return Result::CharacterNotFound;
@@ -173,11 +161,70 @@ namespace ECS::Util::Persistence::Character
         return ECS::Result::Success;
     }
 
-    Result ItemAssign(pqxx::work& transaction, entt::registry& registry, u64 characterID, u64 itemInstanceID, u64 containerID, u16 slot)
+    ECS::Result CharacterSetMapID(Singletons::GameCache& gameCache, u64 characterID, u32 mapID)
     {
-        auto& ctx = registry.ctx();
-        auto& gameCache = ctx.get<Singletons::GameCache>();
+        if (!Cache::CharacterExistsByID(gameCache, characterID))
+            return Result::CharacterNotFound;
 
+        auto conn = gameCache.dbController->GetConnection(::Database::DBType::Character);
+        if (!conn)
+            return Result::DatabaseNotConnected;
+
+        auto transaction = conn->NewTransaction();
+
+        bool result = Database::Util::Character::CharacterSetMapID(transaction, characterID, mapID);
+        if (!result)
+            return Result::DatabaseError;
+
+        transaction.commit();
+
+        return ECS::Result::Success;
+    }
+
+    ECS::Result CharacterSetPositionOrientation(Singletons::GameCache& gameCache, u64 characterID, const vec3& position, f32 orientation)
+    {
+        if (!Cache::CharacterExistsByID(gameCache, characterID))
+            return Result::CharacterNotFound;
+
+        auto conn = gameCache.dbController->GetConnection(::Database::DBType::Character);
+        if (!conn)
+            return Result::DatabaseNotConnected;
+
+        auto transaction = conn->NewTransaction();
+
+        bool result = Database::Util::Character::CharacterSetPositionOrientation(transaction, characterID, position, orientation);
+        if (!result)
+            return Result::DatabaseError;
+
+        transaction.commit();
+
+        return ECS::Result::Success;
+    }
+
+    ECS::Result CharacterSetMapIDPositionOrientation(Singletons::GameCache& gameCache, u64 characterID, u32 mapID, const vec3& position, f32 orientation)
+    {
+        if (!Cache::CharacterExistsByID(gameCache, characterID))
+            return Result::CharacterNotFound;
+
+        auto conn = gameCache.dbController->GetConnection(::Database::DBType::Character);
+        if (!conn)
+            return Result::DatabaseNotConnected;
+
+        auto transaction = conn->NewTransaction();
+
+        if (!Database::Util::Character::CharacterSetMapID(transaction, characterID, mapID))
+            return Result::DatabaseError;
+
+        if (!Database::Util::Character::CharacterSetPositionOrientation(transaction, characterID, position, orientation))
+            return Result::DatabaseError;
+
+        transaction.commit();
+
+        return ECS::Result::Success;
+    }
+
+    Result ItemAssign(pqxx::work& transaction, Singletons::GameCache& gameCache, u64 characterID, u64 itemInstanceID, u64 containerID, u16 slot)
+    {
         if (!Cache::CharacterExistsByID(gameCache, characterID))
             return Result::CharacterNotFound;
 
@@ -191,12 +238,9 @@ namespace ECS::Util::Persistence::Character
         return Result::Success;
     }
 
-    Result ItemAdd(entt::registry& registry, entt::entity characterEntity, u64 characterID, u32 itemID, Database::Container& container, u64 containerID, u16 slotIndex, u64& itemInstanceID)
+    Result ItemAdd(Singletons::GameCache& gameCache, entt::registry& registry, entt::entity characterEntity, u64 characterID, u32 itemID, Database::Container& container, u64 containerID, u16 slotIndex, u64& itemInstanceID)
     {
         itemInstanceID = std::numeric_limits<u64>::max();
-
-        auto& ctx = registry.ctx();
-        auto& gameCache = ctx.get<Singletons::GameCache>();
 
         auto conn = gameCache.dbController->GetConnection(::Database::DBType::Character);
         if (!conn)
@@ -204,10 +248,10 @@ namespace ECS::Util::Persistence::Character
 
         auto transaction = conn->NewTransaction();
 
-        if (!Item::ItemCreate(transaction, registry, itemID, characterID, itemInstanceID))
+        if (!Item::ItemCreate(transaction, gameCache, itemID, characterID, itemInstanceID))
             return Result::GenericError;
 
-        if (ItemAssign(transaction, registry, characterID, itemInstanceID, containerID, slotIndex) != ECS::Result::Success)
+        if (ItemAssign(transaction, gameCache, characterID, itemInstanceID, containerID, slotIndex) != ECS::Result::Success)
         {
             Cache::ItemInstanceDelete(gameCache, itemInstanceID);
             return Result::GenericError;
@@ -215,18 +259,15 @@ namespace ECS::Util::Persistence::Character
 
         transaction.commit();
 
-        GameDefine::ObjectGuid itemGuid = GameDefine::ObjectGuid::CreateItem(itemInstanceID);
-        container.AddItemToSlot(itemGuid, slotIndex);
-        registry.emplace_or_replace<Tags::CharacterNeedsContainerUpdate>(characterEntity);
+        ObjectGUID itemGUID = ObjectGUID::CreateItem(itemInstanceID);
+        container.AddItemToSlot(itemGUID, slotIndex);
+        registry.emplace_or_replace<Events::CharacterNeedsContainerUpdate>(characterEntity);
 
         return Result::Success;
     }
 
-    ECS::Result ItemDelete(entt::registry& registry, entt::entity characterEntity, u64 characterID, Database::Container& container, u64 containerID, u16 slotIndex)
+    ECS::Result ItemDelete(Singletons::GameCache& gameCache, entt::registry& registry, entt::entity characterEntity, u64 characterID, Database::Container& container, u64 containerID, u16 slotIndex)
     {
-        auto& ctx = registry.ctx();
-        auto& gameCache = ctx.get<Singletons::GameCache>();
-
         auto conn = gameCache.dbController->GetConnection(::Database::DBType::Character);
         if (!conn)
             return Result::DatabaseNotConnected;
@@ -235,7 +276,7 @@ namespace ECS::Util::Persistence::Character
         if (containerItem.IsEmpty())
             return Result::ItemNotFound;
 
-        u64 itemInstanceID = containerItem.objectGuid.GetCounter();
+        u64 itemInstanceID = containerItem.objectGUID.GetCounter();
         if (!Cache::ItemInstanceExistsByID(gameCache, itemInstanceID))
             return Result::ItemNotFound;
 
@@ -245,22 +286,19 @@ namespace ECS::Util::Persistence::Character
         if (!result)
             return Result::ItemNotFound;
 
-        if (!Item::ItemDelete(transaction, registry, itemInstanceID))
+        if (!Item::ItemDelete(transaction, gameCache, itemInstanceID))
             return Result::DatabaseError;
 
         transaction.commit();
 
         container.RemoveItem(slotIndex);
-        registry.emplace_or_replace<Tags::CharacterNeedsContainerUpdate>(characterEntity);
+        registry.emplace_or_replace<Events::CharacterNeedsContainerUpdate>(characterEntity);
 
         return Result::Success;
     }
 
-    ECS::Result ItemSwap(entt::registry& registry, entt::entity characterEntity, u64 characterID, Database::Container& srcContainer, u64 srcContainerID, u16 srcSlotIndex, Database::Container& dstContainer, u64 dstContainerID, u16 dstSlotIndex)
+    ECS::Result ItemSwap(Singletons::GameCache& gameCache, u64 characterID, Database::Container& srcContainer, u64 srcContainerID, u16 srcSlotIndex, Database::Container& dstContainer, u64 dstContainerID, u16 dstSlotIndex)
     {
-        auto& ctx = registry.ctx();
-        auto& gameCache = ctx.get<Singletons::GameCache>();
-
         const Database::ContainerItem& srcItem = srcContainer.GetItem(srcSlotIndex);
         const Database::ContainerItem& dstItem = dstContainer.GetItem(dstSlotIndex);
 
@@ -274,8 +312,8 @@ namespace ECS::Util::Persistence::Character
         auto transaction = conn->NewTransaction();
 
         bool hasDstItem = !dstItem.IsEmpty();
-        u64 srcItemInstanceID = srcItem.objectGuid.GetCounter();
-        u64 dstItemInstanceID = dstItem.objectGuid.GetCounter();
+        u64 srcItemInstanceID = srcItem.objectGUID.GetCounter();
+        u64 dstItemInstanceID = dstItem.objectGUID.GetCounter();
 
         if (!Database::Util::Character::CharacterDeleteItem(transaction, characterID, srcItemInstanceID))
             return Result::ItemNotFound;
@@ -286,13 +324,13 @@ namespace ECS::Util::Persistence::Character
                 return Result::ItemNotFound;
         }
 
-        Result assignSrcItemResult = ItemAssign(transaction, registry, characterID, srcItemInstanceID, dstContainerID, dstSlotIndex);
+        Result assignSrcItemResult = ItemAssign(transaction, gameCache, characterID, srcItemInstanceID, dstContainerID, dstSlotIndex);
         if (assignSrcItemResult != Result::Success)
             return assignSrcItemResult;
 
         if (hasDstItem)
         {
-            Result assignDstItemResult = ItemAssign(transaction, registry, characterID, dstItemInstanceID, srcContainerID, srcSlotIndex);
+            Result assignDstItemResult = ItemAssign(transaction, gameCache, characterID, dstItemInstanceID, srcContainerID, srcSlotIndex);
             if (assignDstItemResult != Result::Success)
                 return assignDstItemResult;
         }

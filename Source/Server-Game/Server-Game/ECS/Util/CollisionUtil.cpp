@@ -11,21 +11,21 @@ namespace ECS::Util::Collision
 {
     // Convert a local-space AABB under TRS to a world-space (min,max) AABB.
     // Uses worldHalf = |R*S| * localHalf
-    inline void LocalAABBToWorldAABB(const Components::Transform& t, const Components::AABB& local, vec3& outMin, vec3& outMax)
+    inline void LocalAABBToWorldAABB(const Components::Transform& transform, const Components::AABB& localAABB, vec3& outMin, vec3& outMax)
     {
-        const quat q = glm::normalize(t.rotation);
+        const quat q = glm::normalize(quat(vec3(transform.pitchYaw.x, transform.pitchYaw.y, 0.0f)));
         const mat3x3 R = glm::mat3_cast(q);
 
         // Guard against degenerate scale to avoid infinities on crazy pipelines
-        const vec3 s = glm::max(t.scale, glm::vec3(1e-6f));
+        const vec3 s = glm::max(transform.scale, glm::vec3(1e-6f));
         const mat3x3 S = glm::mat3(glm::vec3(s.x, 0, 0), vec3(0, s.y, 0), vec3(0, 0, s.z));
         const mat3x3 M = R * S;
 
-        const vec3 worldCenter = t.position + M * local.centerPos;
+        const vec3 worldCenter = transform.position + M * localAABB.centerPos;
 
         // |M| as "componentwise abs on columns"
         const mat3x3 A = mat3x3(glm::abs(M[0]), glm::abs(M[1]), glm::abs(M[2]));
-        const vec3 worldHalf = A * local.extents;
+        const vec3 worldHalf = A * localAABB.extents;
 
         outMin = worldCenter - worldHalf;
         outMax = worldCenter + worldHalf;

@@ -18,31 +18,33 @@ namespace Database::Util::Character
             {
                 dbConnection->connection->prepare("CharacterGetInfoByID", "SELECT * FROM public.characters WHERE id = $1");
                 dbConnection->connection->prepare("CharacterGetInfoByName", "SELECT * FROM public.characters WHERE name = $1");
-                dbConnection->connection->prepare("CharacterCreate", "INSERT INTO public.characters (name, racegenderclass) VALUES ($1, $2) RETURNING id");
+                dbConnection->connection->prepare("CharacterCreate", "INSERT INTO public.characters (name, race_gender_class) VALUES ($1, $2) RETURNING id");
                 dbConnection->connection->prepare("CharacterDelete", "DELETE FROM public.characters WHERE id = $1");
-                dbConnection->connection->prepare("CharacterSetRaceGenderClass", "UPDATE public.characters SET racegenderclass = $2 WHERE id = $1");
+                dbConnection->connection->prepare("CharacterSetRaceGenderClass", "UPDATE public.characters SET race_gender_class = $2 WHERE id = $1");
                 dbConnection->connection->prepare("CharacterSetLevel", "UPDATE public.characters SET level = $2 WHERE id = $1");
+                dbConnection->connection->prepare("CharacterSetMapID", "UPDATE public.characters SET map_ID = $2 WHERE id = $1");
+                dbConnection->connection->prepare("CharacterSetPos", "UPDATE public.characters SET position_x = $2, position_y = $3, position_z = $4, position_o = $5 WHERE id = $1");
 
-                dbConnection->connection->prepare("CharacterSetCurrency", "INSERT INTO public.character_currency (characterid, currencyid, value) VALUES ($1, $2, $3) ON CONFLICT(characterid, currencyid) DO UPDATE SET value = EXCLUDED.value");
-                dbConnection->connection->prepare("CharacterDeleteCurrency", "DELETE FROM public.character_currency WHERE characterid = $1 AND currencyid = $2");
-                dbConnection->connection->prepare("CharacterDeleteAllCurrency", "DELETE FROM public.character_currency WHERE characterid = $1");
+                dbConnection->connection->prepare("CharacterSetCurrency", "INSERT INTO public.character_currency (character_id, currency_id, value) VALUES ($1, $2, $3) ON CONFLICT(character_id, currency_id) DO UPDATE SET value = EXCLUDED.value");
+                dbConnection->connection->prepare("CharacterDeleteCurrency", "DELETE FROM public.character_currency WHERE character_id = $1 AND currency_id = $2");
+                dbConnection->connection->prepare("CharacterDeleteAllCurrency", "DELETE FROM public.character_currency WHERE character_id = $1");
 
-                dbConnection->connection->prepare("CharacterSetPermission", "INSERT INTO public.character_permissions (characterid, permissionid) VALUES ($1, $2) ON CONFLICT(characterid, permissionid) DO NOTHING");
-                dbConnection->connection->prepare("CharacterDeletePermission", "DELETE FROM public.character_permissions WHERE characterid = $1 AND permissionid = $2");
-                dbConnection->connection->prepare("CharacterDeleteAllPermission", "DELETE FROM public.character_permissions WHERE characterid = $1");
+                dbConnection->connection->prepare("CharacterSetPermission", "INSERT INTO public.character_permissions (character_id, permission_id) VALUES ($1, $2) ON CONFLICT(character_id, permission_id) DO NOTHING");
+                dbConnection->connection->prepare("CharacterDeletePermission", "DELETE FROM public.character_permissions WHERE character_id = $1 AND permission_id = $2");
+                dbConnection->connection->prepare("CharacterDeleteAllPermission", "DELETE FROM public.character_permissions WHERE character_id = $1");
 
-                dbConnection->connection->prepare("CharacterSetPermissionGroup", "INSERT INTO public.character_permission_groups (characterid, permissiongroupid) VALUES ($1, $2) ON CONFLICT(characterid, permissiongroupid) DO NOTHING");
-                dbConnection->connection->prepare("CharacterDeletePermissionGroup", "DELETE FROM public.character_permission_groups WHERE characterid = $1 AND permissiongroupid = $2");
-                dbConnection->connection->prepare("CharacterDeleteAllPermissionGroup", "DELETE FROM public.character_permission_groups WHERE characterid = $1");
+                dbConnection->connection->prepare("CharacterSetPermissionGroup", "INSERT INTO public.character_permission_groups (character_id, permission_group_id) VALUES ($1, $2) ON CONFLICT(character_id, permission_group_id) DO NOTHING");
+                dbConnection->connection->prepare("CharacterDeletePermissionGroup", "DELETE FROM public.character_permission_groups WHERE character_id = $1 AND permission_group_id = $2");
+                dbConnection->connection->prepare("CharacterDeleteAllPermissionGroup", "DELETE FROM public.character_permission_groups WHERE character_id = $1");
 
-                dbConnection->connection->prepare("CharacterAddItem", "INSERT INTO public.character_items (charid, container, slot, iteminstanceid) VALUES ($1, $2, $3, $4)");
-                dbConnection->connection->prepare("CharacterDeleteItem", "DELETE FROM public.character_items WHERE charid = $1 AND iteminstanceid = $2");
+                dbConnection->connection->prepare("CharacterAddItem", "INSERT INTO public.character_items (character_id, container, slot, item_instance_id) VALUES ($1, $2, $3, $4)");
+                dbConnection->connection->prepare("CharacterDeleteItem", "DELETE FROM public.character_items WHERE character_id = $1 AND item_instance_id = $2");
                 dbConnection->connection->prepare("CharacterSwapContainerSlots", "SELECT swap_container_slots($1, $2, $3, $4, $5);");
-                dbConnection->connection->prepare("CharacterDeleteAllItem", "DELETE FROM public.character_items WHERE charid = $1");
-                dbConnection->connection->prepare("CharacterDeleteAllItemInstances", "DELETE FROM public.item_instances WHERE ownerid = $1");
+                dbConnection->connection->prepare("CharacterDeleteAllItem", "DELETE FROM public.character_items WHERE character_id = $1");
+                dbConnection->connection->prepare("CharacterDeleteAllItemInstances", "DELETE FROM public.item_instances WHERE owner_id = $1");
 
-                dbConnection->connection->prepare("CharacterGetItemInstances", "SELECT * FROM public.item_instances WHERE ownerid = $1 ORDER BY id ASC");
-                dbConnection->connection->prepare("CharacterGetItemsInContainer", "SELECT * FROM public.character_items WHERE charid = $1 and container = $2 ORDER BY slot ASC");
+                dbConnection->connection->prepare("CharacterGetItemInstances", "SELECT * FROM public.item_instances WHERE owner_id = $1 ORDER BY id ASC");
+                dbConnection->connection->prepare("CharacterGetItemsInContainer", "SELECT * FROM public.character_items WHERE character_id = $1 and container = $2 ORDER BY slot ASC");
 
                 NC_LOG_INFO("Loaded Prepared Statements Character Tables\n");
             }
@@ -201,8 +203,7 @@ namespace Database::Util::Character
             if (queryResult.empty())
                 return false;
 
-            u64 charID = queryResult[0][0].as<u64>();
-            characterID = charID;
+            characterID = queryResult[0][0].as<u64>();
             return true;
         }
         catch (const pqxx::sql_error& e)
@@ -258,6 +259,40 @@ namespace Database::Util::Character
         try
         {
             auto queryResult = transaction.exec(pqxx::prepped("CharacterSetLevel"), pqxx::params{ characterID, level });
+            if (queryResult.affected_rows() == 0)
+                return false;
+
+            return true;
+        }
+        catch (const pqxx::sql_error& e)
+        {
+            NC_LOG_WARNING("{0}", e.what());
+            return false;
+        }
+    }
+
+    bool CharacterSetMapID(pqxx::work& transaction, u64 characterID, u32 mapID)
+    {
+        try
+        {
+            auto queryResult = transaction.exec(pqxx::prepped("CharacterSetMapID"), pqxx::params{ characterID, mapID });
+            if (queryResult.affected_rows() == 0)
+                return false;
+
+            return true;
+        }
+        catch (const pqxx::sql_error& e)
+        {
+            NC_LOG_WARNING("{0}", e.what());
+            return false;
+        }
+    }
+
+    bool CharacterSetPositionOrientation(pqxx::work& transaction, u64 characterID, const vec3& position, f32 orientation)
+    {
+        try
+        {
+            auto queryResult = transaction.exec(pqxx::prepped("CharacterSetPos"), pqxx::params{ characterID, position.x, position.y, position.z, orientation });
             if (queryResult.affected_rows() == 0)
                 return false;
 

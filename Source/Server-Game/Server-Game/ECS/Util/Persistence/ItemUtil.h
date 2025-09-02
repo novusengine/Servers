@@ -4,8 +4,16 @@
 #include <entt/fwd.hpp>
 #include <pqxx/transaction>
 
-namespace ECS::Util::Persistence::Item
+namespace ECS
 {
-    bool ItemCreate(pqxx::work& transaction, entt::registry& registry, u32 itemEntryID, u64 ownerID, u64& itemInstanceID);
-    bool ItemDelete(pqxx::work& transaction, entt::registry& registry, u64 itemInstanceID);
+    namespace Singletons
+    {
+        struct GameCache;
+    }
+
+    namespace Util::Persistence::Item
+    {
+        bool ItemCreate(pqxx::work& transaction, Singletons::GameCache& gameCache, u32 itemEntryID, u64 ownerID, u64& itemInstanceID);
+        bool ItemDelete(pqxx::work& transaction, Singletons::GameCache& gameCache, u64 itemInstanceID);
+    }
 }

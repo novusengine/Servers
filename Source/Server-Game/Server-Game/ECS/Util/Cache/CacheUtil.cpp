@@ -53,7 +53,7 @@ namespace ECS::Util::Cache
         cache.characterTables.charNameHashToCharID[charNameHash] = characterID;
     }
 
-    void CharacterDelete(entt::registry& registry, Singletons::GameCache& cache, u64 characterID, Components::CharacterInfo& characterInfo)
+    void CharacterDelete(Singletons::GameCache& cache, u64 characterID, Components::CharacterInfo& characterInfo)
     {
         u32 charNameHash = StringUtils::fnv1a_32(characterInfo.name.c_str(), characterInfo.name.length());
 
@@ -115,6 +115,33 @@ namespace ECS::Util::Cache
             return false;
 
         cache.itemTables.itemInstanceIDToDefinition.erase(itemInstanceID);
+        return true;
+    }
+    bool CreatureTemplateExistsByID(Singletons::GameCache& cache, u32 creatureTemplateID)
+    {
+        bool exists = cache.creatureTables.templateIDToDefinition.contains(creatureTemplateID);
+        return exists;
+    }
+    bool GetCreatureTemplateByID(Singletons::GameCache& cache, u32 creatureTemplateID, GameDefine::Database::CreatureTemplate*& creatureTemplate)
+    {
+        if (!CreatureTemplateExistsByID(cache, creatureTemplateID))
+            return false;
+
+        creatureTemplate = &cache.creatureTables.templateIDToDefinition[creatureTemplateID];
+        return true;
+    }
+
+    bool MapExistsByID(Singletons::GameCache& cache, u32 mapID)
+    {
+        bool exists = cache.mapTables.idToDefinition.contains(mapID);
+        return exists;
+    }
+    bool GetMapByID(Singletons::GameCache& cache, u32 mapID, GameDefine::Database::Map*& map)
+    {
+        if (!MapExistsByID(cache, mapID))
+            return false;
+
+        map = &cache.mapTables.idToDefinition[mapID];
         return true;
     }
 }

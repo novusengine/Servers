@@ -13,10 +13,7 @@ namespace ECS
         {
         public:
             robin_hood::unordered_map<u32, entt::entity> triggerIDToEntity;
-            robin_hood::unordered_set<u32> triggerIDsToDestroy;
-
-            robin_hood::unordered_set<u32> activeTriggers;
-            RTree<u32, f32, 3> activeTriggersVisTree;
+            RTree<u32, f32, 3> triggerVisTree;
         };
     }
 }

@@ -5,8 +5,10 @@
 
 #include <Server-Common/Database/DBController.h>
 #include <Server-Common/Database/Util/CharacterUtils.h>
+#include <Server-Common/Database/Util/CreatureUtils.h>
 #include <Server-Common/Database/Util/CurrencyUtils.h>
 #include <Server-Common/Database/Util/ItemUtils.h>
+#include <Server-Common/Database/Util/MapUtils.h>
 #include <Server-Common/Database/Util/PermissionUtils.h>
 #include <Server-Common/Database/Util/ProximityTriggerUtils.h>
 
@@ -67,17 +69,20 @@ namespace ECS::Systems
 
         // Load Character Tables
         {
-            Database::Util::Permission::InitPermissionTablesPreparedStatements(characterConnection);
-            Database::Util::Currency::InitCurrencyTablesPreparedStatements(characterConnection);
+            Database::Util::Map::Loading::InitMapTablesPreparedStatements(characterConnection);
+            Database::Util::Permission::Loading::InitPermissionTablesPreparedStatements(characterConnection);
+            Database::Util::Currency::Loading::InitCurrencyTablesPreparedStatements(characterConnection);
             Database::Util::Item::Loading::InitItemTablesPreparedStatements(characterConnection);
             Database::Util::Character::Loading::InitCharacterTablesPreparedStatements(characterConnection);
+            Database::Util::Creature::Loading::InitCreatureTablesPreparedStatements(characterConnection);
             Database::Util::ProximityTrigger::Loading::InitProximityTriggersTablesPreparedStatements(characterConnection);
 
-            Database::Util::Permission::LoadPermissionTables(characterConnection, gameCache.permissionTables);
-            Database::Util::Currency::LoadCurrencyTables(characterConnection, gameCache.currencyTables);
+            Database::Util::Map::Loading::LoadMapTables(characterConnection, gameCache.mapTables);
+            Database::Util::Permission::Loading::LoadPermissionTables(characterConnection, gameCache.permissionTables);
+            Database::Util::Currency::Loading::LoadCurrencyTables(characterConnection, gameCache.currencyTables);
             Database::Util::Item::Loading::LoadItemTables(characterConnection, gameCache.itemTables);
             Database::Util::Character::Loading::LoadCharacterTables(characterConnection, gameCache.characterTables, gameCache.itemTables);
-            Database::Util::ProximityTrigger::Loading::LoadProximityTriggersTables(characterConnection, gameCache.proximityTriggerTables);
+            Database::Util::Creature::Loading::LoadCreatureTables(characterConnection, gameCache.creatureTables);
         }
     }
 

@@ -1,5 +1,7 @@
 #include "NetworkUtil.h"
-#include "Server-Game/ECS/Singletons/NetworkState.h"
+#include "Server-Game/ECS/Components/NetInfo.h"
+#include "Server-Game/ECS/Components/ObjectInfo.h"
+#include "Server-Game/ECS/Components/VisibilityInfo.h"
 
 #include <Network/Server.h>
 
@@ -121,5 +123,51 @@ namespace ECS::Util::Network
 
         networkState.characterIDToEntity.erase(characterID);
         return true;
+    }
+    bool SendPacket(Singletons::NetworkState& networkState, ::Network::SocketID socketID, std::shared_ptr<Bytebuffer>& buffer)
+    {
+        if (!IsSocketActive(networkState, socketID))
+            return false;
+
+        networkState.server->SendPacket(socketID, buffer);
+        return true;
+    }
+    void SendToNearby(Singletons::NetworkState& networkState, World& world, const entt::entity sender, const Components::VisibilityInfo& visibilityInfo, bool sendToSelf, std::shared_ptr<Bytebuffer>& buffer)
+    {
+        auto& objectInfo = world.Get<Components::ObjectInfo>(sender);
+        if (sendToSelf)
+        {
+            if (Components::NetInfo* netInfo = world.TryGet<Components::NetInfo>(sender))
+            {
+                if (Util::Network::IsSocketActive(networkState, netInfo->socketID))
+                    networkState.server->SendPacket(netInfo->socketID, buffer);
+            }
+        }
+
+        for (const ObjectGUID& guid : visibilityInfo.visiblePlayers)
+        {
+            entt::entity otherEntity = world.GetEntity(guid);
+            if (!world.ValidEntity(otherEntity))
+                continue;
+
+            Components::NetInfo& otherNetInfo = world.Get<Components::NetInfo>(otherEntity);
+            if (!Util::Network::IsSocketActive(networkState, otherNetInfo.socketID))
+                continue;
+
+            auto& targetVisibilityInfo = world.Get<Components::VisibilityInfo>(otherEntity);
+
+            if (objectInfo.guid.GetType() == ObjectGUID::Type::Player)
+            {
+                if (!targetVisibilityInfo.visiblePlayers.contains(objectInfo.guid))
+                    continue;
+            }
+            else
+            {
+                if (!targetVisibilityInfo.visibleCreatures.contains(objectInfo.guid))
+                    continue;
+            }
+
+            networkState.server->SendPacket(otherNetInfo.socketID, buffer);
+        }
     }
 }

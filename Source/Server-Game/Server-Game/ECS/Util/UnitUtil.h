@@ -5,10 +5,25 @@
 
 #include <entt/fwd.hpp>
 
-namespace ECS::Components
+namespace ECS
 {
-    struct DisplayInfo;
-    struct UnitStatsComponent;
+    struct World;
+
+    namespace Components
+    {
+        struct ObjectInfo;
+        struct DisplayInfo;
+        struct Transform;
+        struct UnitStatsComponent;
+        struct VisibilityInfo;
+    }
+
+    namespace Singletons
+    {
+        struct GameCache;
+        struct NetworkState;
+        struct WorldState;
+    }
 }
 
 namespace ECS::Util::Unit
@@ -23,4 +38,7 @@ namespace ECS::Util::Unit
 
     f32 HandleRageRegen(f32 current, f32 rateModifier, f32 deltaTime);
     f32 HandleEnergyRegen(f32 current, f32 max, f32 rateModifier, f32 deltaTime);
+
+    void TeleportToXYZ(World& world, Singletons::NetworkState& networkState, entt::entity entity, Components::ObjectInfo& objectInfo, Components::Transform& transform, Components::VisibilityInfo& visibilityInfo, const vec3& position, f32 orientation);
+    bool TeleportToLocation(Singletons::WorldState& worldState, World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, entt::entity entity, Components::ObjectInfo& objectInfo, Components::Transform& transform, Components::VisibilityInfo& visibilityInfo, u32 mapID, const vec3& position, f32 orientation);
 }

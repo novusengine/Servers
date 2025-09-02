@@ -9,6 +9,7 @@ namespace ECS::Components
     struct VisibilityInfo
     {
     public:
-        robin_hood::unordered_set<GameDefine::ObjectGuid> visiblePlayers;
+        robin_hood::unordered_set<ObjectGUID> visiblePlayers;
+        robin_hood::unordered_set<ObjectGUID> visibleCreatures;
     };
 }

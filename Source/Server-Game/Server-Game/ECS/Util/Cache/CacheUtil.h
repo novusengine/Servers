@@ -33,7 +33,7 @@ namespace ECS::Util::Cache
     bool GetEntityByCharacterID(Singletons::GameCache& cache, u64 characterID, entt::entity entity);
 
     void CharacterCreate(Singletons::GameCache& cache, u64 characterID, const std::string& name, entt::entity entity);
-    void CharacterDelete(entt::registry& registry, Singletons::GameCache& cache, u64 characterID, Components::CharacterInfo& characterInfo);
+    void CharacterDelete(Singletons::GameCache& cache, u64 characterID, Components::CharacterInfo& characterInfo);
 
     void CharacterSetClass(Components::CharacterInfo& character, GameDefine::UnitClass unitClass);
     void CharacterSetLevel(Components::CharacterInfo& character, u16 level);
@@ -45,4 +45,10 @@ namespace ECS::Util::Cache
 
     bool ItemInstanceCreate(Singletons::GameCache& cache, u64 itemInstanceID, const Database::ItemInstance& itemInstance);
     bool ItemInstanceDelete(Singletons::GameCache& cache, u64 itemInstanceID);
+
+    bool CreatureTemplateExistsByID(Singletons::GameCache& cache, u32 creatureTemplateID);
+    bool GetCreatureTemplateByID(Singletons::GameCache& cache, u32 creatureTemplateID, GameDefine::Database::CreatureTemplate*& creatureTemplate);
+
+    bool MapExistsByID(Singletons::GameCache& cache, u32 mapID);
+    bool GetMapByID(Singletons::GameCache& cache, u32 mapID, GameDefine::Database::Map*& map);
 }

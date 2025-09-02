@@ -9,10 +9,8 @@
 
 namespace ECS::Util::Persistence::Item
 {
-    bool ItemCreate(pqxx::work& transaction, entt::registry& registry, u32 itemEntryID, u64 ownerID, u64& itemInstanceID)
+    bool ItemCreate(pqxx::work& transaction, Singletons::GameCache& gameCache, u32 itemEntryID, u64 ownerID, u64& itemInstanceID)
     {
-        auto& gameCache = registry.ctx().get<Singletons::GameCache>();
-
         GameDefine::Database::ItemTemplate* itemTemplate = nullptr;
         if (!Cache::GetItemTemplateByID(gameCache, itemEntryID, itemTemplate))
             return false;
@@ -33,10 +31,8 @@ namespace ECS::Util::Persistence::Item
         return true;
     }
 
-    bool ItemDelete(pqxx::work& transaction, entt::registry& registry, u64 itemInstanceID)
+    bool ItemDelete(pqxx::work& transaction, Singletons::GameCache& gameCache, u64 itemInstanceID)
     {
-        auto& gameCache = registry.ctx().get<Singletons::GameCache>();
-
         if (!Cache::ItemInstanceExistsByID(gameCache, itemInstanceID))
             return false;
 

@@ -27,6 +27,8 @@ namespace Database
         bool CharacterDelete(pqxx::work& transaction, u64 characterID);
         bool CharacterSetRaceGenderClass(pqxx::work& transaction, u64 characterID, u16 raceGenderClass);
         bool CharacterSetLevel(pqxx::work& transaction, u64 characterID, u16 level);
+        bool CharacterSetMapID(pqxx::work& transaction, u64 characterID, u32 mapID);
+        bool CharacterSetPositionOrientation(pqxx::work& transaction, u64 characterID, const vec3& position, f32 orientation);
         bool CharacterAddItem(pqxx::work& transaction, u64 characterID, u64 itemInstanceID, u64 containerID, u16 slot);
         bool CharacterDeleteItem(pqxx::work& transaction, u64 characterID, u64 itemInstanceID);
         bool CharacterSwapContainerSlots(pqxx::work& transaction, u64 characterID, u64 srcContainerID, u64 destContainerID, u16 srcSlot, u16 destSlot);

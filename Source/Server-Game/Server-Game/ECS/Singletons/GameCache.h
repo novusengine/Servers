@@ -21,11 +21,12 @@ namespace ECS
             nlohmann::json config;
             std::unique_ptr<Database::DBController> dbController;
 
+            Database::MapTables mapTables;
             Database::PermissionTables permissionTables;
             Database::CurrencyTables currencyTables;
             Database::ItemTables itemTables;
             Database::CharacterTables characterTables;
-            Database::ProximityTriggersTables proximityTriggerTables;
+            Database::CreatureTables creatureTables;
         };
     }
 

@@ -19,8 +19,8 @@ namespace Database
             u64 LoadItemTemplateTable(std::shared_ptr<DBConnection>& dbConnection, Database::ItemTables& itemTables);
             u64 LoadItemStatTemplateTable(std::shared_ptr<DBConnection>& dbConnection, Database::ItemTables& itemTables);
             u64 LoadItemArmorTemplateTable(std::shared_ptr<DBConnection>& dbConnection, Database::ItemTables& itemTables);
-            u64 LoadItemWeaponTemplateTable(std::shared_ptr<DBConnection>& dbConnection, Database::ItemTables& itemTables);
             u64 LoadItemShieldTemplateTable(std::shared_ptr<DBConnection>& dbConnection, Database::ItemTables& itemTables);
+            u64 LoadItemWeaponTemplateTable(std::shared_ptr<DBConnection>& dbConnection, Database::ItemTables& itemTables);
         }
 
         bool ItemInstanceCreate(pqxx::work& work, u32 itemID, u64 ownerID, u16 count, u16 durability, u64& itemInstanceID);

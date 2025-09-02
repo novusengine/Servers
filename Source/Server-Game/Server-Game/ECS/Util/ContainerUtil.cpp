@@ -33,7 +33,7 @@ namespace ECS::Util::Container
             if (item.IsEmpty())
                 continue;
 
-            u64 itemInstanceID = item.objectGuid.GetCounter();
+            u64 itemInstanceID = item.objectGUID.GetCounter();
 
             Database::ItemInstance* itemInstance = nullptr;
             if (!Cache::GetItemInstanceByID(gameCache, itemInstanceID, itemInstance))
@@ -109,7 +109,7 @@ namespace ECS::Util::Container
             outContainer = &playerContainers.bags[outContainerIndex];
 
             const auto& baseContainerItem = playerContainers.equipment.GetItem(outContainerIndex);
-            outContainerID = baseContainerItem.objectGuid.GetCounter();
+            outContainerID = baseContainerItem.objectGUID.GetCounter();
 
             return true;
         }

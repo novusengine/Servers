@@ -24,8 +24,6 @@ AutoCVar_String CVAR_ScriptDir(CVarCategory::Client, "scriptingDirectory", "defi
 AutoCVar_String CVAR_ScriptExtension(CVarCategory::Client, "scriptingExtension", "defines the file extension to recognized as a script file", ".luau");
 AutoCVar_String CVAR_ScriptMotd(CVarCategory::Client, "scriptingMotd", "defines the message of the day passed in the GameLoaded Event", "Welcome to Novuscore");
 
-LUAU_FASTFLAG(LuauVector2Constructor)
-
 namespace Scripting
 {
     LuaManager::LuaManager() : _internalState(nullptr), _publicState(nullptr)
@@ -36,8 +34,6 @@ namespace Scripting
 
     void LuaManager::Init()
     {
-        FFlag::LuauVector2Constructor.value = true;
-
         _luaHandlers.resize(static_cast<u32>(LuaHandlerType::Count));
         SetLuaHandler(LuaHandlerType::Global, new GlobalHandler());
         SetLuaHandler(LuaHandlerType::PacketEvent, new PacketEventHandler());
