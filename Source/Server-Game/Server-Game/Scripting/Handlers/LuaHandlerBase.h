@@ -1,14 +1,17 @@
 #pragma once
 #include <Base/Types.h>
 
-struct lua_State;
+#include <Scripting/Defines.h>
 
 namespace Scripting
 {
     class LuaHandlerBase
     {
     public:
-        virtual void Register(lua_State* state) = 0;
-        virtual void Clear() = 0;
+        virtual void Register(Zenith* zenith) = 0;
+        virtual void Clear(Zenith* zenith) = 0;
+
+        virtual void PostLoad(Zenith* zenith) = 0;
+        virtual void Update(Zenith* zenith, f32 deltaTime) = 0;
     };
 }

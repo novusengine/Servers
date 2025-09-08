@@ -5,8 +5,12 @@
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Singletons/ProximityTriggers.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
+#include "Server-Game/Util/ServiceLocator.h"
 
-#include <Base/Util/DebugHandler.h>
+#include <Meta/Generated/Server/LuaEvent.h>
+
+#include <Scripting/LuaManager.h>
+#include <Scripting/Zenith.h>
 
 namespace ECS::Util::ProximityTrigger
 {
@@ -94,18 +98,34 @@ namespace ECS::Util::ProximityTrigger
         return true;
     }
 
-    void OnEnter(Components::ProximityTrigger& trigger, entt::entity playerEntity)
+    void OnEnter(World& world, Components::ProximityTrigger& trigger, entt::entity playerEntity)
     {
-        NC_LOG_INFO("Trigger '{}' entered!", trigger.name);
-    }
+        Scripting::LuaManager* luaManager = ServiceLocator::GetLuaManager();
+        Scripting::Zenith* zenith = luaManager->GetZenithStateManager().Get(world.zenithKey);
 
-    void OnExit(Components::ProximityTrigger& trigger, entt::entity playerEntity)
-    {
-        NC_LOG_INFO("Trigger '{}' exited!", trigger.name);
+        zenith->CallEvent(Generated::LuaTriggerEventEnum::OnEnter, Generated::LuaTriggerEventDataOnEnter{
+            .triggerID = trigger.triggerID,
+            .playerID = entt::to_integral(playerEntity)
+        });
     }
-
-    void OnStay(Components::ProximityTrigger& trigger, entt::entity playerEntity)
+    void OnExit(World& world, Components::ProximityTrigger& trigger, entt::entity playerEntity)
     {
-        NC_LOG_INFO("Trigger '{}' stayed!", trigger.name);
+        Scripting::LuaManager* luaManager = ServiceLocator::GetLuaManager();
+        Scripting::Zenith* zenith = luaManager->GetZenithStateManager().Get(world.zenithKey);
+
+        zenith->CallEvent(Generated::LuaTriggerEventEnum::OnExit, Generated::LuaTriggerEventDataOnExit{
+            .triggerID = trigger.triggerID,
+            .playerID = entt::to_integral(playerEntity)
+        });
+    }
+    void OnStay(World& world, Components::ProximityTrigger& trigger, entt::entity playerEntity)
+    {
+        Scripting::LuaManager* luaManager = ServiceLocator::GetLuaManager();
+        Scripting::Zenith* zenith = luaManager->GetZenithStateManager().Get(world.zenithKey);
+
+        zenith->CallEvent(Generated::LuaTriggerEventEnum::OnStay, Generated::LuaTriggerEventDataOnStay{
+            .triggerID = trigger.triggerID,
+            .playerID = entt::to_integral(playerEntity)
+        });
     }
 }

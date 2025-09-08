@@ -3,6 +3,8 @@
 
 #include <Gameplay/GameDefine.h>
 
+#include <Network/Define.h>
+
 #include <entt/fwd.hpp>
 
 namespace ECS
@@ -41,4 +43,6 @@ namespace ECS::Util::Unit
 
     void TeleportToXYZ(World& world, Singletons::NetworkState& networkState, entt::entity entity, Components::ObjectInfo& objectInfo, Components::Transform& transform, Components::VisibilityInfo& visibilityInfo, const vec3& position, f32 orientation);
     bool TeleportToLocation(Singletons::WorldState& worldState, World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, entt::entity entity, Components::ObjectInfo& objectInfo, Components::Transform& transform, Components::VisibilityInfo& visibilityInfo, u32 mapID, const vec3& position, f32 orientation);
+
+    void SendChatMessage(World& world, Singletons::NetworkState& networkState, ::Network::SocketID socketID, const std::string& message);
 }

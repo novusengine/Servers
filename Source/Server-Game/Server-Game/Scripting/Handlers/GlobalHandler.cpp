@@ -1,30 +1,62 @@
 #include "GlobalHandler.h"
-#include "Server-Game/Application/EnttRegistries.h"
-#include "Server-Game/Scripting/LuaState.h"
-#include "Server-Game/Scripting/LuaManager.h"
-#include "Server-Game/Scripting/Systems/LuaSystemBase.h"
-#include "Server-Game/Util/ServiceLocator.h"
 
-#include <entt/entt.hpp>
-#include <lualib.h>
+#include <Base/CVarSystem/CVarSystem.h>
+
+#include <Meta/Generated/Server/LuaEvent.h>
+
+#include <Scripting/LuaManager.h>
 
 namespace Scripting
 {
-    /*static LuaMethod globalMethods[] =
+    void GlobalHandler::Register(Zenith* zenith)
     {
-    };*/
-
-    void GlobalHandler::Register(lua_State* state)
-    {
-        LuaManager* luaManager = ServiceLocator::GetLuaManager();
-        LuaState ctx(state);
-
-        ctx.CreateTableAndPopulate("Engine", [&]()
+        // Register Functions
         {
-            ctx.SetTable("Name", "NovusEngine");
-            ctx.SetTable("Version", vec3(0.0f, 0.0f, 1.0f));
-        });
+            LuaMethodTable::Set(zenith, GlobalHandlerGlobalMethods);
+        }
 
-        //LuaMethodTable::Set(state, globalMethods);
+        zenith->CreateTable("Engine");
+        zenith->AddTableField("Name", "NovusEngine");
+        zenith->AddTableField("Version", vec3(0.0f, 0.0f, 1.0f));
+        zenith->Pop();
+
+        zenith->AddGlobalField("STATE_GLOBAL_ID", std::numeric_limits<u16>().max());
+    }
+
+    void GlobalHandler::PostLoad(Zenith* zenith)
+    {
+        const char* motd = CVarSystem::Get()->GetStringCVar(CVarCategory::Client, "scriptingMotd");
+
+        zenith->CallEvent(Generated::LuaServerEventEnum::Loaded, Generated::LuaServerEventDataLoaded{
+            .motd = motd
+        });
+    }
+
+    i32 GlobalHandler::GetStateMapID(Zenith* zenith)
+    {
+        zenith->Push(zenith->key.GetMapID());
+        return 1;
+    }
+    i32 GlobalHandler::GetStateInstanceID(Zenith* zenith)
+    {
+        zenith->Push(zenith->key.GetInstanceID());
+        return 1;
+    }
+    i32 GlobalHandler::GetStateVariantID(Zenith* zenith)
+    {
+        zenith->Push(zenith->key.GetVariantID());
+        return 1;
+    }
+    i32 GlobalHandler::GetStateIDs(Zenith* zenith)
+    {
+        zenith->Push(zenith->key.GetMapID());
+        zenith->Push(zenith->key.GetInstanceID());
+        zenith->Push(zenith->key.GetVariantID());
+        return 3;
+    }
+    i32 GlobalHandler::IsStateGlobal(Zenith* zenith)
+    {
+        zenith->Push(zenith->key.IsGlobal());
+        return 1;
     }
 }

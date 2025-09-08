@@ -32,8 +32,7 @@
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
 #include "Server-Game/ECS/Util/Persistence/CharacterUtil.h"
 #include "Server-Game/ECS/Util/Persistence/ItemUtil.h"
-#include "Server-Game/Scripting/LuaManager.h"
-#include "Server-Game/Scripting/Handlers/PacketEventHandler.h"
+#include "Server-Game/Scripting/Util/NetworkUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
 #include <Server-Common/Database/DBController.h>
@@ -53,9 +52,12 @@
 
 #include <Network/Server.h>
 
+#include <Scripting/LuaManager.h>
+
 #include <entt/entt.hpp>
 
 #include <chrono>
+#include <format>
 
 namespace ECS::Systems
 {
@@ -183,7 +185,7 @@ namespace ECS::Systems
         return true;
     }
 
-    bool HandleOnCheatCreaureAdd(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatCreatureAdd(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         u32 creatureTemplateID = 0;
         if (!message.buffer->GetU32(creatureTemplateID))
@@ -198,22 +200,61 @@ namespace ECS::Systems
 
         auto& playerTransform = world.Get<Components::Transform>(entity);
 
-        entt::entity creaureEntity = world.CreateEntity();
-        world.EmplaceOrReplace<Events::CreatureCreate>(creaureEntity, creatureTemplateID, creatureTemplate->displayID, playerTransform.mapID, playerTransform.position, playerTransform.pitchYaw.y);
+        entt::entity creatureEntity = world.CreateEntity();
+        world.EmplaceOrReplace<Events::CreatureCreate>(creatureEntity, creatureTemplateID, creatureTemplate->displayID, playerTransform.mapID, playerTransform.position, playerTransform.pitchYaw.y);
 
         return true;
     }
-    bool HandleOnCheatCreaureRemove(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    bool HandleOnCheatCreatureRemove(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        ObjectGUID creaureGUID;
-        if (!message.buffer->Deserialize(creaureGUID))
+        ObjectGUID creatureGUID;
+        if (!message.buffer->Deserialize(creatureGUID))
             return false;
 
-        entt::entity creaureEntity = world.GetEntity(creaureGUID);
-        if (creaureEntity == entt::null)
+        entt::entity creatureEntity = world.GetEntity(creatureGUID);
+        if (creatureEntity == entt::null)
             return true;
 
-        world.EmplaceOrReplace<Events::CreatureNeedsDeinitialization>(creaureEntity, creaureGUID);
+        world.EmplaceOrReplace<Events::CreatureNeedsDeinitialization>(creatureEntity, creatureGUID);
+        return true;
+    }
+    bool HandleOnCheatCreatureInfo(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        ObjectGUID creatureGUID;
+        if (!message.buffer->Deserialize(creatureGUID))
+            return false;
+
+        entt::entity creatureEntity = world.GetEntity(creatureGUID);
+        if (creatureEntity == entt::null)
+            return true;
+
+        entt::registry::context& ctx = registry->ctx();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+
+        if (!world.AllOf<Components::CreatureInfo>(creatureEntity))
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Failed to get creature info, entity is not a creature");
+            return true;
+        }
+
+        auto& creatureInfo = world.Get<Components::CreatureInfo>(creatureEntity);
+
+        GameDefine::Database::CreatureTemplate* creatureTemplate = nullptr;
+        if (!Util::Cache::GetCreatureTemplateByID(gameCache, creatureInfo.templateID, creatureTemplate))
+            return true;
+
+        std::string response = std::format("Creature Info:\n- GUID : {}\n- TemplateID : {}\n- Name : {}\n- Display ID : {}\n- Mods : (Health : {}, Armor : {}, Resource : {})",
+            creatureGUID.ToString(),
+            creatureInfo.templateID,
+            creatureInfo.name,
+            creatureTemplate->displayID,
+            creatureTemplate->healthMod,
+            creatureTemplate->armorMod,
+            creatureTemplate->resourceMod);
+
+        Util::Unit::SendChatMessage(world, networkState, socketID, response);
+
         return true;
     }
 
@@ -342,7 +383,7 @@ namespace ECS::Systems
     }
     bool HandleOnCheatDemorph(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        auto& displayInfo = registry->get<Components::DisplayInfo>(entity);
+        auto& displayInfo = world.Get<Components::DisplayInfo>(entity);
 
         u32 nativeDisplayID = Util::Unit::GetDisplayIDFromRaceGender(displayInfo.unitRace, displayInfo.unitGender);
         Util::Unit::UpdateDisplayID(*world.registry, entity, displayInfo, nativeDisplayID);
@@ -809,14 +850,26 @@ namespace ECS::Systems
         std::string locationName = mapDefinition->name;
         StringUtils::ToLower(locationName);
         u32 locationNameHash = StringUtils::fnv1a_32(locationName.c_str(), locationName.length());
-        if (locationName.length() < 2 || locationName[0] == ' ' || !gameCache.mapTables.locationNameHashToID.contains(locationNameHash))
+
+        auto& transform = world.Get<Components::Transform>(entity);
+
+        vec3 position = transform.position;
+        f32 orientation = transform.pitchYaw.y;
+        if (gameCache.mapTables.locationNameHashToID.contains(locationNameHash))
         {
-            // Location is Invalid or Already Exists
-            return true;
+            u32 locationID = gameCache.mapTables.locationNameHashToID[locationNameHash];
+            const auto& location = gameCache.mapTables.locationIDToDefinition[locationID];
+
+            position = vec3(location.positionX, location.positionY, location.positionZ);
+            orientation = location.orientation;
         }
 
-        u32 locationID = gameCache.mapTables.locationNameHashToID[locationNameHash];
-        //Util::World::TeleportToLocation(*registry, world, entity, locationID);
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& worldState = ctx.get<Singletons::WorldState>();
+        auto& objectInfo = world.Get<Components::ObjectInfo>(entity);
+        auto& visibilityInfo = world.Get<Components::VisibilityInfo>(entity);
+
+        Util::Unit::TeleportToLocation(worldState, world, gameCache, networkState, entity, objectInfo, transform, visibilityInfo, mapID, position, orientation);
 
         return true;
     }
@@ -975,12 +1028,17 @@ namespace ECS::Systems
 
             case Generated::CheatCommandEnum::CreatureAdd:
             {
-                return HandleOnCheatCreaureAdd(registry, *world, socketID, entity, message);
+                return HandleOnCheatCreatureAdd(registry, *world, socketID, entity, message);
             }
 
             case Generated::CheatCommandEnum::CreatureRemove:
             {
-                return HandleOnCheatCreaureRemove(registry, *world, socketID, entity, message);
+                return HandleOnCheatCreatureRemove(registry, *world, socketID, entity, message);
+            }
+
+            case Generated::CheatCommandEnum::CreatureInfo:
+            {
+                return HandleOnCheatCreatureInfo(registry, *world, socketID, entity, message);
             }
 
             case Generated::CheatCommandEnum::Damage:
@@ -1612,8 +1670,9 @@ namespace ECS::Systems
         {
             moodycamel::ConcurrentQueue<Network::SocketMessageEvent>& messageEvents = networkState.server->GetMessageEvents();
             Scripting::LuaManager* luaManager = ServiceLocator::GetLuaManager();
-            auto* packetEventHandler = luaManager->GetLuaHandler<Scripting::PacketEventHandler>(Scripting::LuaHandlerType::PacketEvent);
-            bool hasOnReceivedListener = packetEventHandler->HasListeners(Scripting::LuaPacketEvent::OnReceive);
+
+            auto key = Scripting::ZenithInfoKey::MakeGlobal(0, 0);
+            Scripting::Zenith* zenith = luaManager->GetZenithStateManager().Get(key);
 
             Network::SocketMessageEvent messageEvent;
             while (messageEvents.try_dequeue(messageEvent))
@@ -1624,17 +1683,15 @@ namespace ECS::Systems
                 Network::MessageHeader messageHeader;
                 if (networkState.gameMessageRouter->GetMessageHeader(messageEvent.message, messageHeader))
                 {
-                    bool hasLuaHandlerForOpcode = packetEventHandler->HasGameOpcodeHandler(luaManager->GetInternalState(), messageHeader.opcode);
+                    bool hasLuaHandlerForOpcode = zenith && Scripting::Util::Network::HasPacketHandler(zenith, messageHeader.opcode);
                     if (hasLuaHandlerForOpcode)
                     {
                         u32 messageReadOffset = static_cast<u32>(messageEvent.message.buffer->readData);
-                        if (packetEventHandler->CallGameOpcodeHandler(luaManager->GetInternalState(), messageHeader, messageEvent.message))
+                        if (Scripting::Util::Network::CallPacketHandler(zenith, messageHeader, messageEvent.message))
                         {
                             if (!networkState.gameMessageRouter->HasValidHandlerForHeader(messageHeader))
                                 continue;
-
-                            messageEvent.message.buffer->readData = messageReadOffset;
-
+                        
                             if (networkState.gameMessageRouter->CallHandler(messageEvent.socketID, messageHeader, messageEvent.message))
                                 continue;
                         }

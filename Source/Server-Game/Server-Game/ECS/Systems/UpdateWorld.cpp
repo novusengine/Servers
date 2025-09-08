@@ -39,6 +39,8 @@
 
 #include <Network/Server.h>
 
+#include <Scripting/LuaManager.h>
+
 #include <entt/entt.hpp>
 
 namespace ECS::Systems
@@ -48,10 +50,10 @@ namespace ECS::Systems
         auto& worldState = registry.ctx().emplace<Singletons::WorldState>();
     }
 
-    void UpdateWorld::HandleMapInitialization(World& world, Singletons::GameCache& gameCache)
+    bool UpdateWorld::HandleMapInitialization(World& world, Singletons::GameCache& gameCache)
     {
         if (!world.ContainsSingleton<Events::MapNeedsInitialization>())
-            return;
+            return false;
 
         // Handle Map Initialization
         world.EmplaceSingleton<Singletons::ProximityTriggers>();
@@ -63,7 +65,7 @@ namespace ECS::Systems
         {
             databaseResult.for_each([&world, &gameCache](u64 id, u32 templateID, u32 displayID, u16 mapID, f32 posX, f32 posY, f32 posZ, f32 posO)
             {
-                entt::entity creaureEntity = world.CreateEntity();
+                entt::entity creatureEntity = world.CreateEntity();
 
                 Events::CreatureNeedsInitialization event =
                 {
@@ -75,7 +77,7 @@ namespace ECS::Systems
                     .orientation = posO
                 };
 
-                world.Emplace<Events::CreatureNeedsInitialization>(creaureEntity, event);
+                world.Emplace<Events::CreatureNeedsInitialization>(creatureEntity, event);
             });
         }
 
@@ -101,6 +103,9 @@ namespace ECS::Systems
             });
         }
 
+        Scripting::LuaManager* luaManager = ServiceLocator::GetLuaManager();
+        world.zenithKey = Scripting::ZenithInfoKey::Make(world.mapID, 0, 0);
+        luaManager->GetZenithStateManager().Add(world.zenithKey);
         // Stress Test - Spawn a bunch of creatures
         //for (u32 i = 0; i < 999; i++)
         //{
@@ -136,6 +141,7 @@ namespace ECS::Systems
         //}
         
         world.EraseSingleton<Events::MapNeedsInitialization>();
+        return true;
     }
 
     void UpdateWorld::HandleCreatureDeinitialization(World& world, Singletons::GameCache& gameCache)
@@ -145,12 +151,12 @@ namespace ECS::Systems
         auto view = world.View<Events::CreatureNeedsDeinitialization>();
         view.each([&](entt::entity entity, Events::CreatureNeedsDeinitialization& event)
         {
-            entt::entity creaureEntity = world.GetEntity(event.guid);
-            if (creaureEntity == entt::null)
+            entt::entity creatureEntity = world.GetEntity(event.guid);
+            if (creatureEntity == entt::null)
                 return;
 
             world.RemoveEntity(event.guid);
-            world.DestroyEntity(creaureEntity);
+            world.DestroyEntity(creatureEntity);
 
             auto transaction = databaseConn->NewTransaction();
             if (!Database::Util::Creature::CreatureDelete(transaction, event.guid.GetCounter()))
@@ -207,11 +213,11 @@ namespace ECS::Systems
             creatureInfo.templateID = event.templateID;
             creatureInfo.name = creatureTemplate->name;
 
-            auto& creaureTransform = world.Emplace<Components::Transform>(entity);
-            creaureTransform.mapID = event.mapID;
-            creaureTransform.position = event.position;
-            creaureTransform.pitchYaw = vec2(0.0f, event.orientation);
-            creaureTransform.scale = vec3(1.0f);
+            auto& creatureTransform = world.Emplace<Components::Transform>(entity);
+            creatureTransform.mapID = event.mapID;
+            creatureTransform.position = event.position;
+            creatureTransform.pitchYaw = vec2(0.0f, event.orientation);
+            creatureTransform.scale = vec3(1.0f);
 
             auto& visualItems = world.Emplace<Components::UnitVisualItems>(entity);
             auto& displayInfo = world.Emplace<Components::DisplayInfo>(entity);
@@ -220,12 +226,13 @@ namespace ECS::Systems
             Components::UnitStatsComponent& unitStats = Util::Unit::AddStatsComponent(*world.registry, entity);
             unitStats.baseHealth *= creatureTemplate->healthMod;
             unitStats.currentHealth *= creatureTemplate->healthMod;
+            unitStats.maxHealth *= creatureTemplate->healthMod;
 
             auto& visibilityInfo = world.Emplace<Components::VisibilityInfo>(entity);
             auto& visibilityUpdateInfo = world.Emplace<Components::VisibilityUpdateInfo>(entity);
             visibilityUpdateInfo.updateInterval = 0.5f;
 
-            world.AddEntity(objectInfo.guid, entity, vec2(creaureTransform.position.x, creaureTransform.position.z));
+            world.AddEntity(objectInfo.guid, entity, vec2(creatureTransform.position.x, creatureTransform.position.z));
         });
         world.Clear<Events::CreatureNeedsInitialization>();
     }
@@ -480,7 +487,7 @@ namespace ECS::Systems
                 auto view = world.View<Components::ProximityTrigger, Components::Transform, Components::AABB, Tags::ProximityTriggerIsClientSide>();
                 view.each([&](entt::entity entity, Components::ProximityTrigger& proximityTrigger, Components::Transform& transform, Components::AABB& aabb)
                 {
-                    failed |= Util::Network::AppendPacketToBuffer(buffer, Generated::ServerTriggerAddPacket{
+                    failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::ServerTriggerAddPacket{
                         .triggerID = proximityTrigger.triggerID,
 
                         .name = proximityTrigger.name,
@@ -536,7 +543,7 @@ namespace ECS::Systems
             {
                 if (isServerSideOnly && Util::ProximityTrigger::IsPlayerInTrigger(proximityTrigger, playerEntity))
                 {
-                    Util::ProximityTrigger::OnExit(proximityTrigger, playerEntity);
+                    Util::ProximityTrigger::OnExit(world, proximityTrigger, playerEntity);
                 }
 
                 Network::SocketID socketID;
@@ -659,7 +666,7 @@ namespace ECS::Systems
                 if (!world.ValidEntity(playerEntity))
                     continue;
 
-                Util::ProximityTrigger::OnEnter(proximityTrigger, playerEntity);
+                Util::ProximityTrigger::OnEnter(world, proximityTrigger, playerEntity);
             }
 
             proximityTrigger.playersEntered.clear();
@@ -682,19 +689,15 @@ namespace ECS::Systems
             {
                 entt::entity playerEntity = world.GetEntity(guid);
 
-                Network::SocketID socketID;
-                if (!Util::Network::GetSocketIDFromCharacterID(networkState, guid.GetCounter(), socketID))
-                    return true;
-
                 if (Util::ProximityTrigger::IsPlayerInTrigger(proximityTrigger, playerEntity))
                 {
-                    Util::ProximityTrigger::OnStay(proximityTrigger, playerEntity);
+                    Util::ProximityTrigger::OnStay(world, proximityTrigger, playerEntity);
                     playersToRemove.erase(playerEntity);
                 }
                 else
                 {
                     Util::ProximityTrigger::AddPlayerToTrigger(proximityTrigger, playerEntity);
-                    Util::ProximityTrigger::OnEnter(proximityTrigger, playerEntity);
+                    Util::ProximityTrigger::OnEnter(world, proximityTrigger, playerEntity);
                 }
 
                 return true;
@@ -707,7 +710,7 @@ namespace ECS::Systems
                     continue;
 
                 Util::ProximityTrigger::RemovePlayerFromTrigger(proximityTrigger, playerEntity);
-                Util::ProximityTrigger::OnExit(proximityTrigger, playerEntity);
+                Util::ProximityTrigger::OnExit(world, proximityTrigger, playerEntity);
             }
         });
     }
@@ -1278,7 +1281,8 @@ namespace ECS::Systems
             u32 mapID = itr.first;
             World& world = itr.second;
             
-            HandleMapInitialization(world, gameCache);
+            if (HandleMapInitialization(world, gameCache))
+                continue;
         
             HandleCharacterDeinitialization(worldState, world, gameCache, networkState);
             HandleCharacterInitialization(world, gameCache, networkState);

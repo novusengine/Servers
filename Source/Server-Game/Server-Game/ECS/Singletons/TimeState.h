@@ -10,6 +10,8 @@ namespace ECS
         public:
             f32 deltaTime = 0.0f;
             u64 epochAtFrameStart = 0;
+
+            u64 tickCount = 0;
         };
     }
 }

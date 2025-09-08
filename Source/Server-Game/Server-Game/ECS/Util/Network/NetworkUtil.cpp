@@ -6,6 +6,7 @@
 #include <Network/Server.h>
 
 #include <entt/entt.hpp>
+#include "NetworkUtil.h"
 
 namespace ECS::Util::Network
 {

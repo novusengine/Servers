@@ -7,6 +7,8 @@
 
 #include <Network/Define.h>
 
+#include <Scripting/Zenith.h>
+
 #include <memory>
 
 #include <entt/entt.hpp>
@@ -206,11 +208,12 @@ namespace ECS
         [[nodiscard]] bool ContainsSingleton(const entt::id_type id = entt::type_id<Type>().hash()) const { return registry->ctx().contains<Type>(id); }
 
     public:
-        static constexpr f32 DEFAULT_VISIBILITY_DISTANCE = 80.0f;
+        static constexpr f32 DEFAULT_VISIBILITY_DISTANCE = 150.0f;
 
         entt::registry* registry;
 
         u32 mapID;
+        Scripting::ZenithInfoKey zenithKey;
         WorldVisData playerVisData;
         WorldVisData creatureVisData;
 

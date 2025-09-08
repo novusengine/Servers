@@ -35,7 +35,7 @@ namespace ECS::Util::ProximityTrigger
     bool AddPlayerToTriggerEntered(World& world, Components::ProximityTrigger& proximityTrigger, entt::entity triggerEntity, entt::entity playerEntity);
     bool RemovePlayerFromTriggerEntered(Components::ProximityTrigger& proximityTrigger, entt::entity playerEntity);
 
-    void OnEnter(Components::ProximityTrigger& trigger, entt::entity playerEntity);
-    void OnStay(Components::ProximityTrigger& trigger, entt::entity playerEntity);
-    void OnExit(Components::ProximityTrigger& trigger, entt::entity playerEntity);
+    void OnEnter(World& world, Components::ProximityTrigger& trigger, entt::entity playerEntity);
+    void OnStay(World& world, Components::ProximityTrigger& trigger, entt::entity playerEntity);
+    void OnExit(World& world, Components::ProximityTrigger& trigger, entt::entity playerEntity);
 }

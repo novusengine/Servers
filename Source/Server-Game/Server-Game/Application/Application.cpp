@@ -1,7 +1,9 @@
 #include "Application.h"
 #include "Server-Game/ECS/Scheduler.h"
 #include "Server-Game/ECS/Singletons/TimeState.h"
-#include "Server-Game/Scripting/LuaManager.h"
+#include "Server-Game/Scripting/Handlers/GlobalHandler.h"
+#include "Server-Game/Scripting/Handlers/EventHandler.h"
+#include "Server-Game/Scripting/Handlers/PacketHandler.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
 #include <Base/Types.h>
@@ -11,6 +13,11 @@
 #include <Base/Util/Timer.h>
 #include <Base/Util/JsonUtils.h>
 #include <Base/Util/DebugHandler.h>
+
+#include <Meta/Generated/Server/LuaEnum.h>
+
+#include <Scripting/LuaManager.h>
+#include <Scripting/Zenith.h>
 
 //#include <tracy/Tracy.hpp>
 #include <enkiTS/TaskScheduler.h>
@@ -81,7 +88,8 @@ void Application::Run()
             timer.Tick();
 
             timeState.deltaTime = deltaTime;
-            timeState.epochAtFrameStart = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();;
+            timeState.epochAtFrameStart = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+            timeState.tickCount++;
 
             if (!Tick(deltaTime))
                 break;
@@ -138,9 +146,21 @@ bool Application::Init()
     _ecsScheduler = new ECS::Scheduler();
     _ecsScheduler->Init(*_registries.gameRegistry);
 
-    _luaManager = new Scripting::LuaManager();
-    ServiceLocator::SetLuaManager(_luaManager);
-    _luaManager->Init();
+    // Init Lua Manager
+    {
+        _luaManager = new Scripting::LuaManager();
+        ServiceLocator::SetLuaManager(_luaManager);
+
+        _luaManager->PrepareToAddLuaHandlers((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Count);
+        _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Global, new Scripting::GlobalHandler());
+        _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Event, new Scripting::EventHandler());
+        _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Message, new Scripting::PacketHandler());
+
+        auto globalKey = Scripting::ZenithInfoKey::MakeGlobal(0, 0);
+        _luaManager->GetZenithStateManager().Add(globalKey);
+
+        _luaManager->Init();
+    }
 
     return true;
 }
@@ -171,7 +191,10 @@ bool Application::Tick(f32 deltaTime)
 
             case MessageInbound::Type::DoString:
             {
-                if (!ServiceLocator::GetLuaManager()->DoString(message.data))
+                auto key = Scripting::ZenithInfoKey::MakeGlobal(0, 0);
+                Scripting::Zenith* zenith = _luaManager->GetZenithStateManager().Get(key);
+
+                if (!zenith || !_luaManager->DoString(zenith, message.data))
                 {
                     NC_LOG_ERROR("Failed to run Lua DoString");
                 }

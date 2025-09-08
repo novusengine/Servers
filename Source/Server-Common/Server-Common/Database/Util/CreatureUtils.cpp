@@ -58,7 +58,7 @@ namespace Database::Util::Creature
 
             creatureTables.templateIDToDefinition.reserve(numRows);
 
-            nonTransaction.for_stream("SELECT * FROM public.creature_templates", [&creatureTables](u32 id, u32 flags, const std::string& name, const std::string& subname, u32 displayID, u16 minLevel, u16 maxLevel, f32 scale, f32 armorMod, f32 healthMod, f32 resourceMod, f32 damageMod)
+            nonTransaction.for_stream("SELECT * FROM public.creature_templates", [&creatureTables](u32 id, u32 flags, const std::string& name, const std::string& subname, u32 displayID, f32 scale, u16 minLevel, u16 maxLevel, f32 armorMod, f32 healthMod, f32 resourceMod, f32 damageMod)
             {
                 auto& templateData = creatureTables.templateIDToDefinition[id];
 

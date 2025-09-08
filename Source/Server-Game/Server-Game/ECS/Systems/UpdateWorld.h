@@ -22,7 +22,7 @@ namespace ECS
             static void Update(entt::registry& registry, f32 deltaTime);
 
         private:
-            static void HandleMapInitialization(World& world, Singletons::GameCache& gameCache);
+            static bool HandleMapInitialization(World& world, Singletons::GameCache& gameCache);
             static void HandleCreatureDeinitialization(World& world, Singletons::GameCache& gameCache);
             static void HandleCreatureInitialization(World& world, Singletons::GameCache& gameCache);
 

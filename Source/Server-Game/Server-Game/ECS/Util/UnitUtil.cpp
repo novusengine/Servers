@@ -184,4 +184,12 @@ namespace ECS::Util::Unit
 
         return true;
     }
+
+    void SendChatMessage(World& world, Singletons::NetworkState& networkState, ::Network::SocketID socketID, const std::string& message)
+    {
+        ECS::Util::Network::SendPacket(networkState, socketID, Generated::ServerSendChatMessagePacket{
+            .guid = ObjectGUID::Empty,
+            .message = message
+        });
+    }
 }
