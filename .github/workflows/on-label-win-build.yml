@@ -8,6 +8,6 @@ on:
 jobs:
   call-windows-build:
     if: ${{ github.event.label.name == 'build-win' }}
-    uses: novusengine/Workflows/.github/workflows/linux-build.yml@master
+    uses: novusengine/Workflows/.github/workflows/win-build.yml@master
     with:
       project: Servers
