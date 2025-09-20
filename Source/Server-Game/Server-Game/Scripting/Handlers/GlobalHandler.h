@@ -21,6 +21,7 @@ namespace Scripting
         static i32 GetStateVariantID(Zenith* zenith);
         static i32 GetStateIDs(Zenith* zenith);
         static i32 IsStateGlobal(Zenith* zenith);
+        static i32 RegisterCreatureAIScript(Zenith* zenith);
     };
 
     static LuaRegister<> GlobalHandlerGlobalMethods[] =
@@ -30,5 +31,7 @@ namespace Scripting
         { "GetStateVariantID", GlobalHandler::GetStateVariantID },
         { "GetStateIDs", GlobalHandler::GetStateIDs },
         { "IsStateGlobal", GlobalHandler::IsStateGlobal },
+
+        { "RegisterCreatureAIScript", GlobalHandler::RegisterCreatureAIScript }
     };
 }

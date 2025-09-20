@@ -9,7 +9,7 @@ namespace Scripting::Util::Network
 {
     bool HasPacketHandler(Zenith* zenith, ::Network::OpcodeType opcode)
     {
-        bool hasEventCallback = zenith->HasEventCallbackRaw(Generated::PacketListEnumMeta::EnumID, opcode);
+        bool hasEventCallback = zenith->HasEventCallbackRaw(Generated::PacketListEnumMeta::EnumID, opcode, 0);
         return hasEventCallback;
     }
 
@@ -33,6 +33,14 @@ namespace Scripting::Util::Network
         if (eventState.eventDataID != eventDataID)
             return false;
 
+        auto itr = eventState.eventVariantToFuncRef.find(0);
+        if (itr == eventState.eventVariantToFuncRef.end())
+            return false;
+
+        auto& funcRefList = itr->second;
+        if (funcRefList.empty())
+            return false;
+
         bool result = true;
         u32 bufferReadPos = static_cast<u32>(message.buffer->readData);
         u32 packedEventID = static_cast<u32>(eventTypeVal) | (static_cast<u32>(eventTypeID) << 16);
@@ -47,7 +55,7 @@ namespace Scripting::Util::Network
         Scripting::Network::Packet::Create(zenith, header, message.buffer, bufferReadPos);
         zenith->SetTableKey("packet");
 
-        result = zenith->CallAllFunctionsBool(eventState.FuncRefList, numParametersToPush);
+        result = zenith->CallAllFunctionsBool(funcRefList, numParametersToPush);
         message.buffer->readData = bufferReadPos;
 
         return result;

@@ -352,4 +352,11 @@ namespace Database
         robin_hood::unordered_map<u32, GameDefine::Database::MapLocation> locationIDToDefinition;
         robin_hood::unordered_map<u32, u32> locationNameHashToID;
     };
+
+    struct SpellTables
+    {
+    public:
+        robin_hood::unordered_map<u32, GameDefine::Database::Spell> idToDefinition;
+        robin_hood::unordered_map<u32, std::vector<GameDefine::Database::SpellEffect>> spellIDToEffects;
+    };
 }

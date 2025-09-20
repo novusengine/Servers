@@ -11,6 +11,7 @@
 #include <Server-Common/Database/Util/MapUtils.h>
 #include <Server-Common/Database/Util/PermissionUtils.h>
 #include <Server-Common/Database/Util/ProximityTriggerUtils.h>
+#include <Server-Common/Database/Util/SpellUtils.h>
 
 #include <Base/Util/DebugHandler.h>
 #include <Base/Util/JsonUtils.h>
@@ -72,6 +73,7 @@ namespace ECS::Systems
             Database::Util::Map::Loading::InitMapTablesPreparedStatements(characterConnection);
             Database::Util::Permission::Loading::InitPermissionTablesPreparedStatements(characterConnection);
             Database::Util::Currency::Loading::InitCurrencyTablesPreparedStatements(characterConnection);
+            Database::Util::Spell::Loading::InitSpellTablesPreparedStatements(characterConnection);
             Database::Util::Item::Loading::InitItemTablesPreparedStatements(characterConnection);
             Database::Util::Character::Loading::InitCharacterTablesPreparedStatements(characterConnection);
             Database::Util::Creature::Loading::InitCreatureTablesPreparedStatements(characterConnection);
@@ -80,9 +82,16 @@ namespace ECS::Systems
             Database::Util::Map::Loading::LoadMapTables(characterConnection, gameCache.mapTables);
             Database::Util::Permission::Loading::LoadPermissionTables(characterConnection, gameCache.permissionTables);
             Database::Util::Currency::Loading::LoadCurrencyTables(characterConnection, gameCache.currencyTables);
+            Database::Util::Spell::Loading::LoadSpellTables(characterConnection, gameCache.spellTables);
             Database::Util::Item::Loading::LoadItemTables(characterConnection, gameCache.itemTables);
             Database::Util::Character::Loading::LoadCharacterTables(characterConnection, gameCache.characterTables, gameCache.itemTables);
             Database::Util::Creature::Loading::LoadCreatureTables(characterConnection, gameCache.creatureTables);
+        }
+
+        // Fix Sequence Keys in Public Scehma
+        {
+            pqxx::nontransaction nonTransaction = characterConnection->NewNonTransaction();
+            nonTransaction.exec("SELECT fix_all_sequences('public')");
         }
     }
 

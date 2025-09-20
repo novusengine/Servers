@@ -270,9 +270,12 @@ Solution.Util.CreateProject = function(name, projectType, binDir, dependencies, 
     end
 
     local isMSVC = BuildSettings:Get("Using MSVC")
+    if isMSVC then
+        buildoptions { "/bigobj" }
+    end
+
     local multithreadedCompilation = BuildSettings:Get("Multithreaded Compilation")
     local multithreadedCoreCount = BuildSettings:Get("Multithreaded Core Count")
-
     if multithreadedCompilation then
         if isMSVC then
             local cores = multithreadedCoreCount or 0

@@ -1,9 +1,14 @@
 #include "Application.h"
 #include "Server-Game/ECS/Scheduler.h"
 #include "Server-Game/ECS/Singletons/TimeState.h"
-#include "Server-Game/Scripting/Handlers/GlobalHandler.h"
+#include "Server-Game/Scripting/Handlers/CharacterHandler.h"
+#include "Server-Game/Scripting/Handlers/CreatureHandler.h"
 #include "Server-Game/Scripting/Handlers/EventHandler.h"
+#include "Server-Game/Scripting/Handlers/GlobalHandler.h"
+#include "Server-Game/Scripting/Handlers/ItemHandler.h"
 #include "Server-Game/Scripting/Handlers/PacketHandler.h"
+#include "Server-Game/Scripting/Handlers/SpellHandler.h"
+#include "Server-Game/Scripting/Handlers/UnitHandler.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
 #include <Base/Types.h>
@@ -155,6 +160,11 @@ bool Application::Init()
         _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Global, new Scripting::GlobalHandler());
         _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Event, new Scripting::EventHandler());
         _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Message, new Scripting::PacketHandler());
+        _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Unit, new Scripting::UnitHandler());
+        _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Character, new Scripting::CharacterHandler());
+        _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Creature, new Scripting::CreatureHandler());
+        _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Spell, new Scripting::SpellHandler());
+        _luaManager->SetLuaHandler((Scripting::LuaHandlerID)Generated::LuaHandlerTypeEnum::Item, new Scripting::ItemHandler());
 
         auto globalKey = Scripting::ZenithInfoKey::MakeGlobal(0, 0);
         _luaManager->GetZenithStateManager().Add(globalKey);

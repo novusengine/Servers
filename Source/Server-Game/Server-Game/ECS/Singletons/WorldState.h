@@ -94,7 +94,7 @@ namespace ECS
         entt::entity GetEntity(ObjectGUID guid)
         {
             auto it = _typeToVisData.find(guid.GetType());
-            if (it == _typeToVisData.end())
+            if (it == _typeToVisData.end() || !guid.IsValid())
                 return entt::null;
 
             WorldVisData& visData = *it->second;
@@ -103,7 +103,7 @@ namespace ECS
         bool HasEntity(ObjectGUID guid)
         {
             auto it = _typeToVisData.find(guid.GetType());
-            if (it == _typeToVisData.end())
+            if (it == _typeToVisData.end() || !guid.IsValid())
                 return false;
 
             WorldVisData& visData = *it->second;
@@ -112,7 +112,7 @@ namespace ECS
         void AddEntity(ObjectGUID guid, entt::entity entity, vec2 position)
         {
             auto it = _typeToVisData.find(guid.GetType());
-            if (it == _typeToVisData.end())
+            if (it == _typeToVisData.end() || !guid.IsValid())
                 return;
 
             WorldVisData& visData = *it->second;
@@ -121,7 +121,7 @@ namespace ECS
         void RemoveEntity(ObjectGUID guid)
         {
             auto it = _typeToVisData.find(guid.GetType());
-            if (it == _typeToVisData.end())
+            if (it == _typeToVisData.end() || !guid.IsValid())
                 return;
 
             WorldVisData& visData = *it->second;
@@ -155,6 +155,9 @@ namespace ECS
 
         template<typename... Type>
         [[nodiscard]] decltype(auto) Get(const entt::entity entt) { return registry->get<Type...>(entt); }
+
+        template<typename Type, typename... Args>
+        [[nodiscard]] decltype(auto) GetOrEmplace(const entt::entity entt, Args&&... args) { return registry->get_or_emplace<Type>(entt, std::forward<Args>(args)...); }
 
         template<typename... Type>
         [[nodiscard]] decltype(auto) TryGet(const entt::entity entt) { return registry->try_get<Type...>(entt); }

@@ -3,6 +3,8 @@
 
 #include <Gameplay/GameDefine.h>
 
+#include <Meta/Generated/Shared/UnitEnum.h>
+
 #include <Network/Define.h>
 
 #include <entt/fwd.hpp>
@@ -11,11 +13,19 @@ namespace ECS
 {
     struct World;
 
+    struct UnitPower;
+    struct UnitResistance;
+    struct UnitStat;
+
     namespace Components
     {
-        struct ObjectInfo;
         struct DisplayInfo;
+        struct ObjectInfo;
         struct Transform;
+        struct UnitCombatInfo;
+        struct UnitPowersComponent;
+        struct UnitResistancesComponent;
+        struct UnitSpellCooldownHistory;
         struct UnitStatsComponent;
         struct VisibilityInfo;
     }
@@ -36,7 +46,9 @@ namespace ECS::Util::Unit
     void UpdateDisplayRace(entt::registry& registry, entt::entity entity, Components::DisplayInfo& displayInfo, GameDefine::UnitRace race, bool forceDirty = true);
     void UpdateDisplayGender(entt::registry& registry, entt::entity entity, Components::DisplayInfo& displayInfo, GameDefine::UnitGender gender, bool forceDirty = true);
 
-    ECS::Components::UnitStatsComponent& AddStatsComponent(entt::registry& registry, entt::entity entity);
+    ECS::Components::UnitPowersComponent& AddPowersComponent(World& world, entt::entity entity);
+    ECS::Components::UnitResistancesComponent& AddResistancesComponent(World& world, entt::entity entity);
+    ECS::Components::UnitStatsComponent& AddStatsComponent(World& world, entt::entity entity);
 
     f32 HandleRageRegen(f32 current, f32 rateModifier, f32 deltaTime);
     f32 HandleEnergyRegen(f32 current, f32 max, f32 rateModifier, f32 deltaTime);
@@ -45,4 +57,21 @@ namespace ECS::Util::Unit
     bool TeleportToLocation(Singletons::WorldState& worldState, World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, entt::entity entity, Components::ObjectInfo& objectInfo, Components::Transform& transform, Components::VisibilityInfo& visibilityInfo, u32 mapID, const vec3& position, f32 orientation);
 
     void SendChatMessage(World& world, Singletons::NetworkState& networkState, ::Network::SocketID socketID, const std::string& message);
+
+    bool HasSpellCooldown(Components::UnitSpellCooldownHistory& unitSpellCooldownHistory, u32 spellID);
+    f32 GetSpellCooldownRemaining(Components::UnitSpellCooldownHistory& unitSpellCooldownHistory, u32 spellID);
+    void SetSpellCooldown(Components::UnitSpellCooldownHistory& unitSpellCooldownHistory, u32 spellID, f32 cooldown);
+
+    bool HasPower(const Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType);
+    UnitPower& GetPower(Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType);
+    bool AddPower(World& world, entt::entity entity, Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType, f64 base, f64 current, f64 max);
+    bool SetPower(World& world, entt::entity entity, Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType, f64 base, f64 current, f64 max);
+
+    bool HasResistance(const Components::UnitResistancesComponent& unitResistancesComponent, Generated::ResistanceTypeEnum resistanceType);
+    UnitResistance& GetResistance(Components::UnitResistancesComponent& unitResistancesComponent, Generated::ResistanceTypeEnum resistanceType);
+    bool AddResistance(Components::UnitResistancesComponent& unitResistancesComponent, Generated::ResistanceTypeEnum resistanceType, f64 base, f64 current, f64 max);
+
+    bool HasStat(const Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType);
+    UnitStat& GetStat(Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType);
+    bool AddStat(Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType, f64 base, f64 current);
 }

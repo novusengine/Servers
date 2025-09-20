@@ -79,6 +79,11 @@ namespace ECS::Util::Cache
         bool exists = cache.itemTables.templateIDToTemplateDefinition.contains(itemID);
         return exists;
     }
+    bool ItemWeaponTemplateExistsByID(Singletons::GameCache& cache, u32 weaponTemplateID)
+    {
+        bool exists = cache.itemTables.weaponTemplateIDToTemplateDefinition.contains(weaponTemplateID);
+        return exists;
+    }
     bool ItemInstanceExistsByID(Singletons::GameCache& cache, u64 itemInstanceID)
     {
         bool exists = cache.itemTables.itemInstanceIDToDefinition.contains(itemInstanceID);
@@ -90,6 +95,14 @@ namespace ECS::Util::Cache
             return false;
 
         itemTemplate = &cache.itemTables.templateIDToTemplateDefinition[itemID];
+        return true;
+    }
+    bool GetItemWeaponTemplateByID(Singletons::GameCache& cache, u32 weaponTemplateID, GameDefine::Database::ItemWeaponTemplate*& itemWeaponTemplate)
+    {
+        if (!ItemWeaponTemplateExistsByID(cache, weaponTemplateID))
+            return false;
+
+        itemWeaponTemplate = &cache.itemTables.weaponTemplateIDToTemplateDefinition[weaponTemplateID];
         return true;
     }
     bool GetItemInstanceByID(Singletons::GameCache& cache, u64 itemInstanceID, Database::ItemInstance*& itemInstance)
@@ -142,6 +155,61 @@ namespace ECS::Util::Cache
             return false;
 
         map = &cache.mapTables.idToDefinition[mapID];
+        return true;
+    }
+
+    bool LocationExistsByID(Singletons::GameCache& cache, u32 locationID)
+    {
+        bool exists = cache.mapTables.locationIDToDefinition.contains(locationID);
+        return exists;
+    }
+    bool LocationExistsByHash(Singletons::GameCache& cache, u32 locationHash)
+    {
+        bool exists = cache.mapTables.locationNameHashToID.contains(locationHash);
+        return exists;
+    }
+    bool GetLocationByID(Singletons::GameCache& cache, u32 locationID, GameDefine::Database::MapLocation*& location)
+    {
+        if (!LocationExistsByID(cache, locationID))
+            return false;
+
+        location = &cache.mapTables.locationIDToDefinition[locationID];
+        return true;
+    }
+    bool GetLocationByHash(Singletons::GameCache& cache, u32 locationHash, GameDefine::Database::MapLocation*& location)
+    {
+        if (!LocationExistsByHash(cache, locationHash))
+            return false;
+
+        u32 locationID = cache.mapTables.locationNameHashToID[locationHash];
+        return GetLocationByID(cache, locationID, location);
+    }
+
+    bool SpellExistsByID(Singletons::GameCache& cache, u32 spellID)
+    {
+        bool exists = cache.spellTables.idToDefinition.contains(spellID);
+        return exists;
+    }
+
+    bool GetSpellByID(Singletons::GameCache& cache, u32 spellID, GameDefine::Database::Spell*& spell)
+    {
+        if (!SpellExistsByID(cache, spellID))
+            return false;
+
+        spell = &cache.spellTables.idToDefinition[spellID];
+        return true;
+    }
+    bool GetSpellEffectsBySpellID(Singletons::GameCache& cache, u32 spellID, std::vector<GameDefine::Database::SpellEffect>*& spellEffectList)
+    {
+        spellEffectList = nullptr;
+
+        if (!SpellExistsByID(cache, spellID))
+            return false;
+
+        if (!cache.spellTables.spellIDToEffects.contains(spellID))
+            return false;
+
+        spellEffectList = &cache.spellTables.spellIDToEffects[spellID];
         return true;
     }
 }

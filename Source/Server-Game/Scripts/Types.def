@@ -1,35 +1,186 @@
-declare class point
-    x : number
-end
-
-declare class vec2 extends point
-    y : number
-end
-
-declare class vec3 extends vec2
-    z : number
-end
-
-declare class vec4 extends vec3
-    w : number
-end
-
-declare Engine :
-{
-    Name : string,
+declare class Engine
+    Name : string
     Version : vector
-}
+end
+declare Engine : Engine
 
-type PacketEvent =
-{
-    Invalid     : number,
-    OnReceived  : number,
-    Count       : number
-};
-declare PacketEvent : PacketEvent
+declare class ServerEvent
+    Invalid : number
+    Loaded  : number
+    Updated : number
+    Count   : number
+end
+declare ServerEvent : ServerEvent
+
+declare class CharacterEvent
+    Invalid         : number
+    OnLogin         : number
+    OnLogout        : number
+    OnWorldChanged  : number
+    Count           : number
+end
+declare CharacterEvent : CharacterEvent
+
+declare class CharacterEventDataOnLogin
+    character : Character
+end
+declare class CharacterEventDataOnLogout
+    character : Character
+end
+declare class CharacterEventDataOnWorldChanged
+    character : Character
+end
+
+declare class TriggerEvent
+    Invalid : number
+    OnEnter : number
+    OnExit  : number
+    OnStay  : number
+    Count   : number
+end
+declare TriggerEvent : TriggerEvent
+
+declare class SpellEvent
+    Invalid         : number
+    OnPrepare       : number
+    OnHandleEffect  : number
+    Count           : number
+end
+declare SpellEvent : SpellEvent
+
+declare class SpellEventDataOnPrepare
+    caster : Unit
+    spell  : Spell
+end
+declare class SpellEventDataOnHandleEffect
+    caster : Unit
+    spell  : Spell
+    effect : SpellEffect
+end
+
+declare class SpellEffectType
+    Invalid      : number
+    WeaponDamage : number
+    Count        : number
+end
+declare SpellEffectType : SpellEffectType
+
+declare class CreatureAIEvent
+    Invalid       : number
+    OnInit        : number
+    OnDeinit      : number
+    OnEnterCombat : number
+    OnLeaveCombat : number
+    OnUpdate      : number
+    OnResurrect   : number
+    OnDied        : number
+    Count         : number
+end
+declare CreatureAIEvent : CreatureAIEvent
+
+declare class CreatureAIEventDataOnInit
+    unit : Unit
+    scriptNameHash : number
+end
+declare class CreatureAIEventDataOnDeinit
+    unit : Unit
+end
+declare class CreatureAIEventDataOnEnterCombat
+    unit : Unit
+end
+declare class CreatureAIEventDataOnLeaveCombat
+    unit : Unit
+end
+declare class CreatureAIEventDataOnUpdate
+    unit : Unit
+    deltaTime : number
+end
+declare class CreatureAIEventDataOnResurrect
+    unit : Unit
+    resurrector : Unit?
+end
+declare class CreatureAIEventDataOnDied
+    unit : Unit
+    killer : Unit?
+end
+
+declare class ItemEquipSlot
+    Invalid   : number
+    Helm      : number
+    Necklace  : number
+    Shoulders : number
+    Cloak     : number
+    Chest     : number
+    Shirt     : number
+    Tabard    : number
+    Bracers   : number
+    Gloves    : number
+    Belt      : number
+    Pants     : number
+    Boots     : number
+    Ring2     : number
+    Ring1     : number
+    Trinket1  : number
+    Trinket2  : number
+    MainHand  : number
+    OffHand   : number
+    Ranged    : number
+    MainBag   : number
+    Bag1      : number
+    Bag2      : number
+    Bag3      : number
+    Bag4      : number
+    Count     : number
+end
+declare ItemEquipSlot : ItemEquipSlot
+
+declare class PacketList
+    Invalid                      : number
+    Connect                      : number
+    ConnectResult                : number
+    Ping                         : number
+    Pong                         : number
+    ServerUpdateStats            : number
+    SendCheatCommand             : number
+    CheatCommandResult           : number
+    UnitAdd                      : number
+    UnitRemove                   : number
+    UnitDisplayInfoUpdate        : number
+    UnitResourcesUpdate          : number
+    ClientUnitTargetUpdate       : number
+    ServerUnitTargetUpdate       : number
+    UnitCastSpell                : number
+    UnitSetMover                 : number
+    ClientUnitMove               : number
+    ServerUnitMove               : number
+    UnitMoveStop                 : number
+    ItemAdd                      : number
+    ContainerAdd                 : number
+    ContainerAddToSlot           : number
+    ContainerRemoveFromSlot      : number
+    ClientContainerSwapSlots     : number
+    ServerContainerSwapSlots     : number
+    ClientSpellCast              : number
+    ServerSpellCastResult        : number
+    SendCombatEvent              : number
+    ClientSendChatMessage        : number
+    ServerSendChatMessage        : number
+    ServerUnitEquippedItemUpdate : number
+    ServerUnitVisualItemUpdate   : number
+    ServerWorldTransfer          : number
+    ServerLoadMap                : number
+    ServerUnitTeleport           : number
+    ClientTriggerEnter           : number
+    ServerTriggerAdd             : number
+    ServerTriggerRemove          : number
+    Count                        : number
+end
+declare PacketList : PacketList
+
+type Event = ServerEvent | CharacterEvent | TriggerEvent | SpellEvent | CreatureAIEvent | PacketList
 
 declare class Packet
-    function GetOpcode(self) : GameOpcode
+    function GetOpcode(self) : number
     function GetSize(self) : number
 
     function GetI8(self) : number
@@ -49,5 +200,101 @@ declare class Packet
     function GetBytes(self, numBytes : number) : { number }
 end
 
-declare function RegisterPacketHandler(event : PacketEvent, gameOpcode : GameOpcode, callback : ((gameOpcode : GameOpcode, size : number, packet : Packet) -> boolean)) : ()
-declare function RegisterPacketEvent(event : PacketEvent, callback : ((event : PacketEvent, ...any) -> boolean)) : ()
+declare class Unit
+    function GetID(self) : number
+    function ToCharacter(self) : Character?
+        
+    function IsAlive(self) : boolean
+    function GetHealth(self) : (number, number, number)
+    
+    function Kill(self) : ()
+    function Resurrect(self) : ()
+    function DealDamage(self, amount : number) : number
+    function DealDamageTo(self, target : Unit, amount : number) : number
+    function Heal(self, amount : number) : number
+    function HealTo(self, target : Unit, amount : number) : number
+
+    function TeleportToLocation(self, locationName : string) : boolean
+    function TeleportToMap(self, mapID : number) : boolean
+    function TeleportToXYZ(self, mapID : number, x : number, y : number, z : number, orientation : number?) : boolean
+
+    function HasSpellCooldown(self, spellID : number) : boolean
+    function GetSpellCooldown(self, spellID : number) : number
+    function SetSpellCooldown(self, spellID : number, duration : number) : ()
+end
+
+declare class Character extends Unit
+    function GetEquippedItem(self, slot : number) : Item?
+end
+
+declare class Spell
+    function GetID(self) : number
+    function GetEffect(self, effectIndex : number) : SpellEffect?
+
+    function GetCaster(self) : Unit?
+    function GetTarget(self) : Unit?
+
+    function GetCastTime(self) : number
+    function GetTimeToCast(self) : number
+
+    function Damage(self, amount : number) : number
+    function Heal(self, amount : number) : number
+end
+
+declare class SpellEffect
+    function GetIndex(self) : number
+    function GetType(self) : number
+
+    function GetValues(self) : (number, number, number)
+    function SetValue(self, valueIndex : number, value : number) : ()
+
+    function GetMiscValues(self) : (number, number, number)
+    function SetMiscValue(self, miscValueIndex : number, miscValue : number) : ()
+end
+
+declare class ItemTemplate
+    function GetID(self) : number
+    function GetDisplayID(self) : number
+    function GetBind(self) : number
+    function GetRarity(self) : number
+    function GetCategory(self) : number
+    function GetType(self) : number
+    function GetVirtualLevel(self) : number
+    function GetRequiredLevel(self) : number
+    function GetDurability(self) : number
+
+    function GetIconID(self) : number
+    function GetName(self) : string
+    function GetDescription(self) : string
+
+    function GetArmor(self) : number
+    function GetStatTemplateID(self) : number
+    function GetArmorTemplateID(self) : number
+    function GetWeaponTemplateID(self) : number
+    function GetShieldTemplateID(self) : number
+
+    function GetWeaponTemplate(self) : ItemWeaponTemplate
+end
+
+declare class ItemWeaponTemplate
+    function GetID(self) : number
+    function GetWeaponStyle(self) : number
+    function GetDamageRange(self) : (number, number)
+    function GetSpeed(self) : number
+end
+
+declare class Item
+    function GetID(self) : number
+    function GetTemplateID(self) : number
+    function GetTemplate(self) : ItemTemplate?
+end
+
+declare function RegisterEvent(eventID : Event, callback : ((eventID : Event, ...any) -> ())) : ()
+declare function RegisterEvent(eventID : Event, variantID : number, callback : ((eventID : Event, ...any) -> ())) : ()
+declare function RegisterCreatureAIScript(scriptName : string) : number?
+
+declare function GetStateMapID() : number
+declare function GetStateInstanceID() : number
+declare function GetStateVariantID() : number
+declare function GetStateIDs() : (number, number, number)
+declare function IsStateGlobal() : boolean

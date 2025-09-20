@@ -39,8 +39,10 @@ namespace ECS::Util::Cache
     void CharacterSetLevel(Components::CharacterInfo& character, u16 level);
 
     bool ItemTemplateExistsByID(Singletons::GameCache& cache, u32 itemID);
+    bool ItemWeaponTemplateExistsByID(Singletons::GameCache& cache, u32 weaponTemplateID);
     bool ItemInstanceExistsByID(Singletons::GameCache& cache, u64 itemInstanceID);
     bool GetItemTemplateByID(Singletons::GameCache& cache, u32 itemID, GameDefine::Database::ItemTemplate*& itemTemplate);
+    bool GetItemWeaponTemplateByID(Singletons::GameCache& cache, u32 weaponTemplateID, GameDefine::Database::ItemWeaponTemplate*& itemWeaponTemplate);
     bool GetItemInstanceByID(Singletons::GameCache& cache, u64 itemInstanceID, Database::ItemInstance*& itemInstance);
 
     bool ItemInstanceCreate(Singletons::GameCache& cache, u64 itemInstanceID, const Database::ItemInstance& itemInstance);
@@ -51,4 +53,13 @@ namespace ECS::Util::Cache
 
     bool MapExistsByID(Singletons::GameCache& cache, u32 mapID);
     bool GetMapByID(Singletons::GameCache& cache, u32 mapID, GameDefine::Database::Map*& map);
+
+    bool LocationExistsByID(Singletons::GameCache& cache, u32 locationID);
+    bool LocationExistsByHash(Singletons::GameCache& cache, u32 locationHash);
+    bool GetLocationByID(Singletons::GameCache& cache, u32 locationID, GameDefine::Database::MapLocation*& location);
+    bool GetLocationByHash(Singletons::GameCache& cache, u32 locationHash, GameDefine::Database::MapLocation*& location);
+
+    bool SpellExistsByID(Singletons::GameCache& cache, u32 spellID);
+    bool GetSpellByID(Singletons::GameCache& cache, u32 spellID, GameDefine::Database::Spell*& spell);
+    bool GetSpellEffectsBySpellID(Singletons::GameCache& cache, u32 spellID, std::vector<GameDefine::Database::SpellEffect>*& spellEffectList);
 }

@@ -1,6 +1,8 @@
 #include "MessageBuilderUtil.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
+#include "Server-Game/ECS/Components/UnitPowersComponent.h"
+#include "Server-Game/ECS/Components/UnitResistancesComponent.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Components/UnitVisualItems.h"
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
@@ -61,22 +63,25 @@ namespace ECS::Util::MessageBuilder
 
     namespace Unit
     {
-        bool BuildUnitCreate(std::shared_ptr<Bytebuffer>& buffer, entt::registry& registry, entt::entity entity, ObjectGUID guid, const std::string& name)
+        bool BuildUnitAdd(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID guid, const std::string& name, const vec3& position, const vec3& scale, const vec2& pitchYaw)
         {
-            auto& transform = registry.get<Components::Transform>(entity);
-            auto& unitStatsComponent = registry.get<Components::UnitStatsComponent>(entity);
+            bool result = Util::Network::AppendPacketToBuffer(buffer, Generated::UnitAddPacket{
+                .guid = guid,
+                .name = name,
+                .position = position,
+                .scale = scale,
+                .pitchYaw = pitchYaw
+            });
+
+            return result;
+        }
+        bool BuildUnitBaseInfo(std::shared_ptr<Bytebuffer>& buffer, entt::registry& registry, entt::entity entity, ObjectGUID guid)
+        {
+            auto& unitPowersComponent = registry.get<Components::UnitPowersComponent>(entity);
             auto& displayInfo = registry.get<Components::DisplayInfo>(entity);
             auto& visualItems = registry.get<Components::UnitVisualItems>(entity);
 
             bool failed = false;
-
-            failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::UnitAddPacket{
-                .guid = guid,
-                .name = name,
-                .position = transform.position,
-                .scale = transform.scale,
-                .pitchYaw = transform.pitchYaw
-            });
 
             failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::UnitDisplayInfoUpdatePacket{
                 .guid = guid,
@@ -98,22 +103,14 @@ namespace ECS::Util::MessageBuilder
                 });
             }
 
-            failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::UnitResourcesUpdatePacket{
-                .guid = guid,
-                .powerType = static_cast<i8>(Generated::PowerTypeEnum::Health),
-                .base = unitStatsComponent.baseHealth,
-                .current = unitStatsComponent.currentHealth,
-                .max = unitStatsComponent.maxHealth
-            });
-
-            for (u32 i = 0; i < (u32)Generated::PowerTypeEnum::Count; i++)
+            for (auto& pair : unitPowersComponent.powerTypeToValue)
             {
-                failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::UnitResourcesUpdatePacket{
-                   .guid = guid,
-                   .powerType = static_cast<i8>(i),
-                   .base = unitStatsComponent.baseHealth,
-                   .current = unitStatsComponent.currentHealth,
-                   .max = unitStatsComponent.maxHealth
+                failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::UnitPowerUpdatePacket{
+                    .guid = guid,
+                    .kind = static_cast<u8>(pair.first),
+                    .base = pair.second.base,
+                    .current = pair.second.current,
+                    .max = pair.second.max
                 });
             }
 
@@ -123,37 +120,40 @@ namespace ECS::Util::MessageBuilder
 
     namespace CombatLog
     {
-        bool BuildDamageDealtMessage(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID sourceGUID, ObjectGUID targetGUID, f32 damage)
+        bool BuildDamageDealtMessage(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID sourceGUID, ObjectGUID targetGUID, f64 damage, f64 overKillDamage)
         {
-            bool result = CreatePacket(buffer, Generated::SendCombatEventPacket::PACKET_ID, [&, sourceGUID, targetGUID, damage]()
+            bool result = CreatePacket(buffer, Generated::SendCombatEventPacket::PACKET_ID, [&, sourceGUID, targetGUID, damage, overKillDamage]()
             {
                 buffer->Put(Generated::CombatLogEventsEnum::DamageDealt);
                 buffer->Serialize(sourceGUID);
                 buffer->Serialize(targetGUID);
-                buffer->PutF32(damage);
+                buffer->PutF64(damage);
+                buffer->PutF64(overKillDamage);
             });
 
             return result;
         }
-        bool BuildHealingDoneMessage(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID sourceGUID, ObjectGUID targetGUID, f32 healing)
+        bool BuildHealingDoneMessage(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID sourceGUID, ObjectGUID targetGUID, f64 healing, f64 overHealing)
         {
-            bool result = CreatePacket(buffer, Generated::SendCombatEventPacket::PACKET_ID, [&, sourceGUID, targetGUID, healing]()
+            bool result = CreatePacket(buffer, Generated::SendCombatEventPacket::PACKET_ID, [&, sourceGUID, targetGUID, healing, overHealing]()
             {
                 buffer->Put(Generated::CombatLogEventsEnum::HealingDone);
                 buffer->Serialize(sourceGUID);
                 buffer->Serialize(targetGUID);
-                buffer->PutF32(healing);
+                buffer->PutF64(healing);
+                buffer->PutF64(overHealing);
             });
 
             return result;
         }
-        bool BuildResurrectedMessage(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID sourceGUID, ObjectGUID targetGUID)
+        bool BuildResurrectedMessage(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID sourceGUID, ObjectGUID targetGUID, f64 restoredHealth)
         {
-            bool result = CreatePacket(buffer, Generated::SendCombatEventPacket::PACKET_ID, [&buffer, sourceGUID, targetGUID]()
+            bool result = CreatePacket(buffer, Generated::SendCombatEventPacket::PACKET_ID, [&buffer, sourceGUID, targetGUID, restoredHealth]()
             {
                 buffer->Put(Generated::CombatLogEventsEnum::Resurrected);
                 buffer->Serialize(sourceGUID);
                 buffer->Serialize(targetGUID);
+                buffer->PutF64(restoredHealth);
             });
 
             return result;

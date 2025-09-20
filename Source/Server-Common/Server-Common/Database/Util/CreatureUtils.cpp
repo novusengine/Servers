@@ -16,7 +16,7 @@ namespace Database::Util::Creature
 
             try
             {
-                dbConnection->connection->prepare("CreatureCreate", "INSERT INTO public.creatures (template_id, display_id, map_id, position_x, position_y, position_z, position_o) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id");
+                dbConnection->connection->prepare("CreatureCreate", "INSERT INTO public.creatures (template_id, display_id, map_id, position_x, position_y, position_z, position_o, script_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id");
                 dbConnection->connection->prepare("CreatureDelete", "DELETE FROM public.creatures WHERE id = $1");
                 dbConnection->connection->prepare("CreatureGetInfoByMap", "SELECT * FROM public.creatures WHERE map_id = $1");
 
@@ -58,7 +58,7 @@ namespace Database::Util::Creature
 
             creatureTables.templateIDToDefinition.reserve(numRows);
 
-            nonTransaction.for_stream("SELECT * FROM public.creature_templates", [&creatureTables](u32 id, u32 flags, const std::string& name, const std::string& subname, u32 displayID, f32 scale, u16 minLevel, u16 maxLevel, f32 armorMod, f32 healthMod, f32 resourceMod, f32 damageMod)
+            nonTransaction.for_stream("SELECT * FROM public.creature_templates", [&creatureTables](u32 id, u32 flags, const std::string& name, const std::string& subname, u32 displayID, f32 scale, u16 minLevel, u16 maxLevel, f32 armorMod, f32 healthMod, f32 resourceMod, f32 damageMod, const std::string& scriptName)
             {
                 auto& templateData = creatureTables.templateIDToDefinition[id];
 
@@ -77,6 +77,7 @@ namespace Database::Util::Creature
                 templateData.healthMod = healthMod;
                 templateData.resourceMod = resourceMod;
                 templateData.damageMod = damageMod;
+                templateData.scriptName = scriptName;
             });
 
             NC_LOG_INFO("Loaded Table 'creature_template' ({0} Rows)", numRows);
@@ -84,11 +85,11 @@ namespace Database::Util::Creature
         }
     }
 
-    bool CreatureCreate(pqxx::work& transaction, u32 templateID, u32 displayID, u16 mapID, const vec3& position, f32 orientation, u64& creatureID)
+    bool CreatureCreate(pqxx::work& transaction, u32 templateID, u32 displayID, u16 mapID, const vec3& position, f32 orientation, const std::string& scriptName, u64& creatureID)
     {
         try
         {
-            auto queryResult = transaction.exec(pqxx::prepped("CreatureCreate"), pqxx::params{ templateID, displayID, mapID, position.x, position.y, position.z, orientation });
+            auto queryResult = transaction.exec(pqxx::prepped("CreatureCreate"), pqxx::params{ templateID, displayID, mapID, position.x, position.y, position.z, orientation, scriptName });
             if (queryResult.empty())
                 return false;
 

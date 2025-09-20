@@ -3,25 +3,24 @@
 
 #include <Meta/Generated/Shared/UnitEnum.h>
 
-namespace ECS::Components
+#include <robinhood/robinhood.h>
+
+namespace ECS
 {
-    struct UnitStatsComponent
+    struct UnitStat
     {
     public:
-        f32 baseHealth;
-        f32 currentHealth;
-        f32 maxHealth;
-        bool healthIsDirty = false;
-
-        f32 basePower[(u32)Generated::PowerTypeEnum::Count];
-        f32 currentPower[(u32)Generated::PowerTypeEnum::Count];
-        f32 maxPower[(u32)Generated::PowerTypeEnum::Count];
-        bool powerIsDirty[(u32)Generated::PowerTypeEnum::Count];
-
-        i32 baseStat[(u32)Generated::StatTypeEnum::Count];
-        i32 currentStat[(u32)Generated::StatTypeEnum::Count];
-
-        i32 baseResistance[(u32)Generated::ResistanceTypeEnum::Count];
-        i32 currentResistance[(u32)Generated::ResistanceTypeEnum::Count];
+        f64 base = 0.0;
+        f64 current = 0.0;
     };
+
+    namespace Components
+    {
+        struct UnitStatsComponent
+        {
+        public:
+            robin_hood::unordered_map<Generated::StatTypeEnum, UnitStat> statTypeToValue;
+            robin_hood::unordered_set<Generated::StatTypeEnum> dirtyStatTypes;
+        };
+    }
 }

@@ -2,8 +2,9 @@
 
 #include "Server-Game/Application/EnttRegistries.h"
 #include "Server-Game/ECS/Components/AABB.h"
-#include "Server-Game/ECS/Components/CastInfo.h"
 #include "Server-Game/ECS/Components/CharacterInfo.h"
+#include "Server-Game/ECS/Components/CharacterSpellCastInfo.h"
+#include "Server-Game/ECS/Components/CreatureAIInfo.h"
 #include "Server-Game/ECS/Components/CreatureInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
@@ -11,19 +12,25 @@
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
 #include "Server-Game/ECS/Components/ProximityTrigger.h"
+#include "Server-Game/ECS/Components/SpellEffectInfo.h"
+#include "Server-Game/ECS/Components/SpellInfo.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
+#include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Components/UnitVisualItems.h"
 #include "Server-Game/ECS/Components/VisibilityInfo.h"
 #include "Server-Game/ECS/Components/VisibilityUpdateInfo.h"
+#include "Server-Game/ECS/Singletons/CombatEventState.h"
+#include "Server-Game/ECS/Singletons/CreatureAIState.h"
 #include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/ProximityTriggers.h"
 #include "Server-Game/ECS/Singletons/TimeState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Util/CollisionUtil.h"
+#include "Server-Game/ECS/Util/CombatEventUtil.h"
 #include "Server-Game/ECS/Util/ContainerUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/ECS/Util/ProximityTriggerUtil.h"
@@ -49,6 +56,7 @@
 
 #include <Meta/Generated/Shared/NetworkEnum.h>
 #include <Meta/Generated/Shared/NetworkPacket.h>
+#include <Meta/Generated/Shared/UnitEnum.h>
 
 #include <Network/Server.h>
 
@@ -201,7 +209,7 @@ namespace ECS::Systems
         auto& playerTransform = world.Get<Components::Transform>(entity);
 
         entt::entity creatureEntity = world.CreateEntity();
-        world.EmplaceOrReplace<Events::CreatureCreate>(creatureEntity, creatureTemplateID, creatureTemplate->displayID, playerTransform.mapID, playerTransform.position, playerTransform.pitchYaw.y);
+        world.EmplaceOrReplace<Events::CreatureCreate>(creatureEntity, creatureTemplateID, creatureTemplate->displayID, playerTransform.mapID, playerTransform.position, vec3(creatureTemplate->scale), playerTransform.pitchYaw.y);
 
         return true;
     }
@@ -244,7 +252,7 @@ namespace ECS::Systems
         if (!Util::Cache::GetCreatureTemplateByID(gameCache, creatureInfo.templateID, creatureTemplate))
             return true;
 
-        std::string response = std::format("Creature Info:\n- GUID : {}\n- TemplateID : {}\n- Name : {}\n- Display ID : {}\n- Mods : (Health : {}, Armor : {}, Resource : {})",
+        std::string response = std::format("Creature Info:\n- GUID : {}\n- TemplateID : {}\n- Name : {}\n- Display ID : {}\n- Mods : (Health : {}, Armor : {}, Resource : {})\n- AI Script Name : ",
             creatureGUID.ToString(),
             creatureInfo.templateID,
             creatureInfo.name,
@@ -252,6 +260,15 @@ namespace ECS::Systems
             creatureTemplate->healthMod,
             creatureTemplate->armorMod,
             creatureTemplate->resourceMod);
+
+        if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(creatureEntity))
+        {
+            response += std::format("(\"{}\")", creatureAIInfo->scriptName);
+        }
+        else
+        {
+            response += "(none)";
+        }
 
         Util::Unit::SendChatMessage(world, networkState, socketID, response);
 
@@ -264,7 +281,7 @@ namespace ECS::Systems
         if (!message.buffer->GetU32(damage))
             return false;
 
-        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
 
         entt::entity targetEntity = entity;
         if (auto* targetInfo = world.TryGet<Components::TargetInfo>(entity))
@@ -275,35 +292,20 @@ namespace ECS::Systems
             }
         }
 
-        if (auto* unitStatsComponent = world.TryGet<Components::UnitStatsComponent>(targetEntity))
-        {
-            if (unitStatsComponent->currentHealth <= 0)
-                return true;
+        auto& srcObjectInfo = world.Get<Components::ObjectInfo>(entity);
+        auto& targetObjectInfo = world.Get<Components::ObjectInfo>(targetEntity);
 
-            f32 damageToDeal = glm::min(static_cast<f32>(damage), unitStatsComponent->currentHealth);
+        ObjectGUID::Type targetType = targetObjectInfo.guid.GetType();
+        if (targetType != ObjectGUID::Type::Creature && targetType != ObjectGUID::Type::Player)
+            return true;
 
-            unitStatsComponent->currentHealth -= damageToDeal;
-            unitStatsComponent->healthIsDirty = true;
-
-            // Send Grid Message
-            {
-                auto& visibilityInfo = world.Get<Components::VisibilityInfo>(entity);
-                auto& srcObjectInfo = world.Get<Components::ObjectInfo>(entity);
-                auto& targetObjectInfo = world.Get<Components::ObjectInfo>(targetEntity);
-
-                std::shared_ptr<Bytebuffer> damageDealtMessage = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::CombatLog::BuildDamageDealtMessage(damageDealtMessage, srcObjectInfo.guid, targetObjectInfo.guid, damageToDeal))
-                    return false;
-
-                Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, damageDealtMessage);
-            }
-        }
+        Util::CombatEvent::AddDamageEvent(combatEventState, srcObjectInfo.guid, targetObjectInfo.guid, damage);
 
         return true;
     }
     bool HandleOnCheatKill(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
 
         entt::entity targetEntity = entity;
         if (auto* targetInfo = world.TryGet<Components::TargetInfo>(entity))
@@ -312,35 +314,22 @@ namespace ECS::Systems
                 targetEntity = targetInfo->target;
         }
 
-        if (auto* unitStatsComponent = world.TryGet<Components::UnitStatsComponent>(targetEntity))
-        {
-            if (unitStatsComponent->currentHealth <= 0.0f)
-                return true;
+        auto& srcObjectInfo = world.Get<Components::ObjectInfo>(entity);
+        auto& targetObjectInfo = world.Get<Components::ObjectInfo>(targetEntity);
 
-            f32 damageToDeal = unitStatsComponent->currentHealth;
+        ObjectGUID::Type targetType = targetObjectInfo.guid.GetType();
+        if (targetType != ObjectGUID::Type::Creature && targetType != ObjectGUID::Type::Player)
+            return true;
 
-            unitStatsComponent->currentHealth = 0.0f;
-            unitStatsComponent->healthIsDirty = true;
-
-            // Send Grid Message
-            {
-                auto& visibilityInfo = world.Get<Components::VisibilityInfo>(entity);
-                auto& srcObjectInfo = world.Get<Components::ObjectInfo>(entity);
-                auto& targetObjectInfo = world.Get<Components::ObjectInfo>(targetEntity);
-
-                std::shared_ptr<Bytebuffer> damageDealtMessage = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::CombatLog::BuildDamageDealtMessage(damageDealtMessage, srcObjectInfo.guid, targetObjectInfo.guid, damageToDeal))
-                    return false;
-
-                Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, damageDealtMessage);
-            }
-        }
+        constexpr u32 amount = std::numeric_limits<u32>().max();
+        Util::CombatEvent::AddDamageEvent(combatEventState, srcObjectInfo.guid, targetObjectInfo.guid, amount);
 
         return true;
     }
     bool HandleOnCheatResurrect(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
-        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
+
         entt::entity targetEntity = entity;
         if (auto* targetInfo = world.TryGet<Components::TargetInfo>(entity))
         {
@@ -350,24 +339,14 @@ namespace ECS::Systems
             }
         }
 
-        if (auto* unitStatsComponent = world.TryGet<Components::UnitStatsComponent>(targetEntity))
-        {
-            unitStatsComponent->currentHealth = unitStatsComponent->maxHealth;
-            unitStatsComponent->healthIsDirty = true;
+        auto& srcObjectInfo = world.Get<Components::ObjectInfo>(entity);
+        auto& targetObjectInfo = world.Get<Components::ObjectInfo>(targetEntity);
 
-            // Send Grid Message
-            {
-                auto& visibilityInfo = world.Get<Components::VisibilityInfo>(entity);
-                auto& srcObjectInfo = world.Get<Components::ObjectInfo>(entity);
-                auto& targetObjectInfo = world.Get<Components::ObjectInfo>(targetEntity);
-                std::shared_ptr<Bytebuffer> resurrectedMessage = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::CombatLog::BuildResurrectedMessage(resurrectedMessage, srcObjectInfo.guid, targetObjectInfo.guid))
-                    return false;
+        ObjectGUID::Type targetType = targetObjectInfo.guid.GetType();
+        if (targetType != ObjectGUID::Type::Creature && targetType != ObjectGUID::Type::Player)
+            return true;
 
-                Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, resurrectedMessage);
-            }
-        }
-
+        Util::CombatEvent::AddResurrectEvent(combatEventState, srcObjectInfo.guid, targetObjectInfo.guid);
         return true;
     }
     bool HandleOnCheatMorph(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
@@ -524,7 +503,7 @@ namespace ECS::Systems
                     .itemID = itemInstance->itemID,
                     .count = itemInstance->count,
                     .durability = itemInstance->durability
-                    });
+                });
             }
         }
 
@@ -855,13 +834,12 @@ namespace ECS::Systems
 
         vec3 position = transform.position;
         f32 orientation = transform.pitchYaw.y;
-        if (gameCache.mapTables.locationNameHashToID.contains(locationNameHash))
-        {
-            u32 locationID = gameCache.mapTables.locationNameHashToID[locationNameHash];
-            const auto& location = gameCache.mapTables.locationIDToDefinition[locationID];
 
-            position = vec3(location.positionX, location.positionY, location.positionZ);
-            orientation = location.orientation;
+        GameDefine::Database::MapLocation* location = nullptr;
+        if (Util::Cache::GetLocationByHash(gameCache, locationNameHash, location))
+        {
+            position = vec3(location->positionX, location->positionY, location->positionZ);
+            orientation = location->orientation;
         }
 
         auto& networkState = ctx.get<Singletons::NetworkState>();
@@ -885,11 +863,9 @@ namespace ECS::Systems
         StringUtils::ToLower(locationName);
         u32 locationNameHash = StringUtils::fnv1a_32(locationName.c_str(), locationName.length());
 
-        if (locationName.length() < 2 || locationName[0] == ' ' || !gameCache.mapTables.locationNameHashToID.contains(locationNameHash))
-        {
-            // Location is Invalid or Already Exists
+        GameDefine::Database::MapLocation* location = nullptr;
+        if (!Util::Cache::GetLocationByHash(gameCache, locationNameHash, location))
             return true;
-        }
 
         auto& networkState = ctx.get<Singletons::NetworkState>();
         auto& worldState = ctx.get<Singletons::WorldState>();
@@ -897,11 +873,9 @@ namespace ECS::Systems
         auto& transform = world.Get<Components::Transform>(entity);
         auto& visibilityInfo = world.Get<Components::VisibilityInfo>(entity);
 
-        u32 locationID = gameCache.mapTables.locationNameHashToID[locationNameHash];
-        auto& location = gameCache.mapTables.locationIDToDefinition[locationID];
-        vec3 position = vec3(location.positionX, location.positionY, location.positionZ);
+        vec3 position = vec3(location->positionX, location->positionY, location->positionZ);
 
-        Util::Unit::TeleportToLocation(worldState, world, gameCache, networkState, entity, objectInfo, transform, visibilityInfo, location.mapID, position, location.orientation);
+        Util::Unit::TeleportToLocation(worldState, world, gameCache, networkState, entity, objectInfo, transform, visibilityInfo, location->mapID, position, location->orientation);
 
         return true;
     }
@@ -988,6 +962,109 @@ namespace ECS::Systems
             return true;
 
         world.EmplaceOrReplace<Events::ProximityTriggerNeedsDeinitialization>(triggerEntity, triggerID);
+
+        return true;
+    }
+
+    bool HandleOnCheatSpellSet(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        GameDefine::Database::Spell spell;
+        if (!GameDefine::Database::Spell::Read(message.buffer, spell))
+            return false;
+
+        entt::registry::context& ctx = registry->ctx();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
+        {
+            auto transaction = conn->NewTransaction();
+            auto queryResult = transaction.exec(pqxx::prepped("SetSpell"), pqxx::params{ spell.id, spell.name, spell.description, spell.auraDescription, spell.iconID, spell.castTime, spell.cooldown });
+            if (queryResult.affected_rows() == 0)
+            {
+                transaction.abort();
+            }
+            else
+            {
+                transaction.commit();
+                gameCache.spellTables.idToDefinition[spell.id] = spell;
+            }
+        }
+
+        return true;
+    }
+    bool HandleOnCheatSpellEffectSet(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        GameDefine::Database::SpellEffect spellEffect;
+        if (!GameDefine::Database::SpellEffect::Read(message.buffer, spellEffect))
+            return false;
+
+        entt::registry::context& ctx = registry->ctx();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
+        {
+            auto transaction = conn->NewTransaction();
+            auto queryResult = transaction.exec(pqxx::prepped("SetSpellEffect"), pqxx::params{ spellEffect.id, spellEffect.spellID, (u16)spellEffect.effectPriority, (u16)spellEffect.effectType, spellEffect.effectValue1, spellEffect.effectValue2, spellEffect.effectValue3, spellEffect.effectMiscValue1, spellEffect.effectMiscValue2, spellEffect.effectMiscValue3 });
+            if (queryResult.affected_rows() == 0)
+            {
+                transaction.abort();
+            }
+            else
+            {
+                transaction.commit();
+
+                auto& effectList = gameCache.spellTables.spellIDToEffects[spellEffect.spellID];
+                effectList.push_back(spellEffect);
+
+                // Sort effects by priority
+                std::sort(effectList.begin(), effectList.end(), [](const GameDefine::Database::SpellEffect& a, const GameDefine::Database::SpellEffect& b) {
+                    return a.effectPriority < b.effectPriority;
+                });
+            }
+        }
+
+        return true;
+    }
+
+    bool HandleOnCheatCreatureAddScript(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        std::string scriptName;
+        if (!message.buffer->GetString(scriptName))
+            return false;
+
+        auto& creatureAIState = world.GetSingleton<Singletons::CreatureAIState>();
+
+        u32 scriptNameHash = StringUtils::fnv1a_32(scriptName.c_str(), scriptName.length());
+        if (!creatureAIState.loadedScriptNameHashes.contains(scriptNameHash))
+            return true;
+
+        if (auto* targetInfo = world.TryGet<Components::TargetInfo>(entity))
+        {
+            if (world.ValidEntity(targetInfo->target))
+            {
+                if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(targetInfo->target))
+                {
+                    if (creatureAIInfo->scriptName == scriptName)
+                        return true;
+
+                    world.Emplace<Events::CreatureRemoveScript>(targetInfo->target);
+                }
+
+                world.Emplace<Events::CreatureAddScript>(targetInfo->target, scriptName);
+            }
+        }
+
+        return true;
+    }
+    bool HandleOnCheatCreatureRemoveScript(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        if (auto* targetInfo = world.TryGet<Components::TargetInfo>(entity))
+        {
+            if (world.ValidEntity(targetInfo->target))
+            {
+                world.Emplace<Events::CreatureRemoveScript>(targetInfo->target);
+            }
+        }
 
         return true;
     }
@@ -1141,6 +1218,24 @@ namespace ECS::Systems
                 return HandleOnCheatTriggerRemove(registry, *world, socketID, entity, message);
             }
 
+            case Generated::CheatCommandEnum::SpellSet:
+            {
+                return HandleOnCheatSpellSet(registry, *world, socketID, entity, message);
+            }
+            case Generated::CheatCommandEnum::SpellEffectSet:
+            {
+                return HandleOnCheatSpellEffectSet(registry, *world, socketID, entity, message);
+            }
+
+            case Generated::CheatCommandEnum::CreatureAddScript:
+            {
+                return HandleOnCheatCreatureAddScript(registry, *world, socketID, entity, message);
+            }
+            case Generated::CheatCommandEnum::CreatureRemoveScript:
+            {
+                return HandleOnCheatCreatureRemoveScript(registry, *world, socketID, entity, message);
+            }
+
             default: break;
         }
 
@@ -1232,15 +1327,12 @@ namespace ECS::Systems
             !world->ValidEntity(socketEntity))
             return false;
 
-        entt::entity targetEntity = world->GetEntity(packet.targetGUID);
-        if (!world->ValidEntity(targetEntity))
-            return true;
-
-        auto& objectInfo = world->Get<Components::ObjectInfo>(targetEntity);
-        auto& visibilityInfo = world->Get<Components::VisibilityInfo>(targetEntity);
-
+        auto& objectInfo = world->Get<Components::ObjectInfo>(socketEntity);
+        auto& visibilityInfo = world->Get<Components::VisibilityInfo>(socketEntity);
         auto& targetInfo = world->Get<Components::TargetInfo>(socketEntity);
-        targetInfo.target = targetEntity;
+
+        entt::entity targetEntity = world->GetEntity(packet.targetGUID);
+        targetInfo.target = world->ValidEntity(targetEntity) ? targetEntity : entt::null;
 
         ECS::Util::Network::SendToNearby(networkState, *world, socketEntity, visibilityInfo, false, Generated::ServerUnitTargetUpdatePacket{
             .guid = objectInfo.guid,
@@ -1341,6 +1433,9 @@ namespace ECS::Systems
             auto& srcItem = srcContainer->GetItem(packet.srcSlot);
             if (srcItem.IsEmpty())
                 return false;
+
+            dstContainer = srcContainer;
+            dstContainerID = srcContainerID;
         }
         else
         {
@@ -1400,50 +1495,58 @@ namespace ECS::Systems
 
             if (srcContainerID == 0)
             {
-                const Database::ContainerItem& containerItem = srcContainer->GetItem(packet.srcSlot);
-                bool isContainerItemEmpty = containerItem.IsEmpty();
-                u32 itemID = 0;
-
-                if (!isContainerItemEmpty)
+                auto equippedSlot = static_cast<Generated::ItemEquipSlotEnum>(packet.srcSlot);
+                if (equippedSlot >= Generated::ItemEquipSlotEnum::EquipmentStart && equippedSlot <= Generated::ItemEquipSlotEnum::EquipmentEnd)
                 {
-                    Database::ItemInstance* itemInstance = nullptr;
-                    if (Util::Cache::GetItemInstanceByID(gameCache, containerItem.objectGUID.GetCounter(), itemInstance))
-                        itemID = itemInstance->itemID;
+                    const Database::ContainerItem& containerItem = srcContainer->GetItem(packet.srcSlot);
+                    bool isContainerItemEmpty = containerItem.IsEmpty();
+                    u32 itemID = 0;
+
+                    if (!isContainerItemEmpty)
+                    {
+                        Database::ItemInstance* itemInstance = nullptr;
+                        if (Util::Cache::GetItemInstanceByID(gameCache, containerItem.objectGUID.GetCounter(), itemInstance))
+                            itemID = itemInstance->itemID;
+                    }
+
+                    ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, Generated::ServerUnitEquippedItemUpdatePacket{
+                        .guid = objectInfo.guid,
+                        .slot = static_cast<u8>(packet.srcSlot),
+                        .itemID = itemID
+                    });
+
+                    visualItems.equippedItemIDs[packet.srcSlot] = itemID;
+                    visualItems.dirtyItemIDs.insert(packet.srcSlot);
+                    world->EmplaceOrReplace<Events::CharacterNeedsVisualItemUpdate>(entity);
                 }
-
-                ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, Generated::ServerUnitEquippedItemUpdatePacket{
-                    .guid = objectInfo.guid,
-                    .slot = static_cast<u8>(packet.srcSlot),
-                    .itemID = itemID
-                });
-
-                visualItems.equippedItemIDs[packet.srcSlot] = itemID;
-                visualItems.dirtyItemIDs.insert(packet.srcSlot);
-                world->EmplaceOrReplace<Events::CharacterNeedsVisualItemUpdate>(entity);
             }
 
             if (dstContainerID == 0)
             {
-                const Database::ContainerItem& containerItem = dstContainer->GetItem(packet.dstSlot);
-                bool isContainerItemEmpty = containerItem.IsEmpty();
-                u32 itemID = 0;
-
-                if (!isContainerItemEmpty)
+                auto equippedSlot = static_cast<Generated::ItemEquipSlotEnum>(packet.srcSlot);
+                if (equippedSlot >= Generated::ItemEquipSlotEnum::EquipmentStart && equippedSlot <= Generated::ItemEquipSlotEnum::EquipmentEnd)
                 {
-                    Database::ItemInstance* itemInstance = nullptr;
-                    if (Util::Cache::GetItemInstanceByID(gameCache, containerItem.objectGUID.GetCounter(), itemInstance))
-                        itemID = itemInstance->itemID;
+                    const Database::ContainerItem& containerItem = dstContainer->GetItem(packet.dstSlot);
+                    bool isContainerItemEmpty = containerItem.IsEmpty();
+                    u32 itemID = 0;
+
+                    if (!isContainerItemEmpty)
+                    {
+                        Database::ItemInstance* itemInstance = nullptr;
+                        if (Util::Cache::GetItemInstanceByID(gameCache, containerItem.objectGUID.GetCounter(), itemInstance))
+                            itemID = itemInstance->itemID;
+                    }
+
+                    ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, Generated::ServerUnitEquippedItemUpdatePacket{
+                        .guid = objectInfo.guid,
+                        .slot = static_cast<u8>(packet.dstSlot),
+                        .itemID = itemID
+                    });
+
+                    visualItems.equippedItemIDs[packet.dstSlot] = itemID;
+                    visualItems.dirtyItemIDs.insert(packet.dstSlot);
+                    world->EmplaceOrReplace<Events::CharacterNeedsVisualItemUpdate>(entity);
                 }
-
-                ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, Generated::ServerUnitEquippedItemUpdatePacket{
-                    .guid = objectInfo.guid,
-                    .slot = static_cast<u8>(packet.dstSlot),
-                    .itemID = itemID
-                });
-
-                visualItems.equippedItemIDs[packet.dstSlot] = itemID;
-                visualItems.dirtyItemIDs.insert(packet.dstSlot);
-                world->EmplaceOrReplace<Events::CharacterNeedsVisualItemUpdate>(entity);
             }
         }
 
@@ -1521,28 +1624,35 @@ namespace ECS::Systems
     bool HandleOnClientSpellCast(Network::SocketID socketID, Generated::ClientSpellCastPacket& packet)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+        auto& gameCache = registry->ctx().get<Singletons::GameCache>();
         auto& worldState = registry->ctx().get<Singletons::WorldState>();
         auto& networkState = registry->ctx().get<Singletons::NetworkState>();
 
         World* world = nullptr;
         if (!worldState.GetWorldFromSocket(socketID, world))
             return false;
+
         entt::entity socketEntity;
         if (!Util::Network::GetEntityIDFromSocketID(networkState, socketID, socketEntity))
             return false;
+
         if (!world->ValidEntity(socketEntity))
             return false;
 
         u8 result = 0;
-        auto* targetInfo = world->TryGet<Components::TargetInfo>(socketEntity);
 
-        if (world->AllOf<Components::CastInfo>(socketEntity))
+        GameDefine::Database::Spell* spell = nullptr;
+        auto& casterSpellCooldownHistory = world->Get<Components::UnitSpellCooldownHistory>(socketEntity);
+
+        if (!Util::Cache::GetSpellByID(gameCache, packet.spellID, spell))
         {
             result = 0x1;
         }
-        else if (!targetInfo || !world->ValidEntity(targetInfo->target))
+        else
         {
-            result = 0x2;
+            f32 cooldown = Util::Unit::GetSpellCooldownRemaining(casterSpellCooldownHistory, packet.spellID);
+            if (cooldown > 0.0f)
+                result = 0x2;
         }
 
         if (result != 0x0)
@@ -1554,28 +1664,51 @@ namespace ECS::Systems
             return true;
         }
 
-        auto& casterObjectInfo = world->Get<Components::ObjectInfo>(socketEntity);
-        auto& targetObjectInfo = world->Get<Components::ObjectInfo>(targetInfo->target);
-        auto& castInfo = world->Emplace<Components::CastInfo>(socketEntity);
+        auto& targetInfo = world->Get<Components::TargetInfo>(socketEntity);
+        auto& characterSpellCastInfo = world->Get<Components::CharacterSpellCastInfo>(socketEntity);
 
-        castInfo.caster = casterObjectInfo.guid;
-        castInfo.target = targetObjectInfo.guid;
-        castInfo.castTime = 1.5f;
-        castInfo.duration = 0.0f;
+        entt::entity spellEntity = entt::null;
+        if (characterSpellCastInfo.activeSpellEntity == entt::null)
+        {
+            spellEntity = world->CreateEntity();
+            characterSpellCastInfo.activeSpellEntity = spellEntity;
+
+            world->Emplace<Tags::IsUnpreparedSpell>(spellEntity);
+        }
+        else
+        {
+            if (characterSpellCastInfo.queuedSpellEntity == entt::null)
+            {
+                spellEntity = world->CreateEntity();
+                characterSpellCastInfo.queuedSpellEntity = spellEntity;
+            }
+            else
+            {
+                spellEntity = characterSpellCastInfo.queuedSpellEntity;
+            }
+        }
+
+        auto& casterObjectInfo = world->Get<Components::ObjectInfo>(socketEntity);
+
+        ObjectGUID targetGUID = ObjectGUID::Empty;
+        if (world->ValidEntity(targetInfo.target))
+        {
+            auto& targetObjectInfo = world->Get<Components::ObjectInfo>(targetInfo.target);
+            targetGUID = targetObjectInfo.guid;
+        }
+
+        auto& spellInfo = world->EmplaceOrReplace<Components::SpellInfo>(spellEntity);
+        auto& spellEffectInfo = world->EmplaceOrReplace<Components::SpellEffectInfo>(spellEntity);
+
+        spellInfo.spellID = packet.spellID;
+        spellInfo.caster = casterObjectInfo.guid;
+        spellInfo.target = targetGUID;
+        spellInfo.castTime = spell->castTime;
+        spellInfo.timeToCast = spellInfo.castTime;
 
         Util::Network::SendPacket(networkState, socketID, Generated::ServerSpellCastResultPacket{
             .result = result,
         });
-
-        // Send Grid Message
-        {
-            auto& visibilityInfo = world->Get<Components::VisibilityInfo>(socketEntity);
-            ECS::Util::Network::SendToNearby(networkState, *world, socketEntity, visibilityInfo, false, Generated::UnitCastSpellPacket{
-                .guid = casterObjectInfo.guid,
-                .castTime = castInfo.castTime,
-                .castDuration = castInfo.duration
-            });
-        }
 
         return true;
     }

@@ -24,6 +24,7 @@ namespace ECS
             Database::MapTables mapTables;
             Database::PermissionTables permissionTables;
             Database::CurrencyTables currencyTables;
+            Database::SpellTables spellTables;
             Database::ItemTables itemTables;
             Database::CharacterTables characterTables;
             Database::CreatureTables creatureTables;

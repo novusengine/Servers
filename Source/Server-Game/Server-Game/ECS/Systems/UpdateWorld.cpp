@@ -1,25 +1,38 @@
 #include "UpdateWorld.h"
+#include "World/UpdateCharacter.h"
 
 #include "Server-Game/ECS/Components/AABB.h"
-#include "Server-Game/ECS/Components/CastInfo.h"
 #include "Server-Game/ECS/Components/CharacterInfo.h"
+#include "Server-Game/ECS/Components/CharacterSpellCastInfo.h"
+#include "Server-Game/ECS/Components/CreatureAIInfo.h"
 #include "Server-Game/ECS/Components/CreatureInfo.h"
+#include "Server-Game/ECS/Components/CreatureThreatTable.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
 #include "Server-Game/ECS/Components/ProximityTrigger.h"
+#include "Server-Game/ECS/Components/SpellEffectInfo.h"
+#include "Server-Game/ECS/Components/SpellInfo.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
+#include "Server-Game/ECS/Components/UnitCombatInfo.h"
+#include "Server-Game/ECS/Components/UnitPowersComponent.h"
+#include "Server-Game/ECS/Components/UnitResistancesComponent.h"
+#include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Components/UnitVisualItems.h"
 #include "Server-Game/ECS/Components/VisibilityInfo.h"
 #include "Server-Game/ECS/Components/VisibilityUpdateInfo.h"
+#include "Server-Game/ECS/Singletons/CombatEventState.h"
+#include "Server-Game/ECS/Singletons/CreatureAIState.h"
 #include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/ProximityTriggers.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
+#include "Server-Game/ECS/Util/CombatUtil.h"
+#include "Server-Game/ECS/Util/CombatEventUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/ECS/Util/ProximityTriggerUtil.h"
@@ -34,7 +47,9 @@
 #include <Server-Common/Database/Util/ProximityTriggerUtils.h>
 
 #include <Base/Util/DebugHandler.h>
+#include <Base/Util/StringUtils.h>
 
+#include <Meta/Generated/Server/LuaEvent.h>
 #include <Meta/Generated/Shared/NetworkPacket.h>
 
 #include <Network/Server.h>
@@ -56,6 +71,8 @@ namespace ECS::Systems
             return false;
 
         // Handle Map Initialization
+        world.EmplaceSingleton<Singletons::CombatEventState>();
+        world.EmplaceSingleton<Singletons::CreatureAIState>();
         world.EmplaceSingleton<Singletons::ProximityTriggers>();
 
         auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
@@ -63,8 +80,12 @@ namespace ECS::Systems
         pqxx::result databaseResult;
         if (Database::Util::Creature::CreatureGetInfoByMap(databaseConn, world.mapID, databaseResult))
         {
-            databaseResult.for_each([&world, &gameCache](u64 id, u32 templateID, u32 displayID, u16 mapID, f32 posX, f32 posY, f32 posZ, f32 posO)
+            databaseResult.for_each([&world, &gameCache](u64 id, u32 templateID, u32 displayID, u16 mapID, f32 posX, f32 posY, f32 posZ, f32 posO, const std::string& scriptName)
             {
+                GameDefine::Database::CreatureTemplate* creatureTemplate = nullptr;
+                if (!Util::Cache::GetCreatureTemplateByID(gameCache, templateID, creatureTemplate))
+                    return;
+
                 entt::entity creatureEntity = world.CreateEntity();
 
                 Events::CreatureNeedsInitialization event =
@@ -74,7 +95,9 @@ namespace ECS::Systems
                     .displayID = displayID,
                     .mapID = mapID,
                     .position = vec3(posX, posY, posZ),
-                    .orientation = posO
+                    .scale = vec3(creatureTemplate->scale),
+                    .orientation = posO,
+                    .scriptName = scriptName
                 };
 
                 world.Emplace<Events::CreatureNeedsInitialization>(creatureEntity, event);
@@ -180,7 +203,7 @@ namespace ECS::Systems
             auto transaction = databaseConn->NewTransaction();
 
             u64 creatureID = 0;
-            if (!Database::Util::Creature::CreatureCreate(transaction, event.templateID, event.displayID, event.mapID, event.position, event.orientation, creatureID))
+            if (!Database::Util::Creature::CreatureCreate(transaction, event.templateID, event.displayID, event.mapID, event.position, event.orientation, event.scriptName, creatureID))
                 return;
 
             transaction.commit();
@@ -192,7 +215,9 @@ namespace ECS::Systems
                 .displayID = 0,
                 .mapID = event.mapID,
                 .position = event.position,
-                .orientation = event.orientation
+                .scale = event.scale,
+                .orientation = event.orientation,
+                .scriptName = event.scriptName
             };
 
             world.Emplace<Events::CreatureNeedsInitialization>(entity, initEvent);
@@ -206,6 +231,7 @@ namespace ECS::Systems
             if (!Util::Cache::GetCreatureTemplateByID(gameCache, event.templateID, creatureTemplate))
                 return;
 
+            world.Emplace<Tags::IsCreature>(entity);
             auto& objectInfo = world.Emplace<Components::ObjectInfo>(entity);
             objectInfo.guid = event.guid;
 
@@ -217,302 +243,152 @@ namespace ECS::Systems
             creatureTransform.mapID = event.mapID;
             creatureTransform.position = event.position;
             creatureTransform.pitchYaw = vec2(0.0f, event.orientation);
-            creatureTransform.scale = vec3(1.0f);
+            creatureTransform.scale = event.scale;
 
             auto& visualItems = world.Emplace<Components::UnitVisualItems>(entity);
             auto& displayInfo = world.Emplace<Components::DisplayInfo>(entity);
             displayInfo.displayID = creatureTemplate->displayID;
 
-            Components::UnitStatsComponent& unitStats = Util::Unit::AddStatsComponent(*world.registry, entity);
-            unitStats.baseHealth *= creatureTemplate->healthMod;
-            unitStats.currentHealth *= creatureTemplate->healthMod;
-            unitStats.maxHealth *= creatureTemplate->healthMod;
+            Components::UnitPowersComponent& unitPowersComponent = Util::Unit::AddPowersComponent(world, entity);
+            {
+                UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, Generated::PowerTypeEnum::Health);
+                healthPower.base *= creatureTemplate->healthMod;
+                healthPower.current *= creatureTemplate->healthMod;
+                healthPower.max *= creatureTemplate->healthMod;
 
+                UnitPower& manaPower = Util::Unit::GetPower(unitPowersComponent, Generated::PowerTypeEnum::Mana);
+                manaPower.base *= creatureTemplate->resourceMod;
+                manaPower.current *= creatureTemplate->resourceMod;
+                manaPower.max *= creatureTemplate->resourceMod;
+            }
+
+            Util::Unit::AddResistancesComponent(world, entity);
+            Util::Unit::AddStatsComponent(world, entity);
+
+            world.Emplace<Tags::IsAlive>(entity);
             auto& visibilityInfo = world.Emplace<Components::VisibilityInfo>(entity);
             auto& visibilityUpdateInfo = world.Emplace<Components::VisibilityUpdateInfo>(entity);
             visibilityUpdateInfo.updateInterval = 0.5f;
+
+            world.Emplace<Components::UnitSpellCooldownHistory>(entity);
+            world.Emplace<Components::UnitCombatInfo>(entity);
+            Components::TargetInfo& targetInfo = world.Emplace<Components::TargetInfo>(entity);
+            targetInfo.target = entt::null;
+
+            world.Emplace<Components::CreatureThreatTable>(entity);
+            if (!event.scriptName.empty())
+            {
+                world.Emplace<Events::CreatureAddScript>(entity, Events::CreatureAddScript
+                {
+                    .scriptName = event.scriptName
+                });
+            }
 
             world.AddEntity(objectInfo.guid, entity, vec2(creatureTransform.position.x, creatureTransform.position.z));
         });
         world.Clear<Events::CreatureNeedsInitialization>();
     }
 
-    void UpdateWorld::HandleCharacterDeinitialization(Singletons::WorldState& worldState, World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleCreatureUpdate(World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
     {
-        auto view = world.View<Components::ObjectInfo, Components::NetInfo, Events::CharacterNeedsDeinitialization>();
-        view.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::NetInfo& netInfo)
+        HandleCreatureDeinitialization(world, gameCache);
+        HandleCreatureInitialization(world, gameCache);
+
+        auto& creatureAIState = world.GetSingleton<Singletons::CreatureAIState>();
+
+        auto removeScriptView = world.View<const Components::ObjectInfo, Events::CreatureRemoveScript>();
+        removeScriptView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo)
         {
-            u64 characterID = objectInfo.guid.GetCounter();
-        
-            if (auto* playerContainers = world.TryGet<Components::PlayerContainers>(entity))
-            {
-                for (const auto& [bagIndex, bagContainer] : playerContainers->bags)
-                {
-                    u16 numContainerSlots = bagContainer.GetTotalSlots();
-                    for (u16 containerSlot = 0; containerSlot < numContainerSlots; containerSlot++)
-                    {
-                        const Database::ContainerItem& item = bagContainer.GetItem(containerSlot);
-                        if (item.IsEmpty())
-                            continue;
-        
-                        u64 itemInstanceID = item.objectGUID.GetCounter();
-                        Util::Cache::ItemInstanceDelete(gameCache, itemInstanceID);
-                    }
-                }
-        
-                u16 numEquipmentSlots = playerContainers->equipment.GetTotalSlots();
-                for (u16 equipmentSlot = 0; equipmentSlot < numEquipmentSlots; equipmentSlot++)
-                {
-                    const Database::ContainerItem& item = playerContainers->equipment.GetItem(equipmentSlot);
-                    if (item.IsEmpty())
-                        continue;
-        
-                    u64 itemInstanceID = item.objectGUID.GetCounter();
-                    Util::Cache::ItemInstanceDelete(gameCache, itemInstanceID);
-                }
-            }
-        
-            // Network Cleanup
-            {
-                Util::Network::UnlinkSocketFromEntity(networkState, netInfo.socketID);
-                Util::Network::UnlinkCharacterFromSocket(networkState, characterID);
-                Util::Network::UnlinkCharacterFromEntity(networkState, characterID);
-            }
-        
-            // Grid Cleanup
-            if (auto* transform = world.TryGet<Components::Transform>(entity))
-            {
-                f32 orientation = transform->pitchYaw.y;
-                Util::Persistence::Character::CharacterSetMapIDPositionOrientation(gameCache, characterID, transform->mapID, transform->position, orientation);
-        
-                world.RemoveEntity(objectInfo.guid);
-            }
-        
-            if (auto* characterInfo = world.TryGet<Components::CharacterInfo>(entity))
-            {
-                if (auto* worldTransfter = world.TryGet<Events::CharacterWorldTransfer>(entity))
-                {
-                    worldState.AddWorldTransferRequest(WorldTransferRequest{
-                        .socketID = netInfo.socketID,
-
-                        .characterName = characterInfo->name,
-                        .characterID = characterID,
-
-                        .targetMapID = worldTransfter->targetMapID,
-                        .targetPosition = worldTransfter->targetPosition,
-                        .targetOrientation = worldTransfter->targetOrientation,
-                        .useTargetPosition = true
-                    });
-                }
-
-                Util::Cache::CharacterDelete(gameCache, characterID, *characterInfo);
-            }
-        
-            world.DestroyEntity(entity);
-        });
-        
-        world.Clear<Events::CharacterNeedsDeinitialization>();
-    }
-    void UpdateWorld::HandleCharacterInitialization(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
-    {
-        auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
-
-        std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<8192>();
-
-        auto view = world.View<Components::ObjectInfo, Components::NetInfo, Events::CharacterNeedsInitialization>();
-        view.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::NetInfo& netInfo)
-        {
-            u64 characterID = objectInfo.guid.GetCounter();
-            pqxx::result databaseResult;
-        
-            if (!Database::Util::Character::CharacterGetInfoByID(databaseConn, characterID, databaseResult))
-            {
-                Util::Network::RequestSocketToClose(networkState, netInfo.socketID);
-                return;
-            }
-
-            auto& characterInfo = world.Emplace<Components::CharacterInfo>(entity);
-            characterInfo.name = databaseResult[0][2].as<std::string>();
-            characterInfo.accountID = databaseResult[0][1].as<u32>();
-            characterInfo.totalTime = databaseResult[0][3].as<u32>();
-            characterInfo.levelTime = databaseResult[0][4].as<u32>();
-            characterInfo.logoutTime = databaseResult[0][5].as<u32>();
-            characterInfo.flags = databaseResult[0][6].as<u32>();
-            characterInfo.level = databaseResult[0][8].as<u16>();
-            characterInfo.experiencePoints = databaseResult[0][9].as<u64>();
-        
-            auto& transform = world.Emplace<Components::Transform>(entity);
-            transform.mapID = databaseResult[0][10].as<u16>();
-            transform.position = vec3(databaseResult[0][11].as<f32>(), databaseResult[0][12].as<f32>(), databaseResult[0][13].as<f32>());
-        
-            f32 orientation = databaseResult[0][14].as<f32>();
-            transform.pitchYaw = vec2(0.0f, orientation);
-
-            auto& aabb = world.Emplace<Components::AABB>(entity);
-            aabb.extents = vec3(3.0f, 5.0f, 2.0f); // TODO: Create proper data for this
-        
-            world.Emplace<Components::VisibilityInfo>(entity);
-            auto& visibilityUpdateInfo = world.Emplace<Components::VisibilityUpdateInfo>(entity);
-            visibilityUpdateInfo.updateInterval = 0.25f;
-            visibilityUpdateInfo.timeSinceLastUpdate = visibilityUpdateInfo.updateInterval;
-        
-            auto& displayInfo = world.Emplace<Components::DisplayInfo>(entity);
-            auto& visualItems = world.Emplace<Components::UnitVisualItems>(entity);
-        
-            u16 raceGenderClass = databaseResult[0][7].as<u16>();
-            auto unitRace = static_cast<GameDefine::UnitRace>(raceGenderClass & 0x7F);
-            auto unitGender = static_cast<GameDefine::UnitGender>((raceGenderClass >> 7) & 0x3);
-            auto unitClass = static_cast<GameDefine::UnitClass>((raceGenderClass >> 9) & 0x7F);
-        
-            characterInfo.unitClass = unitClass;
-            Util::Unit::UpdateDisplayRaceGender(*world.registry, entity, displayInfo, unitRace, unitGender);
-        
-            Util::Unit::AddStatsComponent(*world.registry, entity);
-        
-            Components::TargetInfo& targetInfo = world.Emplace<Components::TargetInfo>(entity);
-            targetInfo.target = entt::null;
-        
-            auto& playerContainers = world.Emplace<Components::PlayerContainers>(entity);
-        
-            buffer->Reset();
-            bool failed = false;
-
-            failed |= !Util::MessageBuilder::Unit::BuildUnitCreate(buffer, *world.registry, entity, objectInfo.guid, characterInfo.name);
-            failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::UnitSetMoverPacket{
-                .guid = objectInfo.guid
+            zenith->CallEvent(Generated::LuaCreatureAIEventEnum::OnDeinit, Generated::LuaCreatureAIEventDataOnDeinit{
+                .creatureEntity = entt::to_integral(entity)
             });
+            
+            world.Remove<Components::CreatureAIInfo>(entity);
+            creatureAIState.creatureGUIDToScriptNameHash.erase(objectInfo.guid);
+        });
+        world.Clear<Events::CreatureRemoveScript>();
+
+        auto addScriptView = world.View<Components::ObjectInfo, Events::CreatureAddScript>();
+        addScriptView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Events::CreatureAddScript& event)
+        {
+            u32 scriptNameHash = StringUtils::fnv1a_32(event.scriptName.c_str(), event.scriptName.length());
+            if (!creatureAIState.loadedScriptNameHashes.contains(scriptNameHash))
+                return;
         
-            if (Database::Util::Character::CharacterGetItems(databaseConn, characterID, databaseResult))
+            auto& creatureAIInfo = world.GetOrEmplace<Components::CreatureAIInfo>(entity);
+            if (creatureAIInfo.scriptName == event.scriptName)
             {
-                databaseResult.for_each([&](u64 itemInstanceID, u32 itemID, u64 ownerID, u16 count, u16 durability)
-                {
-                    Database::ItemInstance itemInstance =
-                    {
-                        .id = itemInstanceID,
-                        .ownerID = ownerID,
-                        .itemID = itemID,
-                        .count = count,
-                        .durability = durability
-                    };
-        
-                    Util::Cache::ItemInstanceCreate(gameCache, itemInstanceID, itemInstance);
-                });
-        
-                if (Database::Util::Character::CharacterGetItemsInContainer(databaseConn, characterID, PLAYER_BASE_CONTAINER_ID, databaseResult))
-                {
-                    databaseResult.for_each([&](u64 characterID, u64 containerID, u16 slotIndex, u64 itemInstanceID)
-                    {
-                        Database::ItemInstance* itemInstance = nullptr;
-                        if (!Util::Cache::GetItemInstanceByID(gameCache, itemInstanceID, itemInstance))
-                            return;
-        
-                        ObjectGUID itemGUID = ObjectGUID::CreateItem(itemInstanceID);
-                        playerContainers.equipment.AddItemToSlot(itemGUID, slotIndex);
-        
-                        if (slotIndex >= PLAYER_BAG_INDEX_START)
-                            return;
-        
-                        failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::ItemAddPacket{
-                            .guid = itemGUID,
-                            .itemID = itemInstance->itemID,
-                            .count = itemInstance->count,
-                            .durability = itemInstance->durability
-                        });
-                    });
-        
-                    for (ItemEquipSlot_t bagIndex = PLAYER_BAG_INDEX_START; bagIndex <= PLAYER_BAG_INDEX_END; bagIndex++)
-                    {
-                        if (playerContainers.equipment.IsSlotEmpty(bagIndex))
-                            continue;
-        
-                        ObjectGUID containerGUID = playerContainers.equipment.GetItem(bagIndex).objectGUID;
-                        u64 containerID = containerGUID.GetCounter();
-        
-                        Database::ItemInstance* containerItemInstance = nullptr;
-                        if (!Util::Cache::GetItemInstanceByID(gameCache, containerID, containerItemInstance))
-                            continue;
-        
-                        playerContainers.bags.emplace(bagIndex, Database::Container(containerItemInstance->durability));
-                        Database::Container& container = playerContainers.bags[bagIndex];
-        
-                        if (Database::Util::Character::CharacterGetItemsInContainer(databaseConn, characterID, containerID, databaseResult))
-                        {
-                            databaseResult.for_each([&](u64 characterID, u64 containerID, u16 slotIndex, u64 itemInstanceID)
-                            {
-                                Database::ItemInstance* itemInstance = nullptr;
-                                if (!Util::Cache::GetItemInstanceByID(gameCache, itemInstanceID, itemInstance))
-                                    return;
-        
-                                ObjectGUID itemGUID = ObjectGUID::CreateItem(itemInstanceID);
-                                container.AddItemToSlot(itemGUID, slotIndex);
-
-                                failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::ItemAddPacket{
-                                    .guid = itemGUID,
-                                    .itemID = itemInstance->itemID,
-                                    .count = itemInstance->count,
-                                    .durability = itemInstance->durability
-                                });
-                            });
-                        }
-                    }
-                }
-
-                bool hasDirtyVisualItems = false;
-                for (ItemEquipSlot_t i = static_cast<ItemEquipSlot_t>(Generated::ItemEquipSlotEnum::EquipmentStart); i <= static_cast<ItemEquipSlot_t>(Generated::ItemEquipSlotEnum::EquipmentEnd); i++)
-                {
-                    const auto& item = playerContainers.equipment.GetItem(static_cast<ItemEquipSlot_t>(i));
-                    if (item.IsEmpty())
-                        continue;
-
-                    ObjectGUID itemGUID = item.objectGUID;
-
-                    Database::ItemInstance* itemInstance = nullptr;
-                    if (!Util::Cache::GetItemInstanceByID(gameCache, itemGUID.GetCounter(), itemInstance))
-                        continue;
-
-                    visualItems.equippedItemIDs[i] = itemInstance->itemID;
-                    visualItems.dirtyItemIDs.insert(i);
-
-                    hasDirtyVisualItems = true;
-                }
-
-                if (hasDirtyVisualItems)
-                    world.EmplaceOrReplace<Events::CharacterNeedsVisualItemUpdate>(entity);
-            }
-        
-            world.EmplaceOrReplace<Events::CharacterNeedsContainerUpdate>(entity);
-
-            // Send Proximity Triggers
-            {
-                auto view = world.View<Components::ProximityTrigger, Components::Transform, Components::AABB, Tags::ProximityTriggerIsClientSide>();
-                view.each([&](entt::entity entity, Components::ProximityTrigger& proximityTrigger, Components::Transform& transform, Components::AABB& aabb)
-                {
-                    failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::ServerTriggerAddPacket{
-                        .triggerID = proximityTrigger.triggerID,
-
-                        .name = proximityTrigger.name,
-                        .flags = static_cast<u8>(proximityTrigger.flags),
-
-                        .mapID = transform.mapID,
-                        .position = transform.position,
-                        .extents = aabb.extents
-                    });
-                });
-            }
-
-            if (failed)
-            {
-                NC_LOG_ERROR("Failed to build character initialization message for character: {0}", characterID);
-                networkState.server->CloseSocketID(netInfo.socketID);
+                NC_LOG_WARNING("Creature {} already has script {} assigned", objectInfo.guid.ToString(), event.scriptName);
                 return;
             }
         
-            world.AddEntity(objectInfo.guid, entity, vec2(transform.position.x, transform.position.z));
+            creatureAIInfo.timeToNextUpdate = 0.0f;
+            creatureAIInfo.scriptName = event.scriptName;
+            creatureAIState.creatureGUIDToScriptNameHash[objectInfo.guid] = scriptNameHash;
         
-            Util::Network::SendPacket(networkState, netInfo.socketID, buffer);
+            zenith->CallEvent(Generated::LuaCreatureAIEventEnum::OnInit, Generated::LuaCreatureAIEventDataOnInit{
+                .creatureEntity = entt::to_integral(entity),
+                .scriptNameHash = scriptNameHash
+            });
         });
+        world.Clear<Events::CreatureAddScript>();
         
-        world.Clear<Events::CharacterNeedsInitialization>();
+        auto updateAIView = world.View<Components::CreatureAIInfo>();
+        updateAIView.each([&, deltaTime](entt::entity entity, Components::CreatureAIInfo& creatureAIInfo)
+        {
+            creatureAIInfo.timeToNextUpdate -= deltaTime;
+            if (creatureAIInfo.timeToNextUpdate > 0.0f)
+                return;
+        
+            creatureAIInfo.timeToNextUpdate += 0.1f;
+        
+            zenith->CallEvent(Generated::LuaCreatureAIEventEnum::OnUpdate, Generated::LuaCreatureAIEventDataOnUpdate{
+                .creatureEntity = entt::to_integral(entity),
+                .deltaTime = 0.1f
+            });
+        });
+
+        auto updateThreatTableView = world.View<Components::CreatureThreatTable, Events::CreatureNeedsThreatTableUpdate>();
+        updateThreatTableView.each([&](entt::entity entity, Components::CreatureThreatTable& creatureThreatTable)
+        {
+            Util::Combat::SortThreatTable(creatureThreatTable);
+        });
+        world.Clear<Events::CreatureNeedsThreatTableUpdate>();
+    }
+
+    void UpdateWorld::HandleUnitUpdate(World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
+    {
+        auto deathView = world.View<Components::UnitCombatInfo, Events::UnitDied, Tags::IsAlive>();
+        deathView.each([&](entt::entity entity, Components::UnitCombatInfo& combatInfo, Events::UnitDied& event)
+        {
+            world.Remove<Tags::IsAlive>(entity);
+            world.Emplace<Tags::IsDead>(entity);
+
+            if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
+            {
+                zenith->CallEvent(Generated::LuaCreatureAIEventEnum::OnDied, Generated::LuaCreatureAIEventDataOnDied{
+                    .creatureEntity = entt::to_integral(entity),
+                    .killerEntity = entt::to_integral(event.killerEntity)
+                });
+            }
+        });
+        world.Clear<Events::UnitDied>();
+
+        auto resurrectView = world.View<Components::UnitCombatInfo, Events::UnitResurrected, Tags::IsDead>();
+        resurrectView.each([&](entt::entity entity, Components::UnitCombatInfo& combatInfo, Events::UnitResurrected& event)
+        {
+            world.Remove<Tags::IsDead>(entity);
+            world.Emplace<Tags::IsAlive>(entity);
+
+            if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
+            {
+                zenith->CallEvent(Generated::LuaCreatureAIEventEnum::OnResurrect, Generated::LuaCreatureAIEventDataOnResurrect{
+                    .creatureEntity = entt::to_integral(entity),
+                    .resurrectorEntity = entt::to_integral(event.resurrectorEntity)
+                });
+            }
+        });
+        world.Clear<Events::UnitResurrected>();
     }
 
     void UpdateWorld::HandleProximityTriggerDeinitialization(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
@@ -750,9 +626,13 @@ namespace ECS::Systems
                     entt::entity otherEntity = world.GetEntity(guid);
                     auto& otherObjectInfo = world.Get<Components::ObjectInfo>(otherEntity);
                     auto& otherCharacterInfo = world.Get<Components::CharacterInfo>(otherEntity);
+                    auto& otherTransform = world.Get<Components::Transform>(otherEntity);
 
                     std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<1024>();
-                    if (!Util::MessageBuilder::Unit::BuildUnitCreate(buffer, *world.registry, otherEntity, otherObjectInfo.guid, otherCharacterInfo.name))
+                    if (!Util::MessageBuilder::Unit::BuildUnitAdd(buffer, otherObjectInfo.guid, otherCharacterInfo.name, otherTransform.position, otherTransform.scale, otherTransform.pitchYaw))
+                        return true;
+
+                    if (!Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, otherEntity, otherObjectInfo.guid))
                         return true;
 
                     networkState.server->SendPacket(netInfo.socketID, buffer);
@@ -836,7 +716,10 @@ namespace ECS::Systems
             if (playersEnteredInView.size() > 0)
             {
                 std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<1024>();
-                if (!Util::MessageBuilder::Unit::BuildUnitCreate(buffer, *world.registry, entity, objectInfo.guid, creatureInfo.name))
+                if (!Util::MessageBuilder::Unit::BuildUnitAdd(buffer, objectInfo.guid, creatureInfo.name, transform.position, transform.scale, transform.pitchYaw))
+                    return;
+
+                if (!Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, entity, objectInfo.guid))
                     return;
 
                 for (ObjectGUID playerGUID : playersEnteredInView)
@@ -845,13 +728,15 @@ namespace ECS::Systems
                     if (playerEntity == entt::null)
                         continue;
 
-                    if (auto* playerVisibilityInfo = world.TryGet<Components::VisibilityInfo>(playerEntity))
-                    {
-                        playerVisibilityInfo->visibleCreatures.insert(objectInfo.guid);
-                    }
+                    auto& playerVisibilityInfo = world.Get<Components::VisibilityInfo>(playerEntity);
+                    if (playerVisibilityInfo.visibleCreatures.contains(objectInfo.guid))
+                        continue;
 
                     if (auto* playerNetInfo = world.TryGet<Components::NetInfo>(playerEntity))
+                    {
+                        playerVisibilityInfo.visibleCreatures.insert(objectInfo.guid);
                         networkState.server->SendPacket(playerNetInfo->socketID, buffer);
+                    }
                 }
             }
 
@@ -1067,161 +952,405 @@ namespace ECS::Systems
 
         world.Clear<Events::CharacterNeedsVisualItemUpdate>();
     }
-    void UpdateWorld::HandlePowerUpdate(World& world, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateWorld::HandleCombatUpdate(World& world, Scripting::Zenith* zenith, Singletons::NetworkState& networkState, f32 deltaTime)
     {
-        static f32 timeSinceLastUpdate = 0.0f;
-        static constexpr f32 UPDATE_INTERVAL = 1.0f / 10.0f;
-
-        auto view = world.View<Components::UnitStatsComponent>();
-        view.each([&](entt::entity entity, Components::UnitStatsComponent& unitStatsComponent)
+        auto enterCombatView = world.View<Components::ObjectInfo, Components::UnitCombatInfo, Events::UnitEnterCombat>();
+        enterCombatView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::UnitCombatInfo& unitCombatInfo, Events::UnitEnterCombat& event)
         {
-            static constexpr f32 healthGainRate = 5.0f;
-            static constexpr f32 powerGainRate = 25.0f;
+            world.EmplaceOrReplace<Tags::IsInCombat>(entity);
 
-            // Handle Health Regen
+            if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
             {
-                f32 currentHealth = unitStatsComponent.currentHealth;
-
-                if (unitStatsComponent.currentHealth > 0.0f && currentHealth < unitStatsComponent.maxHealth)
-                    unitStatsComponent.currentHealth = glm::clamp(currentHealth + (healthGainRate * deltaTime), 0.0f, unitStatsComponent.maxHealth);
-
-                bool isHealthDirty = (currentHealth != unitStatsComponent.currentHealth || unitStatsComponent.healthIsDirty);
-                unitStatsComponent.healthIsDirty |= isHealthDirty;
+                zenith->CallEvent(Generated::LuaCreatureAIEventEnum::OnEnterCombat, Generated::LuaCreatureAIEventDataOnEnterCombat{
+                    .creatureEntity = entt::to_integral(entity)
+                });
             }
+        });
+        world.Clear<Events::UnitEnterCombat>();
 
-            for (i32 i = 0; i < (u32)Generated::PowerTypeEnum::Count; i++)
+        auto combatView = world.View<Components::ObjectInfo, Components::UnitCombatInfo, Tags::IsInCombat>();
+        combatView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::UnitCombatInfo& unitCombatInfo)
+        {
+            bool cantDropCombat = false;
+            for (auto itr = unitCombatInfo.threatTables.begin(); itr != unitCombatInfo.threatTables.end();)
             {
-                f32 prevPowerValue = unitStatsComponent.currentPower[i];
-                f32& powerValue = unitStatsComponent.currentPower[i];
-                f32 basePower = unitStatsComponent.basePower[i];
-                f32 maxPower = unitStatsComponent.maxPower[i];
+                ThreatTableEntry& threatTableEntry = itr->second;
 
-                auto powerType = (Generated::PowerTypeEnum)i;
-                if (powerType == Generated::PowerTypeEnum::Rage)
+                entt::entity threatEntity = world.GetEntity(itr->first);
+                if (world.ValidEntity(threatEntity))
                 {
-                    if (powerValue == 0)
-                        continue;
+                    auto& creatureThreatTable = world.Get<Components::CreatureThreatTable>(threatEntity);
+                    if (creatureThreatTable.allowDropCombat)
+                    {
+                        threatTableEntry.timeSinceLastActivity += deltaTime;
+                        if (threatTableEntry.timeSinceLastActivity >= 5.0f)
+                        {
+                            Util::Combat::RemoveUnitFromThreatTable(creatureThreatTable, objectInfo.guid);
+                            itr = unitCombatInfo.threatTables.erase(itr);
+                            continue;
+                        }
+                    }
                 }
                 else
                 {
-                    if (powerValue == maxPower)
-                        continue;
-                }
-
-                switch (powerType)
-                {
-                    case Generated::PowerTypeEnum::Rage:
+                    threatTableEntry.timeSinceLastActivity += deltaTime;
+                    if (threatTableEntry.timeSinceLastActivity >= 5.0f)
                     {
-                        powerValue = Util::Unit::HandleRageRegen(powerValue, 1.0f, deltaTime);
-                        break;
-                    }
-
-                    case Generated::PowerTypeEnum::Focus:
-                    case Generated::PowerTypeEnum::Energy:
-                    {
-                        powerValue = Util::Unit::HandleEnergyRegen(powerValue, maxPower, 1.0f, deltaTime);
-                        break;
-                    }
-
-                    default:
-                    {
+                        itr = unitCombatInfo.threatTables.erase(itr);
                         continue;
                     }
                 }
 
-                bool isStatDirty = powerValue != prevPowerValue;
-                unitStatsComponent.powerIsDirty[i] |= isStatDirty;
+                itr++;
+            }
+
+            if (!unitCombatInfo.threatTables.empty())
+                return;
+
+            if (auto* creatureThreatTable = world.TryGet<Components::CreatureThreatTable>(entity))
+            {
+                if (creatureThreatTable->threatList.size() > 0)
+                    return;
+            }
+
+            world.Remove<Tags::IsInCombat>(entity);
+
+            if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
+            {
+                zenith->CallEvent(Generated::LuaCreatureAIEventEnum::OnLeaveCombat, Generated::LuaCreatureAIEventDataOnLeaveCombat{
+                    .creatureEntity = entt::to_integral(entity)
+                });
             }
         });
+    }
+    void UpdateWorld::HandlePowerUpdate(World& world, Singletons::NetworkState& networkState, f32 deltaTime)
+    {
+        static constexpr f32 HEALTH_REGEN_INTERVAL = 0.5f;
 
-        timeSinceLastUpdate += deltaTime;
-        if (timeSinceLastUpdate >= UPDATE_INTERVAL)
+        auto healthUpdateView = world.View<Components::ObjectInfo, Components::VisibilityInfo, Components::UnitPowersComponent, Tags::IsMissingHealth, Tags::IsAlive>();
+        healthUpdateView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::VisibilityInfo& visibilityInfo, Components::UnitPowersComponent& unitPowersComponent)
         {
-            auto view = world.View<const Components::ObjectInfo, const Components::VisibilityInfo, Components::UnitStatsComponent>();
-            view.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::VisibilityInfo& visibilityInfo, Components::UnitStatsComponent& unitStatsComponent)
+            unitPowersComponent.timeToNextUpdate = unitPowersComponent.timeToNextUpdate - deltaTime;
+            if (unitPowersComponent.timeToNextUpdate > 0.0f)
+                return;
+
+            unitPowersComponent.timeToNextUpdate += HEALTH_REGEN_INTERVAL;
+
+            // Disalllow Health Regen while in combat
+            if (world.AllOf<Tags::IsInCombat>(entity))
+                return;
+
+            UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, Generated::PowerTypeEnum::Health);
+            
+            bool isCreature = world.AllOf<Tags::IsCreature>(entity);
+            f64 baseRegenRate = isCreature ? (healthPower.base * 0.75) : (healthPower.base * 0.01);
+            f64 regenAmount = baseRegenRate * HEALTH_REGEN_INTERVAL;
+
+            f64 newHealth = glm::clamp(healthPower.current + regenAmount, healthPower.current, healthPower.max);
+            Util::Unit::SetPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Health, healthPower.base, newHealth, healthPower.max);
+
+            ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, Generated::UnitPowerUpdatePacket{
+                .guid = objectInfo.guid,
+                .kind = static_cast<u8>(Generated::PowerTypeEnum::Health),
+                .base = healthPower.base,
+                .current = healthPower.current,
+                .max = healthPower.max
+            });
+        });
+
+        auto dirtyPowerView = world.View<const Components::ObjectInfo, const Components::VisibilityInfo, Components::UnitPowersComponent, Events::UnitNeedsPowerUpdate>();
+        dirtyPowerView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::VisibilityInfo& visibilityInfo, Components::UnitPowersComponent& unitPowersComponent)
+        {
+            for (Generated::PowerTypeEnum dirtyPowerType : unitPowersComponent.dirtyPowerTypes)
             {
-                if (unitStatsComponent.healthIsDirty)
-                {
-                    ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, Generated::UnitResourcesUpdatePacket{
-                        .guid = objectInfo.guid,
-                        .powerType = static_cast<i8>(Generated::PowerTypeEnum::Health),
-                        .base = unitStatsComponent.baseHealth,
-                        .current = unitStatsComponent.currentHealth,
-                        .max = unitStatsComponent.maxHealth
-                    });
+                UnitPower& power = Util::Unit::GetPower(unitPowersComponent, dirtyPowerType);
 
-                    unitStatsComponent.healthIsDirty = false;
-                }
+                ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, Generated::UnitPowerUpdatePacket{
+                    .guid = objectInfo.guid,
+                    .kind = static_cast<u8>(dirtyPowerType),
+                    .base = power.base,
+                    .current = power.current,
+                    .max = power.max
+                });
+            }
 
-                for (i32 i = 0; i < (u32)Generated::PowerTypeEnum::Count; i++)
-                {
-                    bool isDirty = unitStatsComponent.powerIsDirty[i];
-                    if (!isDirty)
-                        continue;
+            unitPowersComponent.dirtyPowerTypes.clear();
+        });
 
-                    auto powerType = (Generated::PowerTypeEnum)i;
+        auto dirtyResistanceView = world.View<const Components::ObjectInfo, const Components::NetInfo, Components::UnitResistancesComponent, Events::CharacterNeedsResistanceUpdate>();
+        dirtyResistanceView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::NetInfo& netInfo, Components::UnitResistancesComponent& unitResistancesComponent)
+        {
+            for (Generated::ResistanceTypeEnum dirtyResistanceType : unitResistancesComponent.dirtyResistanceTypes)
+            {
+                UnitResistance& resistance = Util::Unit::GetResistance(unitResistancesComponent, dirtyResistanceType);
 
-                    ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, Generated::UnitResourcesUpdatePacket{
-                        .guid = objectInfo.guid,
-                        .powerType = static_cast<i8>(powerType),
-                        .base = unitStatsComponent.baseHealth,
-                        .current = unitStatsComponent.currentHealth,
-                        .max = unitStatsComponent.maxHealth
-                    });
-                    unitStatsComponent.powerIsDirty[i] = false;
-                }
+                ECS::Util::Network::SendPacket(networkState, netInfo.socketID, Generated::UnitResistanceUpdatePacket{
+                    .kind = static_cast<u8>(dirtyResistanceType),
+                    .base = resistance.base,
+                    .current = resistance.current,
+                    .max = resistance.max
+                });
+            }
+
+            unitResistancesComponent.dirtyResistanceTypes.clear();
+        });
+
+        auto dirtyStatsView = world.View<const Components::ObjectInfo, const Components::NetInfo, Components::UnitStatsComponent, Events::CharacterNeedsStatUpdate>();
+        dirtyStatsView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::NetInfo& netInfo, Components::UnitStatsComponent& unitStatsComponent)
+        {
+            for (Generated::StatTypeEnum dirtyStatType : unitStatsComponent.dirtyStatTypes)
+            {
+                UnitStat& stat = Util::Unit::GetStat(unitStatsComponent, dirtyStatType);
+
+                ECS::Util::Network::SendPacket(networkState, netInfo.socketID, Generated::UnitResistanceUpdatePacket{
+                    .kind = static_cast<u8>(dirtyStatType),
+                    .base = stat.base,
+                    .current = stat.current
+                });
+            }
+
+            unitStatsComponent.dirtyStatTypes.clear();
+        });
+
+        world.Clear<Events::UnitNeedsPowerUpdate>();
+        world.Clear<Events::CharacterNeedsResistanceUpdate>();
+        world.Clear<Events::CharacterNeedsStatUpdate>();
+    }
+    void UpdateWorld::HandleSpellUpdate(World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
+    {
+        auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
+
+        auto prepareView = world.View<Components::SpellInfo, Components::SpellEffectInfo, Tags::IsUnpreparedSpell>();
+        prepareView.each([&](entt::entity entity, Components::SpellInfo& spellInfo, Components::SpellEffectInfo& spellEffectInfo)
+        {
+            GameDefine::Database::Spell* spell = nullptr;
+            if (!Util::Cache::GetSpellByID(gameCache, spellInfo.spellID, spell))
+            {
+                world.Emplace<Tags::IsCompleteSpell>(entity);
+                return;
+            }
+
+            entt::entity casterEntity = world.GetEntity(spellInfo.caster);
+            if (!world.ValidEntity(casterEntity))
+            {
+                world.Emplace<Tags::IsCompleteSpell>(entity);
+                return;
+            }
+
+            std::vector<GameDefine::Database::SpellEffect>* spellEffectList = nullptr;
+            if (Util::Cache::GetSpellEffectsBySpellID(gameCache, spellInfo.spellID, spellEffectList))
+            {
+                spellEffectInfo.effects = *spellEffectList;
+            }
+
+            // Handle Prepare Spell
+            bool prepared = zenith->CallEventBool(Generated::LuaSpellEventEnum::OnPrepare, Generated::LuaSpellEventDataOnPrepare{
+                .casterID = entt::to_integral(casterEntity),
+                .spellEntity = entt::to_integral(entity),
+                .spellID = spellInfo.spellID
             });
 
-            timeSinceLastUpdate -= UPDATE_INTERVAL;
-        }
-    }
-    void UpdateWorld::HandleSpellUpdate(World& world, Singletons::NetworkState& networkState, f32 deltaTime)
-    {
-        struct CastEvent
-        {
-            ObjectGUID caster;
-            ObjectGUID target;
-        };
-        
-        std::vector<CastEvent> castEvents;
-        
-        auto view = world.View<Components::CastInfo>();
-        view.each([&](entt::entity entity, Components::CastInfo& castInfo)
-        {
-            castInfo.duration += deltaTime;
-        
-            if (castInfo.duration >= castInfo.castTime)
+            if (!prepared)
             {
-                castEvents.push_back({ castInfo.caster, castInfo.target });
+                world.Emplace<Tags::IsCompleteSpell>(entity);
+                return;
             }
+
+            auto& visibilityInfo = world.Get<Components::VisibilityInfo>(casterEntity);
+            ECS::Util::Network::SendToNearby(networkState, world, casterEntity, visibilityInfo, true, Generated::UnitCastSpellPacket{
+                .spellID = spellInfo.spellID,
+                .guid = spellInfo.caster,
+                .castTime = spellInfo.castTime,
+                .timeToCast = spellInfo.timeToCast
+            });
+
+            world.Emplace<Tags::IsActiveSpell>(entity);
+        });
+        world.Clear<Tags::IsUnpreparedSpell>();
+
+        auto activeView = world.View<Components::SpellInfo, Components::SpellEffectInfo, Tags::IsActiveSpell>();
+        activeView.each([&](entt::entity entity, Components::SpellInfo& spellInfo, Components::SpellEffectInfo& spellEffectInfo)
+        {
+            spellInfo.timeToCast = glm::max(0.0f, spellInfo.timeToCast - deltaTime);
+            if (spellInfo.timeToCast > 0.0f)
+                return;
+
+            entt::entity casterEntity = world.GetEntity(spellInfo.caster);
+            if (!world.ValidEntity(casterEntity))
+            {
+                world.Emplace<Tags::IsCompleteSpell>(entity);
+                return;
+            }
+
+            u8 numEffects = static_cast<u8>(spellEffectInfo.effects.size());
+            for (u8 i = 0; i < numEffects; i++)
+            {
+                const GameDefine::Database::SpellEffect& spellEffect = spellEffectInfo.effects[i];
+
+                zenith->CallEvent(Generated::LuaSpellEventEnum::OnHandleEffect, Generated::LuaSpellEventDataOnHandleEffect{
+                    .casterID = entt::to_integral(casterEntity),
+                    .spellEntity = entt::to_integral(entity),
+                    .spellID = spellInfo.spellID,
+                    .effectIndex = i,
+                    .effectType = spellEffect.effectType,
+                });
+            }
+
+            world.Remove<Tags::IsActiveSpell>(entity);
+            world.Emplace<Tags::IsCompleteSpell>(entity);
         });
 
-        for (const CastEvent& castEvent : castEvents)
+        auto completedView = world.View<Components::SpellInfo, Tags::IsCompleteSpell>();
+        completedView.each([&](entt::entity entity, Components::SpellInfo& spellInfo)
         {
-            ObjectGUID casterGUID = castEvent.caster;
-            ObjectGUID targetGUID = castEvent.target;
-
-            entt::entity casterEntity = world.GetEntity(casterGUID);
-            entt::entity targetEntity = world.GetEntity(targetGUID);
-
-            if (!world.ValidEntity(casterEntity) || !world.ValidEntity(targetEntity))
-                continue;
-        
-            auto& targetStats = world.Get<Components::UnitStatsComponent>(targetEntity);
-            targetStats.currentHealth = glm::max(0.0f, targetStats.currentHealth - 35.0f);
-            targetStats.healthIsDirty = true;
-        
-            // Send Grid Message
+            entt::entity casterEntity = world.GetEntity(spellInfo.caster);
+            if (world.ValidEntity(casterEntity))
             {
-                std::shared_ptr<Bytebuffer> damageDealtMessage = Bytebuffer::Borrow<64>();
-                if (!Util::MessageBuilder::CombatLog::BuildDamageDealtMessage(damageDealtMessage, casterGUID, targetGUID, 35.0f))
-                    continue;
-        
-                auto& visibilityInfo = world.Get<Components::VisibilityInfo>(casterEntity);
-                Util::Network::SendToNearby(networkState, world, casterEntity, visibilityInfo, true, damageDealtMessage);
+                auto& characterSpellCastInfo = world.Get<Components::CharacterSpellCastInfo>(casterEntity);
+                characterSpellCastInfo.activeSpellEntity = entt::null;
+
+                if (characterSpellCastInfo.queuedSpellEntity != entt::null)
+                {
+                    characterSpellCastInfo.activeSpellEntity = characterSpellCastInfo.queuedSpellEntity;
+                    characterSpellCastInfo.queuedSpellEntity = entt::null;
+
+                    world.Emplace<Tags::IsUnpreparedSpell>(characterSpellCastInfo.activeSpellEntity);
+                }
             }
-        
-            world.Remove<Components::CastInfo>(casterEntity);
+
+            world.DestroyEntity(entity);
+        });
+    }
+    void UpdateWorld::HandleCombatEventUpdate(World& world, Singletons::NetworkState& networkState, f32 deltaTime)
+    {
+        auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
+
+        u32 numCombatEvents = static_cast<u32>(combatEventState.combatEvents.size());
+        if (numCombatEvents == 0)
+            return;
+
+        std::shared_ptr<Bytebuffer> combatEventBuffer = Bytebuffer::Borrow<256>();
+
+        while (numCombatEvents-- > 0)
+        {
+            combatEventBuffer->Reset();
+
+            const CombatEventInfo& eventInfo = combatEventState.combatEvents.front();
+
+            entt::entity sourceEntity = world.GetEntity(eventInfo.sourceGUID);
+            entt::entity targetEntity = world.GetEntity(eventInfo.targetGUID);
+
+            bool validSourceEntity = world.ValidEntity(sourceEntity);
+            bool validTargetEntity = world.ValidEntity(targetEntity);
+
+            if (!validTargetEntity)
+            {
+                combatEventState.combatEvents.pop_front();
+                continue;
+            }
+
+            auto& unitPowersComponent = world.Get<Components::UnitPowersComponent>(targetEntity);
+            UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, Generated::PowerTypeEnum::Health);
+            bool isDead = (healthPower.current <= 0.0);
+
+            bool builtMessage = false;
+            switch (eventInfo.eventType)
+            {
+                case CombatEventType::Damage:
+                {
+                    if (isDead)
+                        break;
+
+                    f64 amount = static_cast<f32>(eventInfo.amount);
+                    f64 damageDone = glm::min(amount, healthPower.current);
+                    f64 overKillDamage = glm::max(0.0, amount - healthPower.current);
+
+                    if (damageDone <= 0)
+                        break;
+
+                    bool canAddToThreatTable = validSourceEntity && world.AllOf<Components::CreatureThreatTable>(targetEntity);
+                    if (canAddToThreatTable && sourceEntity != targetEntity)
+                    {
+                        auto& unitCombatInfo = world.Get<Components::UnitCombatInfo>(sourceEntity);
+                        f64 threatAmount = damageDone * unitCombatInfo.threatModifier * 1000.0f;
+
+                        Util::Combat::AddUnitToThreatTable(world, unitCombatInfo, targetEntity, sourceEntity, threatAmount);
+                    }
+
+                    bool killedTarget = overKillDamage > 0 || damageDone == healthPower.current;
+                    f64 newHealth = healthPower.current - damageDone;
+                    Util::Unit::SetPower(world, targetEntity, unitPowersComponent, Generated::PowerTypeEnum::Health, healthPower.base, newHealth, healthPower.max);
+
+                    builtMessage = Util::MessageBuilder::CombatLog::BuildDamageDealtMessage(combatEventBuffer, eventInfo.sourceGUID, eventInfo.targetGUID, damageDone, overKillDamage);
+                    
+                    if (killedTarget)
+                    {
+                        world.Emplace<Events::UnitDied>(targetEntity, Events::UnitDied{
+                            .killerEntity = validSourceEntity ? sourceEntity : entt::null
+                        });
+                    }
+                    break;
+                }
+
+                case CombatEventType::Heal:
+                {
+                    if (isDead)
+                        break;
+
+                    f64 amount = static_cast<f64>(eventInfo.amount);
+                    f64 healingDone = glm::min(amount, healthPower.max - healthPower.current);
+                    f64 overHealing = glm::max(0.0, amount - healingDone);
+
+                    if (healingDone <= 0)
+                        break;
+
+                    if (validSourceEntity && sourceEntity != targetEntity)
+                    {
+                        auto& unitCombatInfo = world.Get<Components::UnitCombatInfo>(targetEntity);
+                        f64 threatAmount = healingDone * unitCombatInfo.threatModifier * 1000.0f;
+
+                        Util::Combat::AddUnitToThreatTables(world, unitCombatInfo, targetEntity, sourceEntity, threatAmount);
+                    }
+
+                    f64 newHealth = healthPower.current + healingDone;
+                    Util::Unit::SetPower(world, targetEntity, unitPowersComponent, Generated::PowerTypeEnum::Health, healthPower.base, newHealth, healthPower.max);
+
+                    builtMessage = Util::MessageBuilder::CombatLog::BuildHealingDoneMessage(combatEventBuffer, eventInfo.sourceGUID, eventInfo.targetGUID, healingDone, overHealing);
+
+                    break;
+                }
+
+                case CombatEventType::Resurrect:
+                {
+                    f64 missingHealth = healthPower.max - healthPower.current;
+                    if (missingHealth <= 0)
+                        break;
+
+                    f64 newHealth = healthPower.max;
+                    Util::Unit::SetPower(world, targetEntity, unitPowersComponent, Generated::PowerTypeEnum::Health, healthPower.base, newHealth, healthPower.max);
+
+                    builtMessage = Util::MessageBuilder::CombatLog::BuildResurrectedMessage(combatEventBuffer, eventInfo.sourceGUID, eventInfo.targetGUID, missingHealth);
+
+                    world.Emplace<Events::UnitResurrected>(targetEntity, Events::UnitResurrected{
+                        .resurrectorEntity = validSourceEntity ? sourceEntity : entt::null
+                    });
+                    break;
+                }
+
+                default: break;
+            }
+
+            if (builtMessage)
+            {
+                entt::entity broadcasterEntity = validSourceEntity ? sourceEntity : targetEntity;
+
+                auto& visibilityInfo = world.Get<Components::VisibilityInfo>(broadcasterEntity);
+
+                // TODO : Handle cases where source and target have gone out of visibility range of each other
+                Util::Network::SendToNearby(networkState, world, broadcasterEntity, visibilityInfo, true, combatEventBuffer);
+            }
+
+            combatEventState.combatEvents.pop_front();
         }
     }
 
@@ -1232,6 +1361,8 @@ namespace ECS::Systems
         auto& gameCache = ctx.get<Singletons::GameCache>();
         auto& worldState = ctx.get<Singletons::WorldState>();
         auto& networkState = ctx.get<Singletons::NetworkState>();
+
+        Scripting::LuaManager* luaManager = ServiceLocator::GetLuaManager();
 
         // Handle World Transfer Requests
         {
@@ -1270,7 +1401,10 @@ namespace ECS::Systems
                 });
 
                 if (request.useTargetPosition)
+                {
+                    world.Emplace<Tags::CharacterWasWorldTransferred>(socketEntity);
                     Util::Persistence::Character::CharacterSetMapIDPositionOrientation(gameCache, request.characterID, request.targetMapID, request.targetPosition, request.targetOrientation);
+                }
 
                 world.Emplace<Events::CharacterNeedsInitialization>(socketEntity);
             }
@@ -1283,20 +1417,24 @@ namespace ECS::Systems
             
             if (HandleMapInitialization(world, gameCache))
                 continue;
-        
-            HandleCharacterDeinitialization(worldState, world, gameCache, networkState);
-            HandleCharacterInitialization(world, gameCache, networkState);
 
-            HandleCreatureDeinitialization(world, gameCache);
-            HandleCreatureInitialization(world, gameCache);
+            Scripting::Zenith* zenith = luaManager->GetZenithStateManager().Get(world.zenithKey);
+            if (!zenith)
+                continue;
+
+            UpdateCharacter::HandleUpdate(worldState, world, zenith, gameCache, networkState, deltaTime);
+            HandleCreatureUpdate(world, zenith, gameCache, networkState, deltaTime);
+            HandleUnitUpdate(world, zenith, gameCache, networkState, deltaTime);
 
             HandleProximityTriggerUpdate(world, gameCache, networkState);
 
             HandleReplication(world, networkState, deltaTime);
             HandleContainerUpdate(world, gameCache, networkState);
             HandleDisplayUpdate(world, networkState);
+            HandleCombatUpdate(world, zenith, networkState, deltaTime);
             HandlePowerUpdate(world, networkState, deltaTime);
-            HandleSpellUpdate(world, networkState, deltaTime);
+            HandleSpellUpdate(world, zenith, gameCache, networkState, deltaTime);
+            HandleCombatEventUpdate(world, networkState, deltaTime);
         }
     }
 }

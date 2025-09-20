@@ -4,7 +4,12 @@
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
+#include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/Transform.h"
+#include "Server-Game/ECS/Components/UnitCombatInfo.h"
+#include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
+#include "Server-Game/ECS/Components/UnitPowersComponent.h"
+#include "Server-Game/ECS/Components/UnitResistancesComponent.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Components/VisibilityInfo.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
@@ -99,39 +104,31 @@ namespace ECS::Util::Unit
         UpdateDisplayRaceGender(registry, entity, displayInfo, displayInfo.unitRace, gender, forceDirty);
     }
 
-    Components::UnitStatsComponent& AddStatsComponent(entt::registry& registry, entt::entity entity)
+    ECS::Components::UnitPowersComponent& AddPowersComponent(World& world, entt::entity entity)
     {
-        auto& unitStatsComponent = registry.emplace_or_replace<Components::UnitStatsComponent>(entity);
+        auto& unitPowersComponent = world.Emplace<Components::UnitPowersComponent>(entity);
 
-        {
-            unitStatsComponent.baseHealth = 100.0f;
-            unitStatsComponent.currentHealth = 50.0f;
-            unitStatsComponent.maxHealth = 100.0f;
-        }
+        AddPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Health, 100.0, 50.0, 100.0);
+        AddPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Mana, 50.0, 0.0, 50.0);
 
-        for (u32 i = 0; i < (u32)Generated::PowerTypeEnum::Count; ++i)
-        {
-            unitStatsComponent.basePower[i] = 100.0f;
+        return unitPowersComponent;
+    }
 
-            if (i == (u32)Generated::PowerTypeEnum::Mana || i == (u32)Generated::PowerTypeEnum::Rage || i == (u32)Generated::PowerTypeEnum::Happiness)
-                unitStatsComponent.currentPower[i] = 100.0f;
-            else
-                unitStatsComponent.currentPower[i] = 0.0f;
+    ECS::Components::UnitResistancesComponent& AddResistancesComponent(World& world, entt::entity entity)
+    {
+        auto& unitResistancesComponent = world.Emplace<Components::UnitResistancesComponent>(entity);
+        return unitResistancesComponent;
+    }
 
-            unitStatsComponent.maxPower[i] = 100.0f;
-        }
+    Components::UnitStatsComponent& AddStatsComponent(World& world, entt::entity entity)
+    {
+        auto& unitStatsComponent = world.Emplace<Components::UnitStatsComponent>(entity);
 
-        for (u32 i = 0; i < (u32)Generated::StatTypeEnum::Count; ++i)
-        {
-            unitStatsComponent.baseStat[i] = 10;
-            unitStatsComponent.currentStat[i] = 10;
-        }
-
-        for (u32 i = 0; i < (u32)Generated::ResistanceTypeEnum::Count; ++i)
-        {
-            unitStatsComponent.baseResistance[i] = 5;
-            unitStatsComponent.currentResistance[i] = 5;
-        }
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Stamina, 10.0, 10.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Strength, 10.0, 10.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Agility, 10.0, 10.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Intellect, 10.0, 10.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Spirit, 10.0, 10.0);
 
         return unitStatsComponent;
     }
@@ -191,5 +188,140 @@ namespace ECS::Util::Unit
             .guid = ObjectGUID::Empty,
             .message = message
         });
+    }
+    bool HasSpellCooldown(Components::UnitSpellCooldownHistory& unitSpellCooldownHistory, u32 spellID)
+    {
+        auto itr = unitSpellCooldownHistory.spellIDToCooldown.find(spellID);
+        if (itr == unitSpellCooldownHistory.spellIDToCooldown.end())
+            return false;
+
+        bool onCooldown = itr->second > 0.0f;
+        return onCooldown;
+    }
+    f32 GetSpellCooldownRemaining(Components::UnitSpellCooldownHistory& unitSpellCooldownHistory, u32 spellID)
+    {
+        auto itr = unitSpellCooldownHistory.spellIDToCooldown.find(spellID);
+        if (itr == unitSpellCooldownHistory.spellIDToCooldown.end())
+            return 0.0f;
+
+        return itr->second;
+    }
+    void SetSpellCooldown(Components::UnitSpellCooldownHistory& unitSpellCooldownHistory, u32 spellID, f32 cooldown)
+    {
+        unitSpellCooldownHistory.spellIDToCooldown[spellID] = cooldown;
+    }
+
+    bool HasPower(const Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType)
+    {
+        bool hasPowerType = unitPowersComponent.powerTypeToValue.contains(powerType);
+        return hasPowerType;
+    }
+    UnitPower& GetPower(Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType)
+    {
+        return unitPowersComponent.powerTypeToValue.at(powerType);
+    }
+    bool AddPower(World& world, entt::entity entity, Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType, f64 base, f64 current, f64 max)
+    {
+        if (HasPower(unitPowersComponent, powerType))
+            return false;
+
+        unitPowersComponent.dirtyPowerTypes.insert(powerType);
+        UnitPower& power = unitPowersComponent.powerTypeToValue[powerType];
+        power.base = base;
+        power.current = current;
+        power.max = max;
+
+        if (powerType == Generated::PowerTypeEnum::Health && power.current < power.max)
+            world.EmplaceOrReplace<Tags::IsMissingHealth>(entity);
+
+        world.EmplaceOrReplace<Events::UnitNeedsPowerUpdate>(entity);
+        return true;
+    }
+    bool SetPower(World& world, entt::entity entity, Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType, f64 base, f64 current, f64 max)
+    {
+        if (!HasPower(unitPowersComponent, powerType))
+            return false;
+
+        UnitPower& power = unitPowersComponent.powerTypeToValue[powerType];
+
+        bool changed = power.base != base || power.current != current || power.max != max;
+        if (changed)
+        {
+            unitPowersComponent.dirtyPowerTypes.insert(powerType);
+            power.base = base;
+            power.current = current;
+            power.max = max;
+
+            if (powerType == Generated::PowerTypeEnum::Health)
+            {
+                if (power.current == 0)
+                {
+                    unitPowersComponent.timeToNextUpdate = 0.0f;
+                }
+                else
+                {
+                    if (power.current < power.max)
+                    {
+                        world.EmplaceOrReplace<Tags::IsMissingHealth>(entity);
+                    }
+                    else
+                    {
+                        unitPowersComponent.timeToNextUpdate = 0.0f;
+                        world.Remove<Tags::IsMissingHealth>(entity);
+                    }
+                }
+            }
+
+            world.EmplaceOrReplace<Events::UnitNeedsPowerUpdate>(entity);
+        }
+
+        return true;
+    }
+
+    bool HasResistance(const Components::UnitResistancesComponent& unitResistancesComponent, Generated::ResistanceTypeEnum resistanceType)
+    {
+        bool hasResistanceType = unitResistancesComponent.resistanceTypeToValue.contains(resistanceType);
+        return hasResistanceType;
+    }
+    UnitResistance& GetResistance(Components::UnitResistancesComponent& unitResistancesComponent, Generated::ResistanceTypeEnum resistanceType)
+    {
+        return unitResistancesComponent.resistanceTypeToValue.at(resistanceType);
+    }
+    bool AddResistance(Components::UnitResistancesComponent& unitResistancesComponent, Generated::ResistanceTypeEnum resistanceType, f64 base, f64 current, f64 max)
+    {
+        if (HasResistance(unitResistancesComponent, resistanceType))
+            return false;
+
+        unitResistancesComponent.dirtyResistanceTypes.insert(resistanceType);
+        unitResistancesComponent.resistanceTypeToValue[resistanceType] = UnitResistance{
+            .base = base,
+            .current = current,
+            .max = max
+        };
+
+        return true;
+    }
+
+    bool HasStat(const Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType)
+    {
+        bool hasStatType = unitStatsComponent.statTypeToValue.contains(statType);
+        return hasStatType;
+    }
+    UnitStat& GetStat(Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType)
+    {
+        return unitStatsComponent.statTypeToValue.at(statType);
+    }
+    bool AddStat(Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType, f64 base, f64 current)
+    {
+        if (HasStat(unitStatsComponent, statType))
+            return false;
+
+        unitStatsComponent.dirtyStatTypes.insert(statType);
+        unitStatsComponent.statTypeToValue[statType] = UnitStat{
+            .base = base,
+            .current = current
+        };
+
+        return true;
     }
 }
