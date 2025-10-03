@@ -25,6 +25,7 @@ namespace Scripting
         {
             i32 GetID(Zenith* zenith, Spell* spell);
             i32 GetEffect(Zenith* zenith, Spell* spell);
+            i32 GetProcInfo(Zenith* zenith, Spell* spell);
 
             i32 GetCaster(Zenith* zenith, Spell* spell);
             i32 GetTarget(Zenith* zenith, Spell* spell);
@@ -40,6 +41,7 @@ namespace Scripting
         {
             { "GetID", SpellMethods::GetID },
             { "GetEffect", SpellMethods::GetEffect },
+            { "GetProcInfo", SpellMethods::GetProcInfo },
 
             { "GetCaster", SpellMethods::GetCaster },
             { "GetTarget", SpellMethods::GetTarget },

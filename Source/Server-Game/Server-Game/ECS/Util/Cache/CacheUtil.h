@@ -9,6 +9,7 @@ namespace Database
 {
     struct Container;
     struct ItemInstance;
+    struct SpellEffectInfo;
 }
 
 namespace ECS
@@ -39,10 +40,16 @@ namespace ECS::Util::Cache
     void CharacterSetLevel(Components::CharacterInfo& character, u16 level);
 
     bool ItemTemplateExistsByID(Singletons::GameCache& cache, u32 itemID);
+    bool ItemStatTemplateExistsByID(Singletons::GameCache& cache, u32 statTemplateID);
+    bool ItemArmorTemplateExistsByID(Singletons::GameCache& cache, u32 armorTemplateID);
     bool ItemWeaponTemplateExistsByID(Singletons::GameCache& cache, u32 weaponTemplateID);
+    bool ItemShieldTemplateExistsByID(Singletons::GameCache& cache, u32 shieldTemplateID);
     bool ItemInstanceExistsByID(Singletons::GameCache& cache, u64 itemInstanceID);
     bool GetItemTemplateByID(Singletons::GameCache& cache, u32 itemID, GameDefine::Database::ItemTemplate*& itemTemplate);
+    bool GetItemStatTemplateByID(Singletons::GameCache& cache, u32 statTemplateID, GameDefine::Database::ItemStatTemplate*& itemStatTemplate);
+    bool GetItemArmorTemplateByID(Singletons::GameCache& cache, u32 armorTemplateID, GameDefine::Database::ItemArmorTemplate*& itemArmorTemplate);
     bool GetItemWeaponTemplateByID(Singletons::GameCache& cache, u32 weaponTemplateID, GameDefine::Database::ItemWeaponTemplate*& itemWeaponTemplate);
+    bool GetItemShieldTemplateByID(Singletons::GameCache& cache, u32 shieldTemplateID, GameDefine::Database::ItemShieldTemplate*& itemShieldTemplate);
     bool GetItemInstanceByID(Singletons::GameCache& cache, u64 itemInstanceID, Database::ItemInstance*& itemInstance);
 
     bool ItemInstanceCreate(Singletons::GameCache& cache, u64 itemInstanceID, const Database::ItemInstance& itemInstance);
@@ -61,5 +68,5 @@ namespace ECS::Util::Cache
 
     bool SpellExistsByID(Singletons::GameCache& cache, u32 spellID);
     bool GetSpellByID(Singletons::GameCache& cache, u32 spellID, GameDefine::Database::Spell*& spell);
-    bool GetSpellEffectsBySpellID(Singletons::GameCache& cache, u32 spellID, std::vector<GameDefine::Database::SpellEffect>*& spellEffectList);
+    bool GetSpellEffectsBySpellID(Singletons::GameCache& cache, u32 spellID, Database::SpellEffectInfo*& dbSpellEffectInfo);
 }

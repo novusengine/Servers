@@ -54,6 +54,7 @@
 #include <Gameplay/GameDefine.h>
 #include <Gameplay/Network/GameMessageRouter.h>
 
+#include <Meta/Generated/Shared/ClientDB.h>
 #include <Meta/Generated/Shared/NetworkEnum.h>
 #include <Meta/Generated/Shared/NetworkPacket.h>
 #include <Meta/Generated/Shared/UnitEnum.h>
@@ -978,7 +979,7 @@ namespace ECS::Systems
         if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
         {
             auto transaction = conn->NewTransaction();
-            auto queryResult = transaction.exec(pqxx::prepped("SetSpell"), pqxx::params{ spell.id, spell.name, spell.description, spell.auraDescription, spell.iconID, spell.castTime, spell.cooldown });
+            auto queryResult = transaction.exec(pqxx::prepped("SetSpell"), pqxx::params{ spell.id, spell.name, spell.description, spell.auraDescription, spell.iconID, spell.castTime, spell.cooldown, spell.duration });
             if (queryResult.affected_rows() == 0)
             {
                 transaction.abort();
@@ -1013,13 +1014,89 @@ namespace ECS::Systems
             {
                 transaction.commit();
 
-                auto& effectList = gameCache.spellTables.spellIDToEffects[spellEffect.spellID];
-                effectList.push_back(spellEffect);
+                // Insert or Update effect in cache
+                Database::SpellEffectInfo& effectList = gameCache.spellTables.spellIDToEffects[spellEffect.spellID];
+                auto it = std::find_if(effectList.effects.begin(), effectList.effects.end(), [&spellEffect](const GameDefine::Database::SpellEffect& effect) {
+                    return effect.id == spellEffect.id;
+                });
+
+                if (it != effectList.effects.end())
+                {
+                    *it = spellEffect;
+                }
+                else
+                {
+                    effectList.effects.push_back(spellEffect);
+                }
 
                 // Sort effects by priority
-                std::sort(effectList.begin(), effectList.end(), [](const GameDefine::Database::SpellEffect& a, const GameDefine::Database::SpellEffect& b) {
+                std::sort(effectList.effects.begin(), effectList.effects.end(), [](const GameDefine::Database::SpellEffect& a, const GameDefine::Database::SpellEffect& b) {
                     return a.effectPriority < b.effectPriority;
                 });
+
+                // TODO : Update Regular Effects Mask, Proc Effects Mask and Proc Phase Type to Proc Info Mask
+            }
+        }
+
+        return true;
+    }
+
+    bool HandleOnCheatSpellProcDataSet(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        u32 spellProcDataID = 0;
+        Generated::SpellProcDataRecord spellProcData;
+
+        if (!message.buffer->GetU32(spellProcDataID))
+            return false;
+
+        if (!message.buffer->Deserialize(spellProcData))
+            return false;
+
+        entt::registry::context& ctx = registry->ctx();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
+        {
+            auto transaction = conn->NewTransaction();
+            auto queryResult = transaction.exec(pqxx::prepped("SetSpellProcData"), pqxx::params{ spellProcDataID, (i32)spellProcData.phaseMask, (i64)spellProcData.typeMask, (i64)spellProcData.hitMask, (i64)spellProcData.flags, spellProcData.procsPerMinute, spellProcData.chanceToProc, (i32)spellProcData.internalCooldownMS, spellProcData.charges });
+            if (queryResult.affected_rows() == 0)
+            {
+                transaction.abort();
+            }
+            else
+            {
+                transaction.commit();
+            }
+        }
+
+        return true;
+    }
+
+    bool HandleOnCheatSpellProcLinkSet(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        u32 spellProcLinkID = 0;
+        Generated::SpellProcLinkRecord spellProcLink;
+
+        if (!message.buffer->GetU32(spellProcLinkID))
+            return false;
+
+        if (!message.buffer->Deserialize(spellProcLink))
+            return false;
+
+        entt::registry::context& ctx = registry->ctx();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+
+        if (auto conn = gameCache.dbController->GetConnection(Database::DBType::Character))
+        {
+            auto transaction = conn->NewTransaction();
+            auto queryResult = transaction.exec(pqxx::prepped("SetSpellProcLink"), pqxx::params{ spellProcLinkID, spellProcLink.spellID, (i64)spellProcLink.effectMask, spellProcLink.procDataID });
+            if (queryResult.affected_rows() == 0)
+            {
+                transaction.abort();
+            }
+            else
+            {
+                transaction.commit();
             }
         }
 
@@ -1225,6 +1302,14 @@ namespace ECS::Systems
             case Generated::CheatCommandEnum::SpellEffectSet:
             {
                 return HandleOnCheatSpellEffectSet(registry, *world, socketID, entity, message);
+            }
+            case Generated::CheatCommandEnum::SpellProcDataSet:
+            {
+                return HandleOnCheatSpellProcDataSet(registry, *world, socketID, entity, message);
+            }
+            case Generated::CheatCommandEnum::SpellProcLinkSet:
+            {
+                return HandleOnCheatSpellProcLinkSet(registry, *world, socketID, entity, message);
             }
 
             case Generated::CheatCommandEnum::CreatureAddScript:
@@ -1518,12 +1603,13 @@ namespace ECS::Systems
                     visualItems.equippedItemIDs[packet.srcSlot] = itemID;
                     visualItems.dirtyItemIDs.insert(packet.srcSlot);
                     world->EmplaceOrReplace<Events::CharacterNeedsVisualItemUpdate>(entity);
+                    world->EmplaceOrReplace<Events::CharacterNeedsRecalculateStatsUpdate>(entity);
                 }
             }
 
             if (dstContainerID == 0)
             {
-                auto equippedSlot = static_cast<Generated::ItemEquipSlotEnum>(packet.srcSlot);
+                auto equippedSlot = static_cast<Generated::ItemEquipSlotEnum>(packet.dstSlot);
                 if (equippedSlot >= Generated::ItemEquipSlotEnum::EquipmentStart && equippedSlot <= Generated::ItemEquipSlotEnum::EquipmentEnd)
                 {
                     const Database::ContainerItem& containerItem = dstContainer->GetItem(packet.dstSlot);
@@ -1546,6 +1632,7 @@ namespace ECS::Systems
                     visualItems.equippedItemIDs[packet.dstSlot] = itemID;
                     visualItems.dirtyItemIDs.insert(packet.dstSlot);
                     world->EmplaceOrReplace<Events::CharacterNeedsVisualItemUpdate>(entity);
+                    world->EmplaceOrReplace<Events::CharacterNeedsRecalculateStatsUpdate>(entity);
                 }
             }
         }

@@ -20,6 +20,10 @@ local function HandleEffect(eventID : SpellEvent, data : SpellEventDataOnHandleE
         end
     end
 
+    local attackPower = data.caster:GetStat(StatType.AttackPower)
+    minDamage += attackPower
+    maxDamage += attackPower
+
     local damage = math.random(minDamage, maxDamage)
     data.spell:Damage(damage)
 end

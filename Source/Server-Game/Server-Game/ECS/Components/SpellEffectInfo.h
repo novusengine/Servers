@@ -1,15 +1,14 @@
 #pragma once
-#include <Base/Types.h>
-
 #include <Gameplay/GameDefine.h>
 
-#include <robinhood/robinhood.h>
+#include <vector>
 
 namespace ECS::Components
 {
     struct SpellEffectInfo
     {
     public:
+        u64 regularEffectsMask = 0;
         std::vector<GameDefine::Database::SpellEffect> effects;
     };
 }

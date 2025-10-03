@@ -11,5 +11,6 @@ namespace Scripting
     {
         void OnSpellPrepare(Zenith* zenith, Generated::LuaSpellEventDataOnPrepare& data);
         void OnSpellHandleEffect(Zenith* zenith, Generated::LuaSpellEventDataOnHandleEffect& data);
+        void OnSpellFinish(Zenith* zenith, Generated::LuaSpellEventDataOnFinish& data);
     }
 }

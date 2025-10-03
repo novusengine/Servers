@@ -15,6 +15,7 @@ namespace ECS::Events
     struct CharacterNeedsDeinitialization {};
     struct CharacterNeedsContainerUpdate {};
     struct CharacterNeedsDisplayUpdate {};
+    struct CharacterNeedsRecalculateStatsUpdate {};
     struct CharacterNeedsVisualItemUpdate {};
     struct CharacterNeedsStatUpdate {};
     struct CharacterNeedsResistanceUpdate {};
@@ -83,6 +84,9 @@ namespace ECS::Events
     };
     struct UnitNeedsPowerUpdate {};
 
+    struct AuraRefreshed {};
+    struct AuraExpired {};
+
     struct ProximityTriggerCreate
     {
     public:
@@ -93,7 +97,6 @@ namespace ECS::Events
         vec3 position;
         vec3 extents;
     };
-
     struct ProximityTriggerNeedsInitialization
     {
     public:
@@ -106,7 +109,6 @@ namespace ECS::Events
         vec3 position;
         vec3 extents;
     };
-
     struct ProximityTriggerNeedsDeinitialization
     {
     public:

@@ -37,7 +37,7 @@ namespace ECS
         
         namespace Unit
         {
-            bool BuildUnitAdd(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID guid, const std::string& name, const vec3& position, const vec3& scale, const vec2& pitchYaw);
+            bool BuildUnitAdd(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID guid, const std::string& name, GameDefine::UnitClass unitClass, const vec3& position, const vec3& scale, const vec2& pitchYaw);
             bool BuildUnitBaseInfo(std::shared_ptr<Bytebuffer>& buffer, entt::registry& registry, entt::entity entity, ObjectGUID guid);
         }
 

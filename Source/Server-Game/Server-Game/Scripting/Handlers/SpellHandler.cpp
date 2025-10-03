@@ -1,6 +1,8 @@
 #include "SpellHandler.h"
 #include "Server-Game/Scripting/Game/Spell.h"
 #include "Server-Game/Scripting/Game/SpellEffect.h"
+#include "Server-Game/Scripting/Game/Aura.h"
+#include "Server-Game/Scripting/Game/AuraEffect.h"
 
 #include <Meta/Generated/Shared/SpellEnum.h>
 
@@ -14,6 +16,9 @@ namespace Scripting
     {
         Game::Spell::Register(zenith);
         Game::SpellEffect::Register(zenith);
+
+        Game::Aura::Register(zenith);
+        Game::AuraEffect::Register(zenith);
 
         {
             zenith->CreateTable(Generated::SpellEffectTypeEnumMeta::EnumName.data());

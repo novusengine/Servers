@@ -2,7 +2,8 @@ if (IsStateGlobal()) then return end
 
 @native
 local function OnServerEventLoaded(eventID : ServerEvent, data : any)
-    print(`Message of the day: {data.motd}`)
+    local mapID, instanceID, variantID = GetStateIDs()
+    print(`Loaded State : (MapID: {mapID}, InstanceID: {instanceID}, VariantID: {variantID})`)
 end
 RegisterEvent(ServerEvent.Loaded, OnServerEventLoaded)
 

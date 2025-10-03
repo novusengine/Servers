@@ -1,14 +1,7 @@
 #include "SpellEffect.h"
 #include "Server-Game/Application/EnttRegistries.h"
-#include "Server-Game/ECS/Components/ObjectInfo.h"
-#include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/SpellEffectInfo.h"
-#include "Server-Game/ECS/Singletons/CombatEventState.h"
-#include "Server-Game/ECS/Singletons/GameCache.h"
-#include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
-#include "Server-Game/ECS/Util/CombatEventUtil.h"
-#include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
 #include <Scripting/Zenith.h>

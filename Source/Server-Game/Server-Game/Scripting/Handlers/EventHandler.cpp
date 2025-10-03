@@ -1,4 +1,5 @@
 #include "EventHandler.h"
+#include "Events/AuraEvents.h"
 #include "Events/CharacterEvents.h"
 #include "Events/CreatureAIEvents.h"
 #include "Events/SpellEvents.h"
@@ -79,6 +80,12 @@ namespace Scripting
         zenith->RegisterEventType<Generated::LuaSpellEventEnum>();
         zenith->RegisterEventTypeID<Generated::LuaSpellEventDataOnPrepare>(Generated::LuaSpellEventEnum::OnPrepare, &Event::Spell::OnSpellPrepare);
         zenith->RegisterEventTypeID<Generated::LuaSpellEventDataOnHandleEffect>(Generated::LuaSpellEventEnum::OnHandleEffect, &Event::Spell::OnSpellHandleEffect);
+        zenith->RegisterEventTypeID<Generated::LuaSpellEventDataOnFinish>(Generated::LuaSpellEventEnum::OnFinish, &Event::Spell::OnSpellFinish);
+
+        zenith->RegisterEventType<Generated::LuaAuraEventEnum>();
+        zenith->RegisterEventTypeID<Generated::LuaAuraEventDataOnApply>(Generated::LuaAuraEventEnum::OnApply, &Event::Aura::OnAuraApply);
+        zenith->RegisterEventTypeID<Generated::LuaAuraEventDataOnRemove>(Generated::LuaAuraEventEnum::OnRemove, &Event::Aura::OnAuraRemove);
+        zenith->RegisterEventTypeID<Generated::LuaAuraEventDataOnHandleEffect>(Generated::LuaAuraEventEnum::OnHandleEffect, &Event::Aura::OnAuraHandleEffect);
 
         zenith->RegisterEventType<Generated::LuaCreatureAIEventEnum>();
         zenith->RegisterEventTypeID<Generated::LuaCreatureAIEventDataOnInit>(Generated::LuaCreatureAIEventEnum::OnInit, &Event::CreatureAIEvents::OnCreatureAIInit);

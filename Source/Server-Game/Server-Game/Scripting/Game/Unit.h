@@ -42,6 +42,14 @@ namespace Scripting
             i32 HasSpellCooldown(Zenith* zenith, Unit* unit);
             i32 GetSpellCooldown(Zenith* zenith, Unit* unit);
             i32 SetSpellCooldown(Zenith* zenith, Unit* unit);
+
+            i32 AddAura(Zenith* zenith, Unit* unit);
+            i32 RemoveAura(Zenith* zenith, Unit* unit);
+            i32 HasAura(Zenith* zenith, Unit* unit);
+            i32 GetAura(Zenith* zenith, Unit* unit);
+
+            i32 GetPower(Zenith* zenith, Unit* unit);
+            i32 GetStat(Zenith* zenith, Unit* unit);
         }
 
         static LuaRegister<Unit> unitMethods[] =
@@ -65,7 +73,15 @@ namespace Scripting
 
             { "HasSpellCooldown", UnitMethods::HasSpellCooldown },
             { "GetSpellCooldown", UnitMethods::GetSpellCooldown },
-            { "SetSpellCooldown", UnitMethods::SetSpellCooldown }
+            { "SetSpellCooldown", UnitMethods::SetSpellCooldown },
+
+            { "AddAura", UnitMethods::AddAura },
+            { "RemoveAura", UnitMethods::RemoveAura },
+            { "HasAura", UnitMethods::HasAura },
+            { "GetAura", UnitMethods::GetAura },
+
+            { "GetPower", UnitMethods::GetPower },
+            { "GetStat", UnitMethods::GetStat }
         };
     }
 }

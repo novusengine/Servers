@@ -18,9 +18,8 @@ namespace Database
             void LoadSpellTables(std::shared_ptr<DBConnection>& dbConnection, Database::SpellTables& spellTables);
             u64 LoadSpells(std::shared_ptr<DBConnection>& dbConnection, Database::SpellTables& spellTables);
             u64 LoadSpellEffects(std::shared_ptr<DBConnection>& dbConnection, Database::SpellTables& spellTables);
+            u64 LoadSpellProcData(std::shared_ptr<DBConnection>& dbConnection, Database::SpellTables& spellTables);
+            u64 LoadSpellProcLink(std::shared_ptr<DBConnection>& dbConnection, Database::SpellTables& spellTables);
         }
-
-        bool SpellLocationCreate(pqxx::work& transaction, const std::string& name, u16 spellID, const vec3& position, f32 orientation, u32& locationID);
-        bool SpellLocationDelete(pqxx::work& transaction, u32 locationID);
     }
 }

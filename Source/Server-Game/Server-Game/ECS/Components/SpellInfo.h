@@ -8,11 +8,10 @@ namespace ECS::Components
     struct SpellInfo
     {
     public:
-        u32 spellID = 0;
-
         ObjectGUID caster;
         ObjectGUID target;
 
+        u32 spellID = 0;
         f32 castTime = 0.0f;
         f32 timeToCast = 0.0f;
     };

@@ -2,6 +2,8 @@
 #include "World/UpdateCharacter.h"
 
 #include "Server-Game/ECS/Components/AABB.h"
+#include "Server-Game/ECS/Components/AuraEffectInfo.h"
+#include "Server-Game/ECS/Components/AuraInfo.h"
 #include "Server-Game/ECS/Components/CharacterInfo.h"
 #include "Server-Game/ECS/Components/CharacterSpellCastInfo.h"
 #include "Server-Game/ECS/Components/CreatureAIInfo.h"
@@ -15,8 +17,10 @@
 #include "Server-Game/ECS/Components/ProximityTrigger.h"
 #include "Server-Game/ECS/Components/SpellEffectInfo.h"
 #include "Server-Game/ECS/Components/SpellInfo.h"
+#include "Server-Game/ECS/Components/SpellProcInfo.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
+#include "Server-Game/ECS/Components/UnitAuraInfo.h"
 #include "Server-Game/ECS/Components/UnitCombatInfo.h"
 #include "Server-Game/ECS/Components/UnitPowersComponent.h"
 #include "Server-Game/ECS/Components/UnitResistancesComponent.h"
@@ -30,12 +34,14 @@
 #include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/ProximityTriggers.h"
+#include "Server-Game/ECS/Singletons/TimeState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Util/CombatUtil.h"
 #include "Server-Game/ECS/Util/CombatEventUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/ECS/Util/ProximityTriggerUtil.h"
+#include "Server-Game/ECS/Util/SpellUtil.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
 #include "Server-Game/ECS/Util/Persistence/CharacterUtil.h"
@@ -51,6 +57,7 @@
 
 #include <Meta/Generated/Server/LuaEvent.h>
 #include <Meta/Generated/Shared/NetworkPacket.h>
+#include <Meta/Generated/Shared/SpellEnum.h>
 
 #include <Network/Server.h>
 
@@ -65,10 +72,15 @@ namespace ECS::Systems
         auto& worldState = registry.ctx().emplace<Singletons::WorldState>();
     }
 
-    bool UpdateWorld::HandleMapInitialization(World& world, Singletons::GameCache& gameCache)
+    bool UpdateWorld::HandleMapInitialization(World& world, Singletons::TimeState& timeState, Singletons::GameCache& gameCache)
     {
         if (!world.ContainsSingleton<Events::MapNeedsInitialization>())
             return false;
+
+        // Seed RNG
+        u64 seedBase = static_cast<u64>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+        u64 seed = seedBase + (static_cast<u64>(world.mapID) * 0x9E3779B97f4A7C15ull);
+        world.rng.Seed(seed);
 
         // Handle Map Initialization
         world.EmplaceSingleton<Singletons::CombatEventState>();
@@ -167,7 +179,7 @@ namespace ECS::Systems
         return true;
     }
 
-    void UpdateWorld::HandleCreatureDeinitialization(World& world, Singletons::GameCache& gameCache)
+    void UpdateWorld::HandleCreatureDeinitialization(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache)
     {
         auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
 
@@ -189,7 +201,7 @@ namespace ECS::Systems
         });
         world.Clear<Events::CreatureNeedsDeinitialization>();
     }
-    void UpdateWorld::HandleCreatureInitialization(World& world, Singletons::GameCache& gameCache)
+    void UpdateWorld::HandleCreatureInitialization(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache)
     {
         auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
 
@@ -238,6 +250,7 @@ namespace ECS::Systems
             auto& creatureInfo = world.Emplace<Components::CreatureInfo>(entity);
             creatureInfo.templateID = event.templateID;
             creatureInfo.name = creatureTemplate->name;
+            creatureInfo.unitClass = GameDefine::UnitClass::Paladin;
 
             auto& creatureTransform = world.Emplace<Components::Transform>(entity);
             creatureTransform.mapID = event.mapID;
@@ -249,7 +262,7 @@ namespace ECS::Systems
             auto& displayInfo = world.Emplace<Components::DisplayInfo>(entity);
             displayInfo.displayID = creatureTemplate->displayID;
 
-            Components::UnitPowersComponent& unitPowersComponent = Util::Unit::AddPowersComponent(world, entity);
+            Components::UnitPowersComponent& unitPowersComponent = Util::Unit::AddPowersComponent(world, entity, GameDefine::UnitClass::Paladin);
             {
                 UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, Generated::PowerTypeEnum::Health);
                 healthPower.base *= creatureTemplate->healthMod;
@@ -272,6 +285,7 @@ namespace ECS::Systems
 
             world.Emplace<Components::UnitSpellCooldownHistory>(entity);
             world.Emplace<Components::UnitCombatInfo>(entity);
+            world.Emplace<Components::UnitAuraInfo>(entity);
             Components::TargetInfo& targetInfo = world.Emplace<Components::TargetInfo>(entity);
             targetInfo.target = entt::null;
 
@@ -288,11 +302,10 @@ namespace ECS::Systems
         });
         world.Clear<Events::CreatureNeedsInitialization>();
     }
-
-    void UpdateWorld::HandleCreatureUpdate(World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateWorld::HandleCreatureUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
-        HandleCreatureDeinitialization(world, gameCache);
-        HandleCreatureInitialization(world, gameCache);
+        HandleCreatureDeinitialization(world, zenith, timeState, gameCache);
+        HandleCreatureInitialization(world, zenith, timeState, gameCache);
 
         auto& creatureAIState = world.GetSingleton<Singletons::CreatureAIState>();
 
@@ -334,9 +347,9 @@ namespace ECS::Systems
         world.Clear<Events::CreatureAddScript>();
         
         auto updateAIView = world.View<Components::CreatureAIInfo>();
-        updateAIView.each([&, deltaTime](entt::entity entity, Components::CreatureAIInfo& creatureAIInfo)
+        updateAIView.each([&](entt::entity entity, Components::CreatureAIInfo& creatureAIInfo)
         {
-            creatureAIInfo.timeToNextUpdate -= deltaTime;
+            creatureAIInfo.timeToNextUpdate -= timeState.deltaTime;
             if (creatureAIInfo.timeToNextUpdate > 0.0f)
                 return;
         
@@ -356,7 +369,7 @@ namespace ECS::Systems
         world.Clear<Events::CreatureNeedsThreatTableUpdate>();
     }
 
-    void UpdateWorld::HandleUnitUpdate(World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateWorld::HandleUnitUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         auto deathView = world.View<Components::UnitCombatInfo, Events::UnitDied, Tags::IsAlive>();
         deathView.each([&](entt::entity entity, Components::UnitCombatInfo& combatInfo, Events::UnitDied& event)
@@ -391,7 +404,7 @@ namespace ECS::Systems
         world.Clear<Events::UnitResurrected>();
     }
 
-    void UpdateWorld::HandleProximityTriggerDeinitialization(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleProximityTriggerDeinitialization(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
         auto& proximityTriggers = world.GetSingleton<Singletons::ProximityTriggers>();
@@ -434,7 +447,7 @@ namespace ECS::Systems
         });
         world.Clear<Events::CreatureNeedsDeinitialization>();
     }
-    void UpdateWorld::HandleProximityTriggerInitialization(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleProximityTriggerInitialization(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
         auto& proximityTriggers = world.GetSingleton<Singletons::ProximityTriggers>();
@@ -526,10 +539,10 @@ namespace ECS::Systems
         });
         world.Clear<Events::ProximityTriggerNeedsInitialization>();
     }
-    void UpdateWorld::HandleProximityTriggerUpdate(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleProximityTriggerUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
-        HandleProximityTriggerDeinitialization(world, gameCache, networkState);
-        HandleProximityTriggerInitialization(world, gameCache, networkState);
+        HandleProximityTriggerDeinitialization(world, zenith, timeState, gameCache, networkState);
+        HandleProximityTriggerInitialization(world, zenith, timeState, gameCache, networkState);
 
         robin_hood::unordered_set<entt::entity> playersToRemove;
         playersToRemove.reserve(1024);
@@ -591,7 +604,7 @@ namespace ECS::Systems
         });
     }
 
-    void UpdateWorld::HandleReplication(World& world, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateWorld::HandleReplication(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
     {
         robin_hood::unordered_set<ObjectGUID> cachedList;
 
@@ -601,7 +614,7 @@ namespace ECS::Systems
             if (!Util::Network::IsSocketActive(networkState, netInfo.socketID))
                 return;
 
-            visibilityUpdateInfo.timeSinceLastUpdate += deltaTime;
+            visibilityUpdateInfo.timeSinceLastUpdate += timeState.deltaTime;
             if (visibilityUpdateInfo.timeSinceLastUpdate < visibilityUpdateInfo.updateInterval)
                 return;
 
@@ -628,8 +641,8 @@ namespace ECS::Systems
                     auto& otherCharacterInfo = world.Get<Components::CharacterInfo>(otherEntity);
                     auto& otherTransform = world.Get<Components::Transform>(otherEntity);
 
-                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<1024>();
-                    if (!Util::MessageBuilder::Unit::BuildUnitAdd(buffer, otherObjectInfo.guid, otherCharacterInfo.name, otherTransform.position, otherTransform.scale, otherTransform.pitchYaw))
+                    std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<2048>();
+                    if (!Util::MessageBuilder::Unit::BuildUnitAdd(buffer, otherObjectInfo.guid, otherCharacterInfo.name, otherCharacterInfo.unitClass, otherTransform.position, otherTransform.scale, otherTransform.pitchYaw))
                         return true;
 
                     if (!Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, otherEntity, otherObjectInfo.guid))
@@ -715,8 +728,8 @@ namespace ECS::Systems
 
             if (playersEnteredInView.size() > 0)
             {
-                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<1024>();
-                if (!Util::MessageBuilder::Unit::BuildUnitAdd(buffer, objectInfo.guid, creatureInfo.name, transform.position, transform.scale, transform.pitchYaw))
+                std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<2048>();
+                if (!Util::MessageBuilder::Unit::BuildUnitAdd(buffer, objectInfo.guid, creatureInfo.name, creatureInfo.unitClass, transform.position, transform.scale, transform.pitchYaw))
                     return;
 
                 if (!Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, entity, objectInfo.guid))
@@ -751,7 +764,7 @@ namespace ECS::Systems
             visibilityUpdateInfo.timeSinceLastUpdate = 0.0f;
         });
     }
-    void UpdateWorld::HandleContainerUpdate(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleContainerUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         auto databaseConn = gameCache.dbController->GetConnection(::Database::DBType::Character);
         std::shared_ptr<Bytebuffer> containerUpdateBuffer = Bytebuffer::Borrow<4096>();
@@ -920,7 +933,7 @@ namespace ECS::Systems
     
         world.Clear<Events::CharacterNeedsContainerUpdate>();
     }
-    void UpdateWorld::HandleDisplayUpdate(World& world, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleDisplayUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
     {
         auto view = world.View<Components::ObjectInfo, Components::VisibilityInfo, Components::DisplayInfo, Events::CharacterNeedsDisplayUpdate>();
         view.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::VisibilityInfo& visibilityInfo, Components::DisplayInfo& displayInfo)
@@ -952,7 +965,7 @@ namespace ECS::Systems
 
         world.Clear<Events::CharacterNeedsVisualItemUpdate>();
     }
-    void UpdateWorld::HandleCombatUpdate(World& world, Scripting::Zenith* zenith, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateWorld::HandleCombatUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
     {
         auto enterCombatView = world.View<Components::ObjectInfo, Components::UnitCombatInfo, Events::UnitEnterCombat>();
         enterCombatView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::UnitCombatInfo& unitCombatInfo, Events::UnitEnterCombat& event)
@@ -982,7 +995,7 @@ namespace ECS::Systems
                     auto& creatureThreatTable = world.Get<Components::CreatureThreatTable>(threatEntity);
                     if (creatureThreatTable.allowDropCombat)
                     {
-                        threatTableEntry.timeSinceLastActivity += deltaTime;
+                        threatTableEntry.timeSinceLastActivity += timeState.deltaTime;
                         if (threatTableEntry.timeSinceLastActivity >= 5.0f)
                         {
                             Util::Combat::RemoveUnitFromThreatTable(creatureThreatTable, objectInfo.guid);
@@ -993,7 +1006,7 @@ namespace ECS::Systems
                 }
                 else
                 {
-                    threatTableEntry.timeSinceLastActivity += deltaTime;
+                    threatTableEntry.timeSinceLastActivity += timeState.deltaTime;
                     if (threatTableEntry.timeSinceLastActivity >= 5.0f)
                     {
                         itr = unitCombatInfo.threatTables.erase(itr);
@@ -1023,14 +1036,14 @@ namespace ECS::Systems
             }
         });
     }
-    void UpdateWorld::HandlePowerUpdate(World& world, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateWorld::HandlePowerUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
     {
         static constexpr f32 HEALTH_REGEN_INTERVAL = 0.5f;
 
         auto healthUpdateView = world.View<Components::ObjectInfo, Components::VisibilityInfo, Components::UnitPowersComponent, Tags::IsMissingHealth, Tags::IsAlive>();
         healthUpdateView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::VisibilityInfo& visibilityInfo, Components::UnitPowersComponent& unitPowersComponent)
         {
-            unitPowersComponent.timeToNextUpdate = unitPowersComponent.timeToNextUpdate - deltaTime;
+            unitPowersComponent.timeToNextUpdate = unitPowersComponent.timeToNextUpdate - timeState.deltaTime;
             if (unitPowersComponent.timeToNextUpdate > 0.0f)
                 return;
 
@@ -1048,15 +1061,64 @@ namespace ECS::Systems
 
             f64 newHealth = glm::clamp(healthPower.current + regenAmount, healthPower.current, healthPower.max);
             Util::Unit::SetPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Health, healthPower.base, newHealth, healthPower.max);
-
-            ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, Generated::UnitPowerUpdatePacket{
-                .guid = objectInfo.guid,
-                .kind = static_cast<u8>(Generated::PowerTypeEnum::Health),
-                .base = healthPower.base,
-                .current = healthPower.current,
-                .max = healthPower.max
-            });
         });
+
+        auto powerUpdateView = world.View<Components::ObjectInfo, Components::UnitPowersComponent>();
+        powerUpdateView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, Components::UnitPowersComponent& unitPowersComponent)
+        {
+            for (auto& pair : unitPowersComponent.powerTypeToValue)
+            {
+                Generated::PowerTypeEnum powerType = pair.first;
+                UnitPower& power = pair.second;
+                if (powerType == Generated::PowerTypeEnum::Health)
+                    continue;
+
+                // Mana Regen
+                if (powerType == Generated::PowerTypeEnum::Mana)
+                {
+                    if (power.current >= power.max)
+                        continue;
+
+                    f64 baseRegenRate = power.base * 0.05;
+                    f64 regenAmount = baseRegenRate * timeState.deltaTime;
+                    f64 newMana = glm::clamp(power.current + regenAmount, power.current, power.max);
+                    Util::Unit::SetPower(world, entity, unitPowersComponent, powerType, power.base, newMana, power.max);
+                }
+                // Focus/Energy Regen
+                else if (powerType == Generated::PowerTypeEnum::Focus || powerType == Generated::PowerTypeEnum::Energy)
+                {
+                    if (power.current >= power.max)
+                        continue;
+
+                    f64 baseRegenRate = 10.0;
+                    f64 regenAmount = baseRegenRate * timeState.deltaTime;
+                    f64 newEnergy = glm::clamp(power.current + regenAmount, power.current, power.max);
+                    Util::Unit::SetPower(world, entity, unitPowersComponent, powerType, power.base, newEnergy, power.max);
+                }
+                // Rage Regen
+                else if (powerType == Generated::PowerTypeEnum::Rage)
+                {
+                    bool isInCombat = world.AllOf<Tags::IsInCombat>(entity);
+                    f64 baseRegenRate = (1.0 * isInCombat) + (-1.0 * !isInCombat);
+                    f64 regenAmount = baseRegenRate * timeState.deltaTime;
+                    f64 newRage = 0.0f;
+
+                    if (isInCombat)
+                    {
+                        newRage = glm::clamp(power.current + regenAmount, power.current, power.max);
+                    }
+                    else
+                    {
+                        newRage = glm::clamp(power.current + regenAmount, 0.0, power.current);
+                    }
+
+                    if (newRage >= power.max)
+                        continue;
+
+                    Util::Unit::SetPower(world, entity, unitPowersComponent, powerType, power.base, newRage, power.max);
+                }
+            }
+            });
 
         auto dirtyPowerView = world.View<const Components::ObjectInfo, const Components::VisibilityInfo, Components::UnitPowersComponent, Events::UnitNeedsPowerUpdate>();
         dirtyPowerView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::VisibilityInfo& visibilityInfo, Components::UnitPowersComponent& unitPowersComponent)
@@ -1102,7 +1164,7 @@ namespace ECS::Systems
             {
                 UnitStat& stat = Util::Unit::GetStat(unitStatsComponent, dirtyStatType);
 
-                ECS::Util::Network::SendPacket(networkState, netInfo.socketID, Generated::UnitResistanceUpdatePacket{
+                ECS::Util::Network::SendPacket(networkState, netInfo.socketID, Generated::UnitStatUpdatePacket{
                     .kind = static_cast<u8>(dirtyStatType),
                     .base = stat.base,
                     .current = stat.current
@@ -1116,9 +1178,263 @@ namespace ECS::Systems
         world.Clear<Events::CharacterNeedsResistanceUpdate>();
         world.Clear<Events::CharacterNeedsStatUpdate>();
     }
-    void UpdateWorld::HandleSpellUpdate(World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateWorld::HandleAuraUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
-        auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
+        auto prepareView = world.View<Components::AuraInfo, Components::AuraEffectInfo, Tags::IsUnpreparedAura>();
+        prepareView.each([&](entt::entity entity, Components::AuraInfo& auraInfo, Components::AuraEffectInfo& auraEffectInfo)
+        {
+            GameDefine::Database::Spell* spell = nullptr;
+            if (!Util::Cache::GetSpellByID(gameCache, auraInfo.spellID, spell))
+            {
+                world.Emplace<Events::AuraExpired>(entity);
+                return;
+            }
+
+            entt::entity casterEntity = world.GetEntity(auraInfo.caster);
+            entt::entity targetEntity = world.GetEntity(auraInfo.target);
+            Database::SpellEffectInfo* dbSpellEffectInfo = nullptr;
+
+            if (!world.ValidEntity(targetEntity) || !Util::Cache::GetSpellEffectsBySpellID(gameCache, auraInfo.spellID, dbSpellEffectInfo))
+            {
+                world.Emplace<Events::AuraExpired>(entity);
+                return;
+            }
+
+            u8 numEffects = static_cast<u8>(dbSpellEffectInfo->effects.size());
+            auraEffectInfo.effects.resize(numEffects);
+            auraEffectInfo.periodicEffects.reserve(numEffects);
+
+            for (u8 i = 0; i < numEffects; i++)
+            {
+                GameDefine::Database::SpellEffect& spellEffect = dbSpellEffectInfo->effects[i];
+
+                AuraEffect& auraEffect = auraEffectInfo.effects[i];
+                auraEffect.type = spellEffect.effectType;
+
+                auraEffect.value1 = spellEffect.effectValue1;
+                auraEffect.value2 = spellEffect.effectValue2;
+                auraEffect.value3 = spellEffect.effectValue3;
+
+                auraEffect.miscValue1 = spellEffect.effectMiscValue1;
+                auraEffect.miscValue2 = spellEffect.effectMiscValue2;
+                auraEffect.miscValue3 = spellEffect.effectMiscValue3;
+
+                // TODO : Provide a better way to determine if an effect is periodic
+                if (auraEffect.type != (u8)Generated::SpellEffectTypeEnum::AuraPeriodicDamage &&
+                    auraEffect.type != (u8)Generated::SpellEffectTypeEnum::AuraPeriodicHeal)
+                    continue;
+
+                auraEffectInfo.periodicEffectsMask |= (1ull << i);
+
+                f32 interval = static_cast<f32>(auraEffect.value1) / 1000.0f;
+                auraEffectInfo.periodicEffects.push_back(AuraPeriodicInfo {
+                    .interval = interval,
+                    .timeToNextTick = interval,
+                    .index = i
+                });
+            }
+
+            u32 numPeriodicEffects = static_cast<u32>(auraEffectInfo.periodicEffects.size());
+            if (numPeriodicEffects > 0)
+                world.Emplace<Tags::IsPeriodicAura>(entity);
+
+            // Handle Prepare Spell
+            bool prepared = zenith->CallEventBool(Generated::LuaAuraEventEnum::OnApply, Generated::LuaAuraEventDataOnApply{
+                .casterID = entt::to_integral(casterEntity),
+                .targetID = entt::to_integral(targetEntity),
+                .auraEntity = entt::to_integral(entity),
+                .spellID = auraInfo.spellID
+            });
+
+            u64 procEffectsMask = 0;
+            if (Util::Spell::SetupAuraProcInfo(world, gameCache, auraEffectInfo, auraInfo.spellID, entity))
+            {
+                auto& spellProcInfo = world.Get<Components::SpellProcInfo>(entity);
+                procEffectsMask = spellProcInfo.procEffectsMask;
+
+                Util::Spell::CheckAuraProc(world, zenith, timeState, gameCache, auraEffectInfo, spellProcInfo, Generated::SpellProcPhaseTypeEnum::OnAuraApply, auraInfo.spellID, entity, casterEntity, targetEntity);
+            }
+            
+            if (!prepared)
+            {
+                world.Emplace<Events::AuraExpired>(entity);
+                return;
+            }
+
+            auto* spellProcInfo = world.TryGet<Components::SpellProcInfo>(entity);
+
+            // Handle Non-Periodic Effects Immediately
+            for (u32 i = 0; i < numEffects; i++)
+            {
+                AuraEffect& auraEffect = auraEffectInfo.effects[i];
+
+                // TODO : Provide a better way to determine if an effect is periodic
+                bool isProcEffect = (procEffectsMask & (1ull << i)) != 0;
+                bool isPeriodicAura = (auraEffectInfo.periodicEffectsMask & (1ull << i)) != 0;
+                if (isProcEffect || isPeriodicAura)
+                    continue;
+
+                zenith->CallEvent(Generated::LuaAuraEventEnum::OnHandleEffect, Generated::LuaAuraEventDataOnHandleEffect{
+                    .casterID = entt::to_integral(casterEntity),
+                    .targetID = entt::to_integral(targetEntity),
+                    .auraEntity = entt::to_integral(entity),
+                    .spellID = auraInfo.spellID,
+                    .effectIndex = static_cast<u8>(i),
+                    .effectType = auraEffect.type,
+                });
+
+                if (spellProcInfo)
+                {
+                    Util::Spell::CheckAuraEffectProc(world, zenith, timeState, gameCache, auraEffectInfo, *spellProcInfo, auraInfo.spellID, entity, casterEntity, targetEntity, i);
+                }
+            }
+
+            auto& objectInfo = world.Get<Components::ObjectInfo>(targetEntity);
+            auto& visibilityInfo = world.Get<Components::VisibilityInfo>(targetEntity);
+            ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, Generated::ServerUnitAddAuraPacket{           
+                .guid = objectInfo.guid,
+                .auraInstanceID = entt::to_integral(entity),
+                .spellID = auraInfo.spellID,
+                .duration = auraInfo.timeRemaining,
+                .stacks = auraInfo.stacks
+            });
+
+            world.Emplace<Tags::IsActiveAura>(entity);
+        });
+        world.Clear<Tags::IsUnpreparedAura>();
+
+        auto refreshedView = world.View<Components::AuraInfo, Components::AuraEffectInfo, Events::AuraRefreshed>();
+        refreshedView.each([&](entt::entity entity, Components::AuraInfo& auraInfo, Components::AuraEffectInfo& auraEffectInfo)
+        {
+            entt::entity casterEntity = world.GetEntity(auraInfo.caster);
+            entt::entity targetEntity = world.GetEntity(auraInfo.target);
+            if (!world.ValidEntity(targetEntity))
+            {
+                world.Emplace<Events::AuraExpired>(entity);
+                return;
+            }
+
+            zenith->CallEvent(Generated::LuaAuraEventEnum::OnApply, Generated::LuaAuraEventDataOnApply{
+                .casterID = entt::to_integral(casterEntity),
+                .targetID = entt::to_integral(targetEntity),
+                .auraEntity = entt::to_integral(entity),
+                .spellID = auraInfo.spellID
+            });
+
+            if (auto* spellProcInfo = world.TryGet<Components::SpellProcInfo>(entity))
+            {
+                Util::Spell::CheckAuraProc(world, zenith, timeState, gameCache, auraEffectInfo, *spellProcInfo, Generated::SpellProcPhaseTypeEnum::OnAuraApply, auraInfo.spellID, entity, casterEntity, targetEntity);
+            }
+
+            auto& objectInfo = world.Get<Components::ObjectInfo>(targetEntity);
+            auto& visibilityInfo = world.Get<Components::VisibilityInfo>(targetEntity);
+            ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, Generated::ServerUnitUpdateAuraPacket{
+                .guid = objectInfo.guid,
+                .auraInstanceID = entt::to_integral(entity),
+                .duration = auraInfo.timeRemaining,
+                .stacks = auraInfo.stacks
+            });
+        });
+        world.Clear<Events::AuraRefreshed>();
+
+        auto activeView = world.View<Components::AuraInfo, Components::AuraEffectInfo, Tags::IsActiveAura>();
+        activeView.each([&](entt::entity entity, Components::AuraInfo& auraInfo, Components::AuraEffectInfo& auraEffectInfo)
+        {
+            if (auraInfo.duration != -1.0f)
+                auraInfo.timeRemaining = glm::max(0.0f, auraInfo.timeRemaining - timeState.deltaTime);
+            
+            bool isPeriodicAura = world.AllOf<Tags::IsPeriodicAura>(entity);
+            if (isPeriodicAura)
+            {
+                entt::entity casterEntity = world.GetEntity(auraInfo.caster);
+                entt::entity targetEntity = world.GetEntity(auraInfo.target);
+                if (!world.ValidEntity(targetEntity))
+                {
+                    world.Remove<Tags::IsActiveAura>(entity);
+                    world.Emplace<Events::AuraExpired>(entity);
+                    return;
+                }
+
+                auto* spellProcInfo = world.TryGet<Components::SpellProcInfo>(entity);
+               
+                u8 numEffects = static_cast<u8>(auraEffectInfo.periodicEffects.size());
+                for (u8 i = 0; i < numEffects; i++)
+                {
+                    AuraPeriodicInfo& periodicInfo = auraEffectInfo.periodicEffects[i];
+
+                    // TODO : timeToNextTick, should be capped by the max ticks left (This is needed for when deltaTime spikes, to avoid too many ticks from happening)
+                    periodicInfo.timeToNextTick -= timeState.deltaTime;
+                    while (periodicInfo.timeToNextTick < 0)
+                    {
+                        const AuraEffect& auraEffect = auraEffectInfo.effects[periodicInfo.index];
+
+                        zenith->CallEvent(Generated::LuaAuraEventEnum::OnHandleEffect, Generated::LuaAuraEventDataOnHandleEffect{
+                            .casterID = entt::to_integral(casterEntity),
+                            .targetID = entt::to_integral(targetEntity),
+                            .auraEntity = entt::to_integral(entity),
+                            .spellID = auraInfo.spellID,
+                            .procID = 0,
+                            .effectIndex = periodicInfo.index,
+                            .effectType = auraEffect.type
+                        });
+
+                        if (spellProcInfo)
+                        {
+                            Util::Spell::CheckAuraEffectProc(world, zenith, timeState, gameCache, auraEffectInfo, *spellProcInfo, auraInfo.spellID, entity, casterEntity, targetEntity, periodicInfo.index);
+                        }
+
+                        periodicInfo.timeToNextTick += periodicInfo.interval;
+                    }
+                }
+            }
+
+            if (auraInfo.timeRemaining == 0.0f)
+            {
+                world.Remove<Tags::IsActiveAura>(entity);
+                world.Emplace<Events::AuraExpired>(entity);
+            }
+        });
+
+        auto expiredView = world.View<Components::AuraInfo, Components::AuraEffectInfo, Events::AuraExpired>();
+        expiredView.each([&](entt::entity entity, Components::AuraInfo& auraInfo, Components::AuraEffectInfo& auraEffectInfo)
+        {
+            entt::entity casterEntity = world.GetEntity(auraInfo.caster);
+            entt::entity targetEntity = world.GetEntity(auraInfo.target);
+            if (world.ValidEntity(targetEntity))
+            {
+                auto& characterAuraInfo = world.Get<Components::UnitAuraInfo>(targetEntity);
+
+                zenith->CallEvent(Generated::LuaAuraEventEnum::OnRemove, Generated::LuaAuraEventDataOnRemove{
+                    .casterID = entt::to_integral(casterEntity),
+                    .targetID = entt::to_integral(targetEntity),
+                    .auraEntity = entt::to_integral(entity),
+                    .spellID = auraInfo.spellID
+                });
+
+                if (auto* spellProcInfo = world.TryGet<Components::SpellProcInfo>(entity))
+                {
+                    Util::Spell::CheckAuraProc(world, zenith, timeState, gameCache, auraEffectInfo, *spellProcInfo, Generated::SpellProcPhaseTypeEnum::OnAuraRemove, auraInfo.spellID, entity, casterEntity, targetEntity);
+                }
+
+                // Remove from active auras
+                auto itr = characterAuraInfo.spellIDToAuraEntity.find(auraInfo.spellID);
+                if (itr != characterAuraInfo.spellIDToAuraEntity.end() && itr->second == entity)
+                    characterAuraInfo.spellIDToAuraEntity.erase(itr);
+
+                auto& objectInfo = world.Get<Components::ObjectInfo>(targetEntity);
+                auto& visibilityInfo = world.Get<Components::VisibilityInfo>(targetEntity);
+                ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, Generated::ServerUnitRemoveAuraPacket{
+                    .guid = objectInfo.guid,
+                    .auraInstanceID = entt::to_integral(entity)
+                });
+            }
+
+            world.DestroyEntity(entity);
+        });
+    }
+    void UpdateWorld::HandleSpellUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+    {
+        u64 currentTimeInMS = static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
 
         auto prepareView = world.View<Components::SpellInfo, Components::SpellEffectInfo, Tags::IsUnpreparedSpell>();
         prepareView.each([&](entt::entity entity, Components::SpellInfo& spellInfo, Components::SpellEffectInfo& spellEffectInfo)
@@ -1137,10 +1453,11 @@ namespace ECS::Systems
                 return;
             }
 
-            std::vector<GameDefine::Database::SpellEffect>* spellEffectList = nullptr;
-            if (Util::Cache::GetSpellEffectsBySpellID(gameCache, spellInfo.spellID, spellEffectList))
+            Database::SpellEffectInfo* dbSpellEffectInfo = nullptr;
+            if (Util::Cache::GetSpellEffectsBySpellID(gameCache, spellInfo.spellID, dbSpellEffectInfo))
             {
-                spellEffectInfo.effects = *spellEffectList;
+                spellEffectInfo.regularEffectsMask = dbSpellEffectInfo->regularEffectsMask;
+                spellEffectInfo.effects = dbSpellEffectInfo->effects;
             }
 
             // Handle Prepare Spell
@@ -1154,6 +1471,12 @@ namespace ECS::Systems
             {
                 world.Emplace<Tags::IsCompleteSpell>(entity);
                 return;
+            }
+
+            if (Util::Spell::SetupSpellProcInfo(world, gameCache, spellInfo.spellID, entity))
+            {
+                auto& spellProcInfo = world.Get<Components::SpellProcInfo>(entity);
+                Util::Spell::CheckSpellProc(world, zenith, timeState, gameCache, spellEffectInfo, spellProcInfo, Generated::SpellProcPhaseTypeEnum::OnSpellCast, spellInfo.spellID, entity, casterEntity);
             }
 
             auto& visibilityInfo = world.Get<Components::VisibilityInfo>(casterEntity);
@@ -1171,7 +1494,7 @@ namespace ECS::Systems
         auto activeView = world.View<Components::SpellInfo, Components::SpellEffectInfo, Tags::IsActiveSpell>();
         activeView.each([&](entt::entity entity, Components::SpellInfo& spellInfo, Components::SpellEffectInfo& spellEffectInfo)
         {
-            spellInfo.timeToCast = glm::max(0.0f, spellInfo.timeToCast - deltaTime);
+            spellInfo.timeToCast = glm::max(0.0f, spellInfo.timeToCast - timeState.deltaTime);
             if (spellInfo.timeToCast > 0.0f)
                 return;
 
@@ -1182,46 +1505,73 @@ namespace ECS::Systems
                 return;
             }
 
-            u8 numEffects = static_cast<u8>(spellEffectInfo.effects.size());
-            for (u8 i = 0; i < numEffects; i++)
-            {
-                const GameDefine::Database::SpellEffect& spellEffect = spellEffectInfo.effects[i];
+            auto* spellProcInfo = world.TryGet<Components::SpellProcInfo>(entity);
 
+            u64 regularEffectMask = spellEffectInfo.regularEffectsMask;
+            while (regularEffectMask)
+            {
+                u8 effectIndex = std::countr_zero(regularEffectMask);
+
+                const GameDefine::Database::SpellEffect& spellEffect = spellEffectInfo.effects[effectIndex];
                 zenith->CallEvent(Generated::LuaSpellEventEnum::OnHandleEffect, Generated::LuaSpellEventDataOnHandleEffect{
                     .casterID = entt::to_integral(casterEntity),
                     .spellEntity = entt::to_integral(entity),
                     .spellID = spellInfo.spellID,
-                    .effectIndex = i,
-                    .effectType = spellEffect.effectType,
+                    .procID = 0,
+                    .effectIndex = effectIndex,
+                    .effectType = spellEffect.effectType
                 });
+
+                if (spellProcInfo)
+                {
+                    Util::Spell::CheckSpellEffectProc(world, zenith, timeState, gameCache, spellEffectInfo, *spellProcInfo, spellInfo.spellID, entity, casterEntity, effectIndex);
+                }
+
+                regularEffectMask &= ~(1ull << effectIndex);
             }
 
             world.Remove<Tags::IsActiveSpell>(entity);
             world.Emplace<Tags::IsCompleteSpell>(entity);
         });
 
-        auto completedView = world.View<Components::SpellInfo, Tags::IsCompleteSpell>();
-        completedView.each([&](entt::entity entity, Components::SpellInfo& spellInfo)
+        auto completedView = world.View<Components::SpellInfo, Components::SpellEffectInfo, Tags::IsCompleteSpell>();
+        completedView.each([&](entt::entity entity, Components::SpellInfo& spellInfo, Components::SpellEffectInfo& spellEffectInfo)
         {
             entt::entity casterEntity = world.GetEntity(spellInfo.caster);
-            if (world.ValidEntity(casterEntity))
+            if (!world.ValidEntity(casterEntity))
             {
-                auto& characterSpellCastInfo = world.Get<Components::CharacterSpellCastInfo>(casterEntity);
-                characterSpellCastInfo.activeSpellEntity = entt::null;
+                world.DestroyEntity(entity);
+                return;
+            }
 
-                if (characterSpellCastInfo.queuedSpellEntity != entt::null)
+            zenith->CallEvent(Generated::LuaSpellEventEnum::OnFinish, Generated::LuaSpellEventDataOnFinish{
+                .casterID = entt::to_integral(casterEntity),
+                .spellEntity = entt::to_integral(entity),
+                .spellID = spellInfo.spellID
+            });
+
+            if (auto* spellProcInfo = world.TryGet<Components::SpellProcInfo>(entity))
+            {
+                Util::Spell::CheckSpellProc(world, zenith, timeState, gameCache, spellEffectInfo, *spellProcInfo, Generated::SpellProcPhaseTypeEnum::OnSpellFinish, spellInfo.spellID, entity, casterEntity);
+            }
+
+            if (auto* characterSpellCastInfo = world.TryGet<Components::CharacterSpellCastInfo>(casterEntity))
+            {
+                characterSpellCastInfo->activeSpellEntity = entt::null;
+
+                if (characterSpellCastInfo->queuedSpellEntity != entt::null)
                 {
-                    characterSpellCastInfo.activeSpellEntity = characterSpellCastInfo.queuedSpellEntity;
-                    characterSpellCastInfo.queuedSpellEntity = entt::null;
+                    characterSpellCastInfo->activeSpellEntity = characterSpellCastInfo->queuedSpellEntity;
+                    characterSpellCastInfo->queuedSpellEntity = entt::null;
 
-                    world.Emplace<Tags::IsUnpreparedSpell>(characterSpellCastInfo.activeSpellEntity);
+                    world.Emplace<Tags::IsUnpreparedSpell>(characterSpellCastInfo->activeSpellEntity);
                 }
             }
 
             world.DestroyEntity(entity);
         });
     }
-    void UpdateWorld::HandleCombatEventUpdate(World& world, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateWorld::HandleCombatEventUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
     {
         auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
 
@@ -1229,11 +1579,9 @@ namespace ECS::Systems
         if (numCombatEvents == 0)
             return;
 
-        std::shared_ptr<Bytebuffer> combatEventBuffer = Bytebuffer::Borrow<256>();
-
         while (numCombatEvents-- > 0)
         {
-            combatEventBuffer->Reset();
+            std::shared_ptr<Bytebuffer> combatEventBuffer = Bytebuffer::Borrow<64>();
 
             const CombatEventInfo& eventInfo = combatEventState.combatEvents.front();
 
@@ -1359,8 +1707,9 @@ namespace ECS::Systems
         entt::registry::context& ctx = registry.ctx();
 
         auto& gameCache = ctx.get<Singletons::GameCache>();
-        auto& worldState = ctx.get<Singletons::WorldState>();
         auto& networkState = ctx.get<Singletons::NetworkState>();
+        auto& timeState = ctx.get<Singletons::TimeState>();
+        auto& worldState = ctx.get<Singletons::WorldState>();
 
         Scripting::LuaManager* luaManager = ServiceLocator::GetLuaManager();
 
@@ -1415,7 +1764,7 @@ namespace ECS::Systems
             u32 mapID = itr.first;
             World& world = itr.second;
             
-            if (HandleMapInitialization(world, gameCache))
+            if (HandleMapInitialization(world, timeState, gameCache))
                 continue;
 
             Scripting::Zenith* zenith = luaManager->GetZenithStateManager().Get(world.zenithKey);
@@ -1423,18 +1772,19 @@ namespace ECS::Systems
                 continue;
 
             UpdateCharacter::HandleUpdate(worldState, world, zenith, gameCache, networkState, deltaTime);
-            HandleCreatureUpdate(world, zenith, gameCache, networkState, deltaTime);
-            HandleUnitUpdate(world, zenith, gameCache, networkState, deltaTime);
+            HandleCreatureUpdate(world, zenith, timeState, gameCache, networkState);
+            HandleUnitUpdate(world, zenith, timeState, gameCache, networkState);
 
-            HandleProximityTriggerUpdate(world, gameCache, networkState);
+            HandleProximityTriggerUpdate(world, zenith, timeState, gameCache, networkState);
 
-            HandleReplication(world, networkState, deltaTime);
-            HandleContainerUpdate(world, gameCache, networkState);
-            HandleDisplayUpdate(world, networkState);
-            HandleCombatUpdate(world, zenith, networkState, deltaTime);
-            HandlePowerUpdate(world, networkState, deltaTime);
-            HandleSpellUpdate(world, zenith, gameCache, networkState, deltaTime);
-            HandleCombatEventUpdate(world, networkState, deltaTime);
+            HandleReplication(world, zenith, timeState, networkState);
+            HandleContainerUpdate(world, zenith, timeState, gameCache, networkState);
+            HandleDisplayUpdate(world, zenith, timeState, networkState);
+            HandleCombatUpdate(world, zenith, timeState, networkState);
+            HandlePowerUpdate(world, zenith, timeState, networkState);
+            HandleAuraUpdate(world, zenith, timeState, gameCache, networkState);
+            HandleSpellUpdate(world, zenith, timeState, gameCache, networkState);
+            HandleCombatEventUpdate(world, zenith, timeState, networkState);
         }
     }
 }

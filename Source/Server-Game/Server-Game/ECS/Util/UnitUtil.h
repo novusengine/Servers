@@ -22,6 +22,7 @@ namespace ECS
         struct DisplayInfo;
         struct ObjectInfo;
         struct Transform;
+        struct UnitAuraInfo;
         struct UnitCombatInfo;
         struct UnitPowersComponent;
         struct UnitResistancesComponent;
@@ -46,7 +47,7 @@ namespace ECS::Util::Unit
     void UpdateDisplayRace(entt::registry& registry, entt::entity entity, Components::DisplayInfo& displayInfo, GameDefine::UnitRace race, bool forceDirty = true);
     void UpdateDisplayGender(entt::registry& registry, entt::entity entity, Components::DisplayInfo& displayInfo, GameDefine::UnitGender gender, bool forceDirty = true);
 
-    ECS::Components::UnitPowersComponent& AddPowersComponent(World& world, entt::entity entity);
+    ECS::Components::UnitPowersComponent& AddPowersComponent(World& world, entt::entity entity, GameDefine::UnitClass unitClass);
     ECS::Components::UnitResistancesComponent& AddResistancesComponent(World& world, entt::entity entity);
     ECS::Components::UnitStatsComponent& AddStatsComponent(World& world, entt::entity entity);
 
@@ -64,6 +65,7 @@ namespace ECS::Util::Unit
 
     bool HasPower(const Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType);
     UnitPower& GetPower(Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType);
+    UnitPower* TryGetPower(Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType);
     bool AddPower(World& world, entt::entity entity, Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType, f64 base, f64 current, f64 max);
     bool SetPower(World& world, entt::entity entity, Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType, f64 base, f64 current, f64 max);
 
@@ -74,4 +76,11 @@ namespace ECS::Util::Unit
     bool HasStat(const Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType);
     UnitStat& GetStat(Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType);
     bool AddStat(Components::UnitStatsComponent& unitStatsComponent, Generated::StatTypeEnum statType, f64 base, f64 current);
+
+    /// <returns>True if aura was applied or stacks increased, False if aura could not be applied</returns>
+    bool AddAura(World& world, Singletons::GameCache& gameCache, entt::entity caster, entt::entity target, Components::UnitAuraInfo& unitAuraInfo, u32 spellID, u16 stackCount, entt::entity& outAuraEntity);
+    /// <returns>True if aura was removed or stacks decreased, False if aura was not found</returns>
+    bool RemoveAura(World& world, Components::UnitAuraInfo& unitAuraInfo, u32 spellID, u16 stacksToRemove);
+    bool HasAura(Components::UnitAuraInfo& unitAuraInfo, u32 spellID);
+    entt::entity GetAura(Components::UnitAuraInfo& unitAuraInfo, u32 spellID);
 }

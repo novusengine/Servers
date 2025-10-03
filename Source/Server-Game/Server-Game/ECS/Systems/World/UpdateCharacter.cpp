@@ -10,7 +10,9 @@
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
+#include "Server-Game/ECS/Components/UnitAuraInfo.h"
 #include "Server-Game/ECS/Components/UnitCombatInfo.h"
+#include "Server-Game/ECS/Components/UnitPowersComponent.h"
 #include "Server-Game/ECS/Components/UnitResistancesComponent.h"
 #include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
@@ -179,13 +181,14 @@ namespace ECS::Systems
             characterInfo.unitClass = unitClass;
             Util::Unit::UpdateDisplayRaceGender(*world.registry, entity, displayInfo, unitRace, unitGender);
 
-            Util::Unit::AddPowersComponent(world, entity);
+            Util::Unit::AddPowersComponent(world, entity, unitClass);
             auto& unitResistancesComponent = Util::Unit::AddResistancesComponent(world, entity);
             auto& unitStatsComponent = Util::Unit::AddStatsComponent(world, entity);
 
             world.Emplace<Tags::IsAlive>(entity);
             world.Emplace<Components::UnitSpellCooldownHistory>(entity);
             world.Emplace<Components::UnitCombatInfo>(entity);
+            world.Emplace<Components::UnitAuraInfo>(entity);
             auto& targetInfo = world.Emplace<Components::TargetInfo>(entity);
             targetInfo.target = entt::null;
 
@@ -198,7 +201,7 @@ namespace ECS::Systems
             buffer->Reset();
             bool failed = false;
 
-            failed |= !Util::MessageBuilder::Unit::BuildUnitAdd(buffer, objectInfo.guid, characterInfo.name, transform.position, transform.scale, transform.pitchYaw);
+            failed |= !Util::MessageBuilder::Unit::BuildUnitAdd(buffer, objectInfo.guid, characterInfo.name, unitClass, transform.position, transform.scale, transform.pitchYaw);
             failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::UnitSetMoverPacket{
                 .guid = objectInfo.guid
             });
@@ -213,15 +216,7 @@ namespace ECS::Systems
                     .max = pair.second.max
                 });
             }
-
-            for (auto& pair : unitStatsComponent.statTypeToValue)
-            {
-                failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::UnitStatUpdatePacket{
-                    .kind = static_cast<u8>(pair.first),
-                    .base = pair.second.base,
-                    .current = pair.second.current
-                 });
-            }
+            world.EmplaceOrReplace<Events::CharacterNeedsRecalculateStatsUpdate>(entity);
 
             if (Database::Util::Character::CharacterGetItems(databaseConn, characterID, databaseResult))
             {
@@ -366,8 +361,6 @@ namespace ECS::Systems
                 });
             }
         });
-
-        world.Clear<Events::CharacterNeedsInitialization>();
     }
 
     void UpdateCharacter::HandleUpdate(Singletons::WorldState& worldState, World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
@@ -375,13 +368,149 @@ namespace ECS::Systems
         HandleDeinitialization(worldState, world, zenith, gameCache, networkState);
         HandleInitialization(world, zenith, gameCache, networkState);
 
-        auto view = world.View<Components::UnitSpellCooldownHistory, Tags::IsPlayer>();
-        view.each([&](entt::entity entity, Components::UnitSpellCooldownHistory& cooldownHistory)
+        auto spellCooldownView = world.View<Components::UnitSpellCooldownHistory, Tags::IsPlayer>();
+        spellCooldownView.each([&](entt::entity entity, Components::UnitSpellCooldownHistory& cooldownHistory)
         {
             for (auto& [spellID, cooldown] : cooldownHistory.spellIDToCooldown)
             {
                 cooldown = glm::max(0.0f, cooldown - deltaTime);
             }
         });
+
+        std::shared_ptr<Bytebuffer> buffer = Bytebuffer::Borrow<512>();
+
+        auto recalculateStatsView = world.View<Components::CharacterInfo, Components::PlayerContainers, Components::UnitPowersComponent, Components::UnitStatsComponent, Events::CharacterNeedsRecalculateStatsUpdate>();
+        recalculateStatsView.each([&](entt::entity entity, Components::CharacterInfo& characterInfo, Components::PlayerContainers& playerContainers, Components::UnitPowersComponent& unitPowersComponent, Components::UnitStatsComponent& unitStatsComponent)
+        {
+            buffer->Reset();
+
+            // Default stats back to base
+            for (auto& pair : unitStatsComponent.statTypeToValue)
+            {
+                UnitStat& unitStat = pair.second;
+                unitStat.current = unitStat.base;
+
+                unitStatsComponent.dirtyStatTypes.insert(pair.first);
+            }
+
+            // Apply item stats
+            for (ItemEquipSlot_t i = static_cast<ItemEquipSlot_t>(Generated::ItemEquipSlotEnum::EquipmentStart); i <= static_cast<ItemEquipSlot_t>(Generated::ItemEquipSlotEnum::EquipmentEnd); i++)
+            {
+                const auto& item = playerContainers.equipment.GetItem(static_cast<ItemEquipSlot_t>(i));
+                if (item.IsEmpty())
+                    continue;
+
+                ObjectGUID itemGUID = item.objectGUID;
+
+                Database::ItemInstance* itemInstance = nullptr;
+                if (!Util::Cache::GetItemInstanceByID(gameCache, itemGUID.GetCounter(), itemInstance))
+                    continue;
+
+                GameDefine::Database::ItemTemplate* itemTemplate = nullptr;
+                if (!Util::Cache::GetItemTemplateByID(gameCache, itemInstance->itemID, itemTemplate))
+                    continue;
+
+                UnitStat& armorStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::Armor);
+                armorStat.current += itemTemplate->armor;
+
+                GameDefine::Database::ItemStatTemplate* itemStatTemplate = nullptr;
+                if (itemTemplate->statTemplateID > 0 && Util::Cache::GetItemStatTemplateByID(gameCache, itemTemplate->statTemplateID, itemStatTemplate))
+                {
+                    for (u8 statIndex = 0; statIndex < 8; statIndex++)
+                    {
+                        u8 statType = itemStatTemplate->statTypes[statIndex];
+                        i32 statValue = itemStatTemplate->statValues[statIndex];
+
+                        if (statType == 0 || statValue == 0)
+                            continue;
+
+                        auto statTypeEnum = static_cast<Generated::StatTypeEnum>(statType);
+                        UnitStat& unitStat = Util::Unit::GetStat(unitStatsComponent, statTypeEnum);
+                        unitStat.current += statValue;
+                    }
+                }
+
+                GameDefine::Database::ItemArmorTemplate* itemArmorTemplate = nullptr;
+                if (itemTemplate->armorTemplateID > 0 && Util::Cache::GetItemArmorTemplateByID(gameCache, itemTemplate->armorTemplateID, itemArmorTemplate))
+                {
+                    armorStat.current += itemArmorTemplate->bonusArmor;
+                }
+
+                GameDefine::Database::ItemShieldTemplate* itemShieldTemplate = nullptr;
+                if (itemTemplate->shieldTemplateID > 0 && Util::Cache::GetItemShieldTemplateByID(gameCache, itemTemplate->shieldTemplateID, itemShieldTemplate))
+                {
+                    armorStat.current += itemShieldTemplate->bonusArmor;
+                }
+            }
+
+            for (Generated::StatTypeEnum dirtyStatType : unitStatsComponent.dirtyStatTypes)
+            {
+                UnitStat& unitStat = Util::Unit::GetStat(unitStatsComponent, dirtyStatType);
+
+                Util::Network::AppendPacketToBuffer(buffer, Generated::UnitStatUpdatePacket{
+                    .kind = static_cast<u8>(dirtyStatType),
+                    .base = unitStat.base,
+                    .current = unitStat.current
+                });
+            }
+
+            // Calculate New Health
+            {
+                UnitStat& healthStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::Health);
+                UnitStat& staminaStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::Stamina);
+
+                UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, Generated::PowerTypeEnum::Health);
+
+                f64 baseHealth = healthStat.current;
+                f64 maxHealth = healthPower.base + (staminaStat.current * 10.0);
+                f64 currentHealth = glm::min(healthPower.current, maxHealth);
+
+                if (world.AllOf<Events::CharacterNeedsInitialization>(entity))
+                    currentHealth = maxHealth;
+
+                Util::Unit::SetPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Health, baseHealth, currentHealth, maxHealth);
+            }
+
+            switch (characterInfo.unitClass)
+            {
+                case GameDefine::UnitClass::Warrior:
+                case GameDefine::UnitClass::Paladin:
+                {
+                    UnitStat& strengthStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::Strength);
+                    UnitStat& attackPowerStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::AttackPower);
+
+                    attackPowerStat.current += strengthStat.current * 2.0;
+                    break;
+                }
+
+                case GameDefine::UnitClass::Hunter:
+                case GameDefine::UnitClass::Rogue:
+                {
+                    UnitStat& agilityStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::Agility);
+                    UnitStat& attackPowerStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::AttackPower);
+
+                    attackPowerStat.current += agilityStat.current * 2.0;
+                    break;
+                }
+
+                case GameDefine::UnitClass::Priest:
+                case GameDefine::UnitClass::Shaman:
+                case GameDefine::UnitClass::Mage:
+                case GameDefine::UnitClass::Warlock:
+                case GameDefine::UnitClass::Druid:
+                {
+                    UnitStat& intellectStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::Intellect);
+                    UnitStat& spellPowerStat = Util::Unit::GetStat(unitStatsComponent, Generated::StatTypeEnum::SpellPower);
+
+                    spellPowerStat.current += intellectStat.current * 2.0;
+                    break;
+                }
+            }
+
+            world.EmplaceOrReplace<Events::CharacterNeedsStatUpdate>(entity);
+        });
+        world.Clear<Events::CharacterNeedsRecalculateStatsUpdate>();
+
+        world.Clear<Events::CharacterNeedsInitialization>();
     }
 }

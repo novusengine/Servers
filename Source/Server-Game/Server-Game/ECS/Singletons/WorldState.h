@@ -2,6 +2,7 @@
 #include "Server-Game/ECS/Components/Events.h"
 
 #include <Base/Container/ConcurrentQueue.h>
+#include <Base/Math/Math.h>
 
 #include <Gameplay/GameDefine.h>
 
@@ -217,6 +218,7 @@ namespace ECS
 
         u32 mapID;
         Scripting::ZenithInfoKey zenithKey;
+        Math::Xoroshiro128PP rng;
         WorldVisData playerVisData;
         WorldVisData creatureVisData;
 

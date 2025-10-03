@@ -4,6 +4,7 @@
 
 #include <Gameplay/GameDefine.h>
 
+#include <Meta/Generated/Shared/SpellEnum.h>
 #include <Meta/Generated/Shared/ProximityTriggerEnum.h>
 
 #include <robinhood/robinhood.h>
@@ -312,6 +313,29 @@ namespace Database
         robin_hood::unordered_map<u16, std::vector<Database::PermissionGroupData>> groupIDToData;
     };
 
+    struct SpellEffectInfo
+    {
+    public:
+        u64 regularEffectsMask = 0;
+        std::vector<GameDefine::Database::SpellEffect> effects;
+    };
+
+    struct SpellProcLink
+    {
+    public:
+        u64 effectMask = 0;
+        GameDefine::Database::SpellProcData procData;
+    };
+
+    struct SpellProcInfo
+    {
+    public:
+        u64 procEffectsMask = 0;
+
+        std::array<u16, (Generated::SpellProcPhaseTypeEnumMeta::Type)Generated::SpellProcPhaseTypeEnum::Count> phaseLinkMask = { 0, 0, 0, 0, 0, 0 };
+        std::vector<SpellProcLink> links;
+    };
+
     struct CurrencyTables
     {
     public:
@@ -357,6 +381,8 @@ namespace Database
     {
     public:
         robin_hood::unordered_map<u32, GameDefine::Database::Spell> idToDefinition;
-        robin_hood::unordered_map<u32, std::vector<GameDefine::Database::SpellEffect>> spellIDToEffects;
+        robin_hood::unordered_map<u32, GameDefine::Database::SpellProcData> procDataIDToDefinition;
+        robin_hood::unordered_map<u32, SpellEffectInfo> spellIDToEffects;
+        robin_hood::unordered_map<u32, SpellProcInfo> spellIDToProcInfo;
     };
 }

@@ -5,9 +5,9 @@
 #include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
 
-#include <Base/Util/StringUtils.h>
-
 #include <Server-Common/Database/Definitions.h>
+
+#include <Base/Util/StringUtils.h>
 
 #include <entt/entt.hpp>
 
@@ -79,9 +79,24 @@ namespace ECS::Util::Cache
         bool exists = cache.itemTables.templateIDToTemplateDefinition.contains(itemID);
         return exists;
     }
+    bool ItemStatTemplateExistsByID(Singletons::GameCache& cache, u32 statTemplateID)
+    {
+        bool exists = cache.itemTables.statTemplateIDToTemplateDefinition.contains(statTemplateID);
+        return exists;
+    }
+    bool ItemArmorTemplateExistsByID(Singletons::GameCache& cache, u32 armorTemplateID)
+    {
+        bool exists = cache.itemTables.armorTemplateIDToTemplateDefinition.contains(armorTemplateID);
+        return exists;
+    }
     bool ItemWeaponTemplateExistsByID(Singletons::GameCache& cache, u32 weaponTemplateID)
     {
         bool exists = cache.itemTables.weaponTemplateIDToTemplateDefinition.contains(weaponTemplateID);
+        return exists;
+    }
+    bool ItemShieldTemplateExistsByID(Singletons::GameCache& cache, u32 shieldTemplateID)
+    {
+        bool exists = cache.itemTables.shieldTemplateIDToTemplateDefinition.contains(shieldTemplateID);
         return exists;
     }
     bool ItemInstanceExistsByID(Singletons::GameCache& cache, u64 itemInstanceID)
@@ -97,12 +112,36 @@ namespace ECS::Util::Cache
         itemTemplate = &cache.itemTables.templateIDToTemplateDefinition[itemID];
         return true;
     }
+    bool GetItemStatTemplateByID(Singletons::GameCache& cache, u32 statTemplateID, GameDefine::Database::ItemStatTemplate*& itemStatTemplate)
+    {
+        if (!ItemStatTemplateExistsByID(cache, statTemplateID))
+            return false;
+
+        itemStatTemplate = &cache.itemTables.statTemplateIDToTemplateDefinition[statTemplateID];
+        return true;
+    }
+    bool GetItemArmorTemplateByID(Singletons::GameCache& cache, u32 armorTemplateID, GameDefine::Database::ItemArmorTemplate*& itemArmorTemplate)
+    {
+        if (!ItemArmorTemplateExistsByID(cache, armorTemplateID))
+            return false;
+
+        itemArmorTemplate = &cache.itemTables.armorTemplateIDToTemplateDefinition[armorTemplateID];
+        return true;
+    }
     bool GetItemWeaponTemplateByID(Singletons::GameCache& cache, u32 weaponTemplateID, GameDefine::Database::ItemWeaponTemplate*& itemWeaponTemplate)
     {
         if (!ItemWeaponTemplateExistsByID(cache, weaponTemplateID))
             return false;
 
         itemWeaponTemplate = &cache.itemTables.weaponTemplateIDToTemplateDefinition[weaponTemplateID];
+        return true;
+    }
+    bool GetItemShieldTemplateByID(Singletons::GameCache& cache, u32 shieldTemplateID, GameDefine::Database::ItemShieldTemplate*& itemShieldTemplate)
+    {
+        if (!ItemShieldTemplateExistsByID(cache, shieldTemplateID))
+            return false;
+
+        itemShieldTemplate = &cache.itemTables.shieldTemplateIDToTemplateDefinition[shieldTemplateID];
         return true;
     }
     bool GetItemInstanceByID(Singletons::GameCache& cache, u64 itemInstanceID, Database::ItemInstance*& itemInstance)
@@ -199,9 +238,9 @@ namespace ECS::Util::Cache
         spell = &cache.spellTables.idToDefinition[spellID];
         return true;
     }
-    bool GetSpellEffectsBySpellID(Singletons::GameCache& cache, u32 spellID, std::vector<GameDefine::Database::SpellEffect>*& spellEffectList)
+    bool GetSpellEffectsBySpellID(Singletons::GameCache& cache, u32 spellID, Database::SpellEffectInfo*& dbSpellEffectInfo)
     {
-        spellEffectList = nullptr;
+        dbSpellEffectInfo = nullptr;
 
         if (!SpellExistsByID(cache, spellID))
             return false;
@@ -209,7 +248,7 @@ namespace ECS::Util::Cache
         if (!cache.spellTables.spellIDToEffects.contains(spellID))
             return false;
 
-        spellEffectList = &cache.spellTables.spellIDToEffects[spellID];
+        dbSpellEffectInfo = &cache.spellTables.spellIDToEffects[spellID];
         return true;
     }
 }

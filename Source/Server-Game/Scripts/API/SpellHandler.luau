@@ -2,29 +2,36 @@
 
 type SpellOnPrepareCallback = ((eventID : SpellEvent, data : SpellEventDataOnPrepare) -> ())
 type SpellOnHandleEffectCallback = ((eventID : SpellEvent, data : SpellEventDataOnHandleEffect) -> boolean)
+type SpellOnFinishCallback = ((eventID : SpellEvent, data : SpellEventDataOnFinish) -> ())
 
 type SpellEventInfo =
 {
     id : number,
     onPrepareCallback : SpellOnPrepareCallback?,
+    onFinishCallback : SpellOnFinishCallback?,
     effectIndexToCallback : { [number] : SpellOnHandleEffectCallback }
 }
 
 type SpellHandlerAPI = {
     idToEventInfo : { [number] : SpellEventInfo },
     effectTypeToCallback : { [number] : SpellOnHandleEffectCallback },
+    procDataIDToCallback : { [number] : SpellOnHandleEffectCallback },
 
     GetEventInfo : (self : SpellHandlerAPI, spellID : number) -> (SpellEventInfo),
 
     RegisterGenericEffectTypeCallback : (self : SpellHandlerAPI, effectType : number, callback : SpellOnHandleEffectCallback?) -> (),
+    RegisterOnProcCallback : (self : SpellHandlerAPI, procDataID : number, callback : SpellOnHandleEffectCallback?) -> (),
+
     RegisterOnPrepareCallback : (self : SpellHandlerAPI, spellID : number, callback : SpellOnPrepareCallback?) -> (),
-    RegisterOnHandleEffectCallback : (self : SpellHandlerAPI, spellID : number, effectIndex : number, callback : SpellOnHandleEffectCallback?) -> ()
+    RegisterOnHandleEffectCallback : (self : SpellHandlerAPI, spellID : number, effectIndex : number, callback : SpellOnHandleEffectCallback?) -> (),
+    RegisterOnFinishCallback : (self : SpellHandlerAPI, spellID : number, callback : SpellOnFinishCallback?) -> ()
 }
 
 local effectHandler : SpellHandlerAPI =
 {
     idToEventInfo = {},
-    effectTypeToCallback = {}
+    effectTypeToCallback = {},
+    procDataIDToCallback = {}
 }
 effectHandler.__index = effectHandler
 
@@ -48,6 +55,10 @@ function effectHandler:RegisterGenericEffectTypeCallback(effectType : number, ca
     self.effectTypeToCallback[effectType] = callback
 end
 
+function effectHandler:RegisterOnProcCallback(procDataID : number, callback : SpellOnHandleEffectCallback?)
+    self.procDataIDToCallback[procDataID] = callback
+end
+
 function effectHandler:RegisterOnPrepareCallback(spellID : number, callback : SpellOnPrepareCallback?)
     local eventInfo = self:GetEventInfo(spellID)
     eventInfo.onPrepareCallback = callback
@@ -56,6 +67,11 @@ end
 function effectHandler:RegisterOnHandleEffectCallback(spellID : number, effectIndex : number, callback : SpellOnHandleEffectCallback?)
     local eventInfo = self:GetEventInfo(spellID)
     eventInfo.effectIndexToCallback[effectIndex] = callback
+end
+
+function effectHandler:RegisterOnFinishCallback(spellID : number, callback : SpellOnFinishCallback?)
+    local eventInfo = self:GetEventInfo(spellID)
+    eventInfo.onFinishCallback = callback
 end
 
 local function OnSpellPrepare(eventID : SpellEvent, data : SpellEventDataOnPrepare)
@@ -67,29 +83,41 @@ local function OnSpellPrepare(eventID : SpellEvent, data : SpellEventDataOnPrepa
 
     return true
 end
-RegisterEvent(SpellEvent.OnPrepare, OnSpellPrepare)
 
 local function OnSpellHandleEffect(eventID : SpellEvent, data : SpellEventDataOnHandleEffect)
     local spellID = data.spell:GetID()
     local eventInfo = effectHandler:GetEventInfo(spellID)
     local effectIndex = data.effect:GetIndex()
-
-    local callback = eventInfo.effectIndexToCallback[effectIndex]
-    if callback then
-        if not callback(eventID, data) then
-            return
-        end
-    end
-
-    local effectType = data.effect:GetType()
-    local typeCallback = effectHandler.effectTypeToCallback[effectType]
-    if not typeCallback then
+    
+    local procCallback = if data.procID then effectHandler.procDataIDToCallback[data.procID] else nil
+    if procCallback and not procCallback(eventID, data)then
         return
     end
 
-    typeCallback(eventID, data)
+    local effectCallback = eventInfo.effectIndexToCallback[effectIndex]
+    if effectCallback and not effectCallback(eventID, data) then
+        return
+    end
+
+    local effectType = data.effect:GetType()
+    local genericTypeCallback = effectHandler.effectTypeToCallback[effectType]
+    if not genericTypeCallback then
+        return
+    end
+
+    genericTypeCallback(eventID, data)
 end
+
+local function OnSpellFinish(eventID : SpellEvent, data : SpellEventDataOnFinish)
+    local eventInfo = effectHandler:GetEventInfo(data.spell:GetID())
+    if eventInfo.onFinishCallback then
+        eventInfo.onFinishCallback(eventID, data)
+    end
+end
+
+RegisterEvent(SpellEvent.OnPrepare, OnSpellPrepare)
 RegisterEvent(SpellEvent.OnHandleEffect, OnSpellHandleEffect)
+RegisterEvent(SpellEvent.OnFinish, OnSpellFinish)
 
 __global_effectHandler = effectHandler
 return __global_effectHandler

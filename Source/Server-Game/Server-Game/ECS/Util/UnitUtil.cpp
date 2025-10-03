@@ -1,11 +1,14 @@
 #include "UnitUtil.h"
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
 
+#include "Server-Game/ECS/Components/AuraEffectInfo.h"
+#include "Server-Game/ECS/Components/AuraInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/Transform.h"
+#include "Server-Game/ECS/Components/UnitAuraInfo.h"
 #include "Server-Game/ECS/Components/UnitCombatInfo.h"
 #include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
 #include "Server-Game/ECS/Components/UnitPowersComponent.h"
@@ -104,12 +107,42 @@ namespace ECS::Util::Unit
         UpdateDisplayRaceGender(registry, entity, displayInfo, displayInfo.unitRace, gender, forceDirty);
     }
 
-    ECS::Components::UnitPowersComponent& AddPowersComponent(World& world, entt::entity entity)
+    ECS::Components::UnitPowersComponent& AddPowersComponent(World& world, entt::entity entity, GameDefine::UnitClass unitClass)
     {
         auto& unitPowersComponent = world.Emplace<Components::UnitPowersComponent>(entity);
 
         AddPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Health, 100.0, 50.0, 100.0);
-        AddPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Mana, 50.0, 0.0, 50.0);
+
+        switch (unitClass)
+        {
+            case GameDefine::UnitClass::Warrior:
+            {
+                AddPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Rage, 100.0, 0.0, 100.0);
+                break;
+            }
+            case GameDefine::UnitClass::Paladin:
+            case GameDefine::UnitClass::Priest:
+            case GameDefine::UnitClass::Shaman:
+            case GameDefine::UnitClass::Mage:
+            case GameDefine::UnitClass::Warlock:
+            case GameDefine::UnitClass::Druid:
+            {
+                AddPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Mana, 100.0, 100.0, 100.0);
+                break;
+            }
+
+            case GameDefine::UnitClass::Hunter:
+            {
+                AddPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Focus, 100.0, 0.0, 100.0);
+                break;
+            }
+
+            case GameDefine::UnitClass::Rogue:
+            {
+                AddPower(world, entity, unitPowersComponent, Generated::PowerTypeEnum::Energy, 100.0, 0.0, 100.0);
+                break;
+            }
+        }
 
         return unitPowersComponent;
     }
@@ -124,11 +157,15 @@ namespace ECS::Util::Unit
     {
         auto& unitStatsComponent = world.Emplace<Components::UnitStatsComponent>(entity);
 
-        AddStat(unitStatsComponent, Generated::StatTypeEnum::Stamina, 10.0, 10.0);
-        AddStat(unitStatsComponent, Generated::StatTypeEnum::Strength, 10.0, 10.0);
-        AddStat(unitStatsComponent, Generated::StatTypeEnum::Agility, 10.0, 10.0);
-        AddStat(unitStatsComponent, Generated::StatTypeEnum::Intellect, 10.0, 10.0);
-        AddStat(unitStatsComponent, Generated::StatTypeEnum::Spirit, 10.0, 10.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Health, 100.0, 100.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Stamina, 0.0, 0.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Strength, 0.0, 0.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Agility, 0.0, 0.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Intellect, 0.0, 0.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Spirit, 0.0, 0.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::Armor, 0.0, 0.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::AttackPower, 0.0, 0.0);
+        AddStat(unitStatsComponent, Generated::StatTypeEnum::SpellPower, 0.0, 0.0);
 
         return unitStatsComponent;
     }
@@ -219,6 +256,13 @@ namespace ECS::Util::Unit
     UnitPower& GetPower(Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType)
     {
         return unitPowersComponent.powerTypeToValue.at(powerType);
+    }
+    UnitPower* TryGetPower(Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType)
+    {
+        if (!HasPower(unitPowersComponent, powerType))
+            return nullptr;
+
+        return &unitPowersComponent.powerTypeToValue[powerType];
     }
     bool AddPower(World& world, entt::entity entity, Components::UnitPowersComponent& unitPowersComponent, Generated::PowerTypeEnum powerType, f64 base, f64 current, f64 max)
     {
@@ -323,5 +367,96 @@ namespace ECS::Util::Unit
         };
 
         return true;
+    }
+
+    bool AddAura(World& world, Singletons::GameCache& gameCache, entt::entity caster, entt::entity target, Components::UnitAuraInfo& unitAuraInfo, u32 spellID, u16 stackCount, entt::entity& outAuraEntity)
+    {
+        entt::entity auraEntity = GetAura(unitAuraInfo, spellID);
+
+        // Create new aura if it doesn't exist
+        if (auraEntity == entt::null)
+        {
+            GameDefine::Database::Spell* spell = nullptr;
+            if (!Cache::GetSpellByID(gameCache, spellID, spell))
+                return false;
+
+            auraEntity = world.CreateEntity();
+
+            auto* casterObjectInfo = world.TryGet<Components::ObjectInfo>(caster);
+            auto& targetObjectInfo = world.Get<Components::ObjectInfo>(target);
+
+            world.Emplace<Components::AuraEffectInfo>(auraEntity);
+            auto& auraInfo = world.Emplace<Components::AuraInfo>(auraEntity);
+            auraInfo.caster = casterObjectInfo ? casterObjectInfo->guid : ObjectGUID::Empty;
+            auraInfo.target = targetObjectInfo.guid;
+
+            auraInfo.flags = { 0 };
+            auraInfo.flags.isBuff = true;
+            auraInfo.stacks = stackCount;
+
+            auraInfo.spellID = spellID;
+            auraInfo.duration = spell->duration;
+            auraInfo.timeRemaining = spell->duration;
+
+            world.Emplace<Tags::IsUnpreparedAura>(auraEntity);
+            unitAuraInfo.spellIDToAuraEntity[spellID] = auraEntity;
+        }
+        else
+        {
+            auto& auraInfo = world.Get<Components::AuraInfo>(auraEntity);
+
+            // Check if stacks would overflow
+            if (std::numeric_limits<u16>::max() - auraInfo.stacks < stackCount)
+                return false;
+
+            auraInfo.stacks += stackCount;
+
+            // TODO : Check if duration is allowed to be refreshed
+            auraInfo.timeRemaining = auraInfo.duration;
+
+            if (!world.AllOf<Tags::IsUnpreparedAura>(auraEntity))
+                world.EmplaceOrReplace<Events::AuraRefreshed>(auraEntity);
+        }
+
+        outAuraEntity = auraEntity;
+        return true;
+    }
+    bool RemoveAura(World& world, Components::UnitAuraInfo& unitAuraInfo, u32 spellID, u16 stacksToRemove)
+    {
+        entt::entity auraEntity = GetAura(unitAuraInfo, spellID);
+        if (auraEntity == entt::null)
+            return false;
+
+        auto& auraInfo = world.Get<Components::AuraInfo>(auraEntity);
+        if (auraInfo.stacks > stacksToRemove)
+        {
+            auraInfo.stacks -= stacksToRemove;
+
+            if (!world.AllOf<Tags::IsUnpreparedAura>(auraEntity))
+                world.EmplaceOrReplace<Events::AuraRefreshed>(auraEntity);
+        }
+        else
+        {
+            auraInfo.stacks = 0;
+            unitAuraInfo.spellIDToAuraEntity.erase(spellID);
+
+            world.Emplace<Events::AuraExpired>(auraEntity);
+            world.Remove<Tags::IsActiveAura>(auraEntity);
+        }
+
+        return true;
+    }
+    bool HasAura(Components::UnitAuraInfo& unitAuraInfo, u32 spellID)
+    {
+        bool hasAura = unitAuraInfo.spellIDToAuraEntity.contains(spellID);
+        return hasAura;
+    }
+    entt::entity GetAura(Components::UnitAuraInfo& unitAuraInfo, u32 spellID)
+    {
+        auto itr = unitAuraInfo.spellIDToAuraEntity.find(spellID);
+        if (itr == unitAuraInfo.spellIDToAuraEntity.end())
+            return entt::null;
+
+        return itr->second;
     }
 }

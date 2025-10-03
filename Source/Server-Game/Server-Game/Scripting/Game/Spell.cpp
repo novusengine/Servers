@@ -2,19 +2,12 @@
 #include "SpellEffect.h"
 #include "Unit.h"
 #include "Server-Game/Application/EnttRegistries.h"
-#include "Server-Game/ECS/Components/ObjectInfo.h"
-#include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/SpellEffectInfo.h"
 #include "Server-Game/ECS/Components/SpellInfo.h"
-#include "Server-Game/ECS/Components/UnitCombatInfo.h"
-#include "Server-Game/ECS/Components/UnitStatsComponent.h"
+#include "Server-Game/ECS/Components/SpellProcInfo.h"
 #include "Server-Game/ECS/Singletons/CombatEventState.h"
-#include "Server-Game/ECS/Singletons/GameCache.h"
-#include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Util/CombatEventUtil.h"
-#include "Server-Game/ECS/Util/UnitUtil.h"
-#include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
 #include <Scripting/Zenith.h>
@@ -71,6 +64,49 @@ namespace Scripting
 
                 auto& spellEffect = spellEffectInfo.effects[effectIndex];
                 SpellEffect::Create(zenith, spell->entity, effectIndex, spellEffect.effectType);
+                return 1;
+            }
+
+            i32 GetProcInfo(Zenith* zenith, Spell* spell)
+            {
+                u32 procDataID = zenith->CheckVal<u32>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                u16 mapID = zenith->key.GetMapID();
+                ECS::World& world = worldState.GetWorld(mapID);
+                if (!world.ValidEntity(spell->entity))
+                    return 0;
+
+                auto* spellProcInfo = world.TryGet<ECS::Components::SpellProcInfo>(spell->entity);
+                if (!spellProcInfo)
+                    return 0;
+
+                u32 numProcInfos = static_cast<u32>(spellProcInfo->procInfos.size());
+                u32 numProcIndex = std::numeric_limits<u32>::max();
+
+                for (u32 i = 0; i < numProcInfos; i++)
+                {
+                    const ECS::Components::ProcInfo& procInfo = spellProcInfo->procInfos[i];
+                    if (procInfo.procDataID != procDataID)
+                        continue;
+
+                    numProcIndex = i;
+                    break;
+                }
+
+                if (numProcIndex == std::numeric_limits<u32>::max())
+                    return 0;
+
+                const ECS::Components::ProcInfo& procInfo = spellProcInfo->procInfos[numProcIndex];
+
+                zenith->CreateTable();
+                zenith->AddTableField("id", procInfo.procDataID);
+                zenith->AddTableField("charges", procInfo.charges);
+                zenith->AddTableField("effectMask", procInfo.effectMask);
+                zenith->AddTableField("lastProcTime", procInfo.lastProcTime);
+
                 return 1;
             }
 

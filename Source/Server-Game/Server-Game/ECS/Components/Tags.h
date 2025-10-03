@@ -7,11 +7,15 @@ namespace ECS::Tags
     struct IsCreature {};
     struct IsInCombat {};
     struct IsMissingHealth {};
+    struct IsMissingPower {};
     struct IsAlive {};
     struct IsDead {};
     struct IsUnpreparedSpell {};
     struct IsActiveSpell {};
     struct IsCompleteSpell {};
+    struct IsUnpreparedAura {};
+    struct IsActiveAura {};
+    struct IsPeriodicAura {};
     struct CharacterWasWorldTransferred {};
     struct ProximityTriggerIsServerSideOnly {};
     struct ProximityTriggerIsClientSide {};

@@ -1,8 +1,10 @@
 #include "Unit.h"
+#include "Aura.h"
 #include "Character.h"
 #include "Server-Game/Application/EnttRegistries.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
+#include "Server-Game/ECS/Components/UnitAuraInfo.h"
 #include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
 #include "Server-Game/ECS/Components/UnitPowersComponent.h"
 #include "Server-Game/ECS/Components/UnitResistancesComponent.h"
@@ -62,7 +64,6 @@ namespace Scripting
                 zenith->Push(characterID);
                 return 1;
             }
-
             i32 ToCharacter(Zenith* zenith, Unit* unit)
             {
                 entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -101,7 +102,6 @@ namespace Scripting
                 zenith->Push(isAlive);
                 return 1;
             }
-
             i32 GetHealth(Zenith* zenith, Unit* unit)
             {
                 entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -378,6 +378,7 @@ namespace Scripting
                 zenith->Push(true);
                 return 1;
             }
+            
             i32 HasSpellCooldown(Zenith* zenith, Unit* unit)
             {
                 auto spellID = zenith->CheckVal<u32>(2);
@@ -436,6 +437,100 @@ namespace Scripting
                 auto& unitSpellCooldownHistory = world.Get<ECS::Components::UnitSpellCooldownHistory>(entity);
                 ECS::Util::Unit::SetSpellCooldown(unitSpellCooldownHistory, spellID, cooldown);
                 return 0;
+            }
+
+            i32 AddAura(Zenith* zenith, Unit* unit)
+            {
+                auto target = zenith->GetUserData<Unit>(2);
+                auto spellID = zenith->CheckVal<u32>(3);
+                auto stacks = zenith->IsNumber(4) ? zenith->CheckVal<u16>(4) : 1;
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& gameCache = registry->ctx().get<ECS::Singletons::GameCache>();
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                u16 mapID = zenith->key.GetMapID();
+                entt::entity casterEntity = unit->entity;
+                entt::entity targetEntity = target ? target->entity : entt::null;
+
+                ECS::World& world = worldState.GetWorld(mapID);
+                if (!world.ValidEntity(casterEntity) || !world.ValidEntity(targetEntity))
+                    return 0;
+
+                auto& unitAuraInfo = world.Get<ECS::Components::UnitAuraInfo>(targetEntity);
+
+                entt::entity auraEntity = entt::null;
+                if (!ECS::Util::Unit::AddAura(world, gameCache, casterEntity, targetEntity, unitAuraInfo, spellID, stacks, auraEntity))
+                    return 0;
+
+                Aura::Create(zenith, auraEntity, spellID);
+                return 1;
+            }
+
+            i32 RemoveAura(Zenith* zenith, Unit* unit)
+            {
+                return 0;
+            }
+
+            i32 HasAura(Zenith* zenith, Unit* unit)
+            {
+                return 0;
+            }
+
+            i32 GetAura(Zenith* zenith, Unit* unit)
+            {
+                return 0;
+            }
+            i32 GetPower(Zenith* zenith, Unit* unit)
+            {
+                auto resourceType = static_cast<Generated::PowerTypeEnum>(zenith->CheckVal<u8>(2));
+                if (resourceType <= Generated::PowerTypeEnum::Invalid || resourceType >= Generated::PowerTypeEnum::Count)
+                    return 0;
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                u16 mapID = zenith->key.GetMapID();
+                entt::entity entity = unit->entity;
+
+                ECS::World& world = worldState.GetWorld(mapID);
+                if (!world.ValidEntity(entity))
+                    return 0;
+
+                auto& unitPowersComponent = world.Get<ECS::Components::UnitPowersComponent>(entity);
+                ECS::UnitPower* power = ECS::Util::Unit::TryGetPower(unitPowersComponent, resourceType);
+                if (!power)
+                    return 0;
+
+                zenith->Push(power->current);
+                zenith->Push(power->max);
+                zenith->Push(power->base);
+
+                return 3;
+            }
+            i32 GetStat(Zenith* zenith, Unit* unit)
+            {
+                auto statType = static_cast<Generated::StatTypeEnum>(zenith->CheckVal<u8>(2));
+                if (statType <= Generated::StatTypeEnum::Invalid || statType >= Generated::StatTypeEnum::Count)
+                    return 0;
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                u16 mapID = zenith->key.GetMapID();
+                entt::entity entity = unit->entity;
+
+                ECS::World& world = worldState.GetWorld(mapID);
+                if (!world.ValidEntity(entity))
+                    return 0;
+
+                auto& unitStatsComponent = world.Get<ECS::Components::UnitStatsComponent>(entity);
+                ECS::UnitStat& stat = ECS::Util::Unit::GetStat(unitStatsComponent, statType);
+
+                zenith->Push(stat.current);
+                zenith->Push(stat.base);
+
+                return 3;
             }
         }
     }

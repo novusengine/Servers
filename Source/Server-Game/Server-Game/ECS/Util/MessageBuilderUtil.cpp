@@ -1,6 +1,8 @@
 #include "MessageBuilderUtil.h"
+#include "Server-Game/ECS/Components/AuraInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
+#include "Server-Game/ECS/Components/UnitAuraInfo.h"
 #include "Server-Game/ECS/Components/UnitPowersComponent.h"
 #include "Server-Game/ECS/Components/UnitResistancesComponent.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
@@ -63,11 +65,12 @@ namespace ECS::Util::MessageBuilder
 
     namespace Unit
     {
-        bool BuildUnitAdd(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID guid, const std::string& name, const vec3& position, const vec3& scale, const vec2& pitchYaw)
+        bool BuildUnitAdd(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID guid, const std::string& name, GameDefine::UnitClass unitClass, const vec3& position, const vec3& scale, const vec2& pitchYaw)
         {
             bool result = Util::Network::AppendPacketToBuffer(buffer, Generated::UnitAddPacket{
                 .guid = guid,
                 .name = name,
+                .unitClass = static_cast<u8>(unitClass),
                 .position = position,
                 .scale = scale,
                 .pitchYaw = pitchYaw
@@ -77,6 +80,7 @@ namespace ECS::Util::MessageBuilder
         }
         bool BuildUnitBaseInfo(std::shared_ptr<Bytebuffer>& buffer, entt::registry& registry, entt::entity entity, ObjectGUID guid)
         {
+            auto& unitAuraInfo = registry.get<Components::UnitAuraInfo>(entity);
             auto& unitPowersComponent = registry.get<Components::UnitPowersComponent>(entity);
             auto& displayInfo = registry.get<Components::DisplayInfo>(entity);
             auto& visualItems = registry.get<Components::UnitVisualItems>(entity);
@@ -111,6 +115,21 @@ namespace ECS::Util::MessageBuilder
                     .base = pair.second.base,
                     .current = pair.second.current,
                     .max = pair.second.max
+                });
+            }
+
+            for (auto& pair : unitAuraInfo.spellIDToAuraEntity)
+            {
+                entt::entity entity = pair.second;
+
+                auto& auraInfo = registry.get<Components::AuraInfo>(entity);
+
+                failed |= !Util::Network::AppendPacketToBuffer(buffer, Generated::ServerUnitAddAuraPacket{
+                    .guid = guid,
+                    .auraInstanceID = entt::to_integral(entity),
+                    .spellID = pair.first,
+                    .duration = auraInfo.duration,
+                    .stacks = auraInfo.stacks
                 });
             }
 

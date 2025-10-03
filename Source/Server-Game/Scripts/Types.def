@@ -44,6 +44,7 @@ declare class SpellEvent
     Invalid         : number
     OnPrepare       : number
     OnHandleEffect  : number
+    OnFinish        : number
     Count           : number
 end
 declare SpellEvent : SpellEvent
@@ -56,14 +57,54 @@ declare class SpellEventDataOnHandleEffect
     caster : Unit
     spell  : Spell
     effect : SpellEffect
+    procID : number?
+end
+declare class SpellEventDataOnFinish
+    caster : Unit
+    spell  : Spell
+end
+
+declare class AuraEvent
+    Invalid         : number
+    OnApply         : number
+    OnRemove        : number
+    OnHandleEffect  : number
+    Count           : number
+end
+declare AuraEvent : AuraEvent
+
+declare class AuraEventDataOnApply
+    target : Unit
+    aura  : Aura
+end
+declare class AuraEventDataOnRemove
+    target : Unit
+    aura  : Aura
+end
+declare class AuraEventDataOnHandleEffect
+    target : Unit
+    aura : Aura
+    effect : AuraEffect
 end
 
 declare class SpellEffectType
-    Invalid      : number
-    WeaponDamage : number
-    Count        : number
+    Invalid             : number
+    Dummy               : number
+    WeaponDamage        : number
+    AuraApply           : number
+    AuraRemove          : number
+    AuraPeriodicDamage  : number
+    AuraPeriodicHeal    : number
+    Count               : number
 end
 declare SpellEffectType : SpellEffectType
+
+declare class ProcInfo
+    id : number
+    charges : number
+    effectMask : number
+    lastProcTime : number
+end
 
 declare class CreatureAIEvent
     Invalid       : number
@@ -134,6 +175,33 @@ declare class ItemEquipSlot
 end
 declare ItemEquipSlot : ItemEquipSlot
 
+declare class PowerType
+    Invalid         : number
+    Health          : number
+    Mana            : number
+    Rage            : number
+    Focus           : number
+    Energy          : number
+    Happiness       : number
+    Count           : number
+end
+declare PowerType : PowerType
+
+declare class StatType
+    Invalid         : number
+    Health          : number
+    Stamina         : number
+    Strength        : number
+    Agility         : number
+    Intellect       : number
+    Spirit          : number
+    Armor           : number
+    AttackPower     : number
+    SpellPower      : number
+    Count           : number
+end
+declare StatType : StatType
+
 declare class PacketList
     Invalid                      : number
     Connect                      : number
@@ -173,6 +241,9 @@ declare class PacketList
     ClientTriggerEnter           : number
     ServerTriggerAdd             : number
     ServerTriggerRemove          : number
+    ServerUnitAddAura            : number
+    ServerUnitUpdateAuras        : number
+    ServerUnitRemoveAura         : number
     Count                        : number
 end
 declare PacketList : PacketList
@@ -221,6 +292,14 @@ declare class Unit
     function HasSpellCooldown(self, spellID : number) : boolean
     function GetSpellCooldown(self, spellID : number) : number
     function SetSpellCooldown(self, spellID : number, duration : number) : ()
+
+    function AddAura(self, target : Unit, spellID : number, stacks : number?) : Aura?
+    function RemoveAura(self, spellID : number, stacks : number?) : boolean
+    function HasAura(self, spellID : number) : boolean
+    function GetAura(self, spellID : number) : Aura?
+
+    function GetPower(self, powerType : PowerType) : number
+    function GetStat(self, statType : StatType) : number
 end
 
 declare class Character extends Unit
@@ -230,6 +309,7 @@ end
 declare class Spell
     function GetID(self) : number
     function GetEffect(self, effectIndex : number) : SpellEffect?
+    function GetProcInfo(self, procID : number) : ProcInfo?
 
     function GetCaster(self) : Unit?
     function GetTarget(self) : Unit?
@@ -242,6 +322,31 @@ declare class Spell
 end
 
 declare class SpellEffect
+    function GetIndex(self) : number
+    function GetType(self) : number
+
+    function GetValues(self) : (number, number, number)
+    function SetValue(self, valueIndex : number, value : number) : ()
+
+    function GetMiscValues(self) : (number, number, number)
+    function SetMiscValue(self, miscValueIndex : number, miscValue : number) : ()
+end
+
+declare class Aura
+    function GetID(self) : number
+    function GetEffect(self, effectIndex : number) : AuraEffect?
+
+    function GetCaster(self) : Unit?
+    function GetTarget(self) : Unit?
+    function GetStacks(self) : number
+    function GetDuration(self) : number
+    function GetTimeRemaining(self) : number
+
+    function Damage(self, amount : number) : number
+    function Heal(self, amount : number) : number
+end
+
+declare class AuraEffect
     function GetIndex(self) : number
     function GetType(self) : number
 
