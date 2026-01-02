@@ -41,7 +41,7 @@ namespace ECS::Systems
                 { "password",  "postgres" }
             };
 
-            if (!JsonUtils::LoadFromPathOrCreate(gameCache.config, fallback, "Data/config/Database.json"))
+            if (!JsonUtils::LoadFromPathOrCreate(gameCache.config, fallback, "Data/Config/Database.json"))
             {
                 NC_LOG_CRITICAL("[Database] : Failed to create config file");
             }

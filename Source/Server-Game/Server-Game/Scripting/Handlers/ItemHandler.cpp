@@ -1,4 +1,4 @@
-#include "Itemhandler.h"
+#include "ItemHandler.h"
 #include "Server-Game/Scripting/Game/Item.h"
 #include "Server-Game/Scripting/Game/ItemTemplate.h"
 #include "Server-Game/Scripting/Game/ItemWeaponTemplate.h"

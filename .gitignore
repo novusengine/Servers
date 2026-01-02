@@ -31,8 +31,10 @@
 *.app
 
 build*/ 
+Build*/
 .vs/
 .vscode/
+.idea/
 out/
 CMakeSettings.json
 
