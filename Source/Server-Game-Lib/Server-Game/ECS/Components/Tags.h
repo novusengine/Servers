@@ -1,0 +1,24 @@
+#pragma once
+#include <Base/Types.h>
+
+namespace ECS::Tags
+{
+    struct IsPlayer {};
+    struct IsCreature {};
+    struct IsInCombat {};
+    struct IsMissingHealth {};
+    struct IsMissingPower {};
+    struct IsAlive {};
+    struct IsDead {};
+    struct IsUnpreparedSpell {};
+    struct IsActiveSpell {};
+    struct IsCompleteSpell {};
+    struct IsUnpreparedAura {};
+    struct IsActiveAura {};
+    struct IsPeriodicAura {};
+    struct CharacterWasWorldTransferred {};
+    struct ProximityTriggerIsServerSideOnly {};
+    struct ProximityTriggerIsClientSide {};
+    struct ProximityTriggerHasEnteredPlayers {};
+    struct IsMovementActive {};
+}

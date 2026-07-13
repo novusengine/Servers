@@ -30,11 +30,16 @@
 *.out
 *.app
 
+Source/Meta/MetaGen/
+Source/Meta/MetaGen.staging/
+Source/Meta/MetaGen.previous/
+
 build*/ 
 .vs/
 .vscode/
 out/
 CMakeSettings.json
+DatabaseBackups/
 
 # Exceptions
 .cache/

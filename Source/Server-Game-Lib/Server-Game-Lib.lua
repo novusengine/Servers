@@ -1,0 +1,35 @@
+-- Dependencies are order sensitive on Linux, keep that in mind when adding new dependencies.
+local mod = Solution.Util.CreateModuleTable("Server-Game-Lib", { "server-common", "recastnavigation-detour" })
+
+Solution.Util.CreateStaticLib(mod.Name, Solution.Projects.Current.BinDir, mod.Dependencies, function()
+    local defines = { "_SILENCE_ALL_CXX17_DEPRECATION_WARNINGS", "_SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS" }
+    Solution.Util.SetLanguage("C++")
+    Solution.Util.SetCppDialect(20)
+
+    local projFile = mod.Path .. "/" .. mod.Name .. ".lua"
+    local files = Solution.Util.GetFilesForCpp(mod.Path)
+    table.insert(files, projFile)
+
+    Solution.Util.SetFiles(files)
+    Solution.Util.SetIncludes(mod.Path)
+    Solution.Util.SetDefines(defines)
+
+    Solution.Util.SetFilter("platforms:Win64", function()
+        Solution.Util.SetDefines({"WIN32_LEAN_AND_MEAN", "NOMINMAX"})
+    end)
+
+    vpaths {
+        ["/*"] = { "*.lua", "Server-Game/**" }
+    }
+
+    dependson {"Luau-Compiler", "Luau-VM"}
+end)
+
+Solution.Util.CreateDep(mod.NameLow, mod.Dependencies, function()
+    Solution.Util.SetIncludes(mod.Path)
+    Solution.Util.SetLinks(mod.Name)
+
+    Solution.Util.SetFilter("platforms:Win64", function()
+        Solution.Util.SetDefines({"WIN32_LEAN_AND_MEAN", "NOMINMAX"})
+    end)
+end)

@@ -76,4 +76,8 @@ Solution.Util.CreateDep(dep.NameLow, dep.Dependencies, function()
     
     Solution.Util.SetIncludes({dep.Path .. "/Libpqxx/include"})
     Solution.Util.SetLinks({ dep.Name, foundLibs })
+
+    Solution.Util.SetFilter("platforms:Win64", function()
+        Solution.Util.SetLinks({ "Ws2_32" })
+    end)
 end)

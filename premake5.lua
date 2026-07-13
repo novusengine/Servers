@@ -27,6 +27,22 @@ project.Init = function(self, rootDir, buildDir, binDir)
 
     self.DependencyDir = path.getabsolute("Dependencies/", self.RootDir)
     self.ModulesDir = path.getabsolute("Source/", self.RootDir)
+
+    include(path.getabsolute("Submodules/Engine/Source/Meta/Profile.lua", self.RootDir))
+    include(path.getabsolute("Source/Meta/Providers.lua", self.RootDir))
+    MetaGen.ConfigureProject {
+        name = self.Name,
+        outputRoot = path.getabsolute("Source/Meta/MetaGen", self.RootDir),
+        providers = { "Servers.Runtime", "Servers.Database" },
+        postgres = {
+            historyByBundle = {
+                auth = path.getabsolute("Source/Meta/PostgresHistory/auth", self.RootDir),
+                character = path.getabsolute("Source/Meta/PostgresHistory/character", self.RootDir),
+                world = path.getabsolute("Source/Meta/PostgresHistory/world", self.RootDir)
+            }
+        }
+    }
+    MetaGen.RequestFinalization()
     
     local buildSettings = path.getabsolute("Premake/BuildSettings.lua", self.RootDir)
     local silentFailOnDuplicateSetting = not self.IsRoot
@@ -52,6 +68,11 @@ project.Init = function(self, rootDir, buildDir, binDir)
     for _, v in pairs(submodules) do
         Solution.Util.Print("-- Initializing Submodule : " .. v)
         Solution.Util.IncludeSubmodule(v, self.RootDir, self.BinDir)
+    end
+
+    if self.IsRoot then
+        include(path.getabsolute("Submodules/Engine/Source/Meta/PostgresMigrationAction.lua", self.RootDir))
+        include(path.getabsolute("Source/Meta/PostgresDefinitionTests.lua", self.RootDir))
     end
 
     Solution.Util.Print("\n-- Directory Info (" .. self.Name .. ") --")

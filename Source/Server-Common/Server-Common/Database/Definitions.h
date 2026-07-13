@@ -15,39 +15,6 @@ namespace Database
 {
     static constexpr u32 CHARACTER_BASE_CONTAINER_SIZE = 24;
 
-    struct CharacterCurrency
-    {
-    public:
-        u16 currencyID = 0;
-        u64 value = 0;
-    };
-
-    struct Permission
-    {
-    public:
-        u16 id = 0;
-        std::string name;
-    };
-    struct PermissionGroup
-    {
-    public:
-        u16 id = 0;
-        std::string name;
-    };
-    struct PermissionGroupData
-    {
-    public:
-        u16 groupID = 0;
-        u16 permissionID = 0;
-    };
-
-    struct Currency
-    {
-    public:
-        u16 id = 0;
-        std::string name;
-    };
-
     struct ContainerItem
     {
     public:
@@ -285,34 +252,6 @@ namespace Database
         u16 durability = 0;
     };
 
-    struct CharacterItem
-    {
-    public:
-        u64 charid = 0;
-        u64 itemInstanceId = 0;
-        u16 containerID = 0;
-        u16 slot = 0;
-    };
-
-    struct ProximityTrigger
-    {
-    public:
-        u32 id = 0;
-        std::string name = "";
-        MetaGen::Shared::ProximityTrigger::ProximityTriggerFlagEnum flags = MetaGen::Shared::ProximityTrigger::ProximityTriggerFlagEnum::None;
-        u16 mapID = 0;
-        vec3 position = vec3(0.0f, 0.0f, 0.0f);
-        vec3 extents = vec3(1.0f, 1.0f, 1.0f);
-    };
-
-    struct PermissionTables
-    {
-    public:
-        robin_hood::unordered_map<u16, Database::Permission> idToDefinition;
-        robin_hood::unordered_map<u16, Database::PermissionGroup> groupIDToDefinition;
-        robin_hood::unordered_map<u16, std::vector<Database::PermissionGroupData>> groupIDToData;
-    };
-
     struct SpellEffectInfo
     {
     public:
@@ -336,12 +275,6 @@ namespace Database
         std::vector<SpellProcLink> links;
     };
 
-    struct CurrencyTables
-    {
-    public:
-        robin_hood::unordered_map<u16, Database::Currency> idToDefinition;
-    };
-
     struct ItemTables
     {
     public:
@@ -357,10 +290,7 @@ namespace Database
     {
     public:
         robin_hood::unordered_map<u64, entt::entity> charIDToEntity;
-        robin_hood::unordered_map<u32, u64> charNameHashToCharID;
-        robin_hood::unordered_map<u64, std::vector<u16>> charIDToPermissions;
-        robin_hood::unordered_map<u64, std::vector<u16>> charIDToPermissionGroups;
-        robin_hood::unordered_map<u64, std::vector<CharacterCurrency>> charIDToCurrency;
+        robin_hood::unordered_map<std::string, u64> charNameToCharID;
     };
 
     struct CreatureTables
