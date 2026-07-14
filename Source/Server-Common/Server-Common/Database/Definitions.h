@@ -6,14 +6,51 @@
 
 #include <MetaGen/Shared/Spell/Spell.h>
 #include <MetaGen/Shared/ProximityTrigger/ProximityTrigger.h>
+#include <MetaGen/Postgres/World/Tables/CreatureClassLevelStats.h>
+#include <MetaGen/Postgres/World/Tables/CreatureTemplates.h>
 
 #include <robinhood/robinhood.h>
 
 #include <entt/fwd.hpp>
 
+#include <string>
+#include <vector>
+
 namespace Database
 {
     static constexpr u32 CHARACTER_BASE_CONTAINER_SIZE = 24;
+
+    struct PermissionAssignment
+    {
+        u32 permissionID = 0;
+        i64 value = 0;
+    };
+
+    struct PermissionAssignmentSnapshot
+    {
+        std::vector<PermissionAssignment> permissions;
+        std::vector<u32> permissionGroupIDs;
+        bool defaultGroupApplied = false;
+    };
+
+    struct PermissionTables
+    {
+        robin_hood::unordered_map<u32, std::string> permissionIDToName;
+        robin_hood::unordered_map<std::string, u32> permissionNameToID;
+        robin_hood::unordered_map<u32, u16> permissionIDToValueKind;
+        robin_hood::unordered_map<u32, i64> permissionIDToDefaultValue;
+        robin_hood::unordered_map<u32, std::string> permissionGroupIDToName;
+        robin_hood::unordered_map<std::string, u32> permissionGroupNameToID;
+        robin_hood::unordered_map<u32, robin_hood::unordered_map<u32, i64>> permissionGroupIDToValues;
+    };
+
+    using CreatureClassLevelStats = MetaGen::Postgres::World::CreatureClassLevelStatsRecord;
+    using CreatureTemplate = MetaGen::Postgres::World::CreatureTemplatesRecord;
+
+    constexpr u32 MakeCreatureClassLevelKey(u16 unitClass, u16 level)
+    {
+        return (static_cast<u32>(unitClass) << 16) | static_cast<u32>(level);
+    }
 
     struct ContainerItem
     {
@@ -296,7 +333,8 @@ namespace Database
     struct CreatureTables
     {
     public:
-        robin_hood::unordered_map<u32, GameDefine::Database::CreatureTemplate> templateIDToDefinition;
+        robin_hood::unordered_map<u32, CreatureClassLevelStats> classLevelKeyToStats;
+        robin_hood::unordered_map<u32, CreatureTemplate> templateIDToDefinition;
     };
     
     struct MapTables

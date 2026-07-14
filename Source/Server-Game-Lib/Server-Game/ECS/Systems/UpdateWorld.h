@@ -40,10 +40,12 @@ namespace ECS
             static void HandleProximityTriggerInitialization(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState);
             static void HandleProximityTriggerUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState);
 
-            static void HandleReplication(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState);
+            static void HandleReplication(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState,
+                Singletons::GameCache& gameCache, Singletons::NetworkState& networkState);
             static void HandleContainerUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState);
             static void HandleDisplayUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState);
-            static void HandleCombatUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState);
+            static void HandleCombatUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState);
+            static void HandleCombatTimeoutUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState);
             static void HandlePowerUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState);
             static void HandleAuraUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState);
             static void HandleSpellUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState);

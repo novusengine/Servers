@@ -9,13 +9,17 @@
 #include "Server-Game/ECS/Components/CharacterInfo.h"
 #include "Server-Game/ECS/Components/CharacterSpellCastInfo.h"
 #include "Server-Game/ECS/Components/CreatureAIInfo.h"
+#include "Server-Game/ECS/Components/CreatureCombatInfo.h"
 #include "Server-Game/ECS/Components/CreatureInfo.h"
+#include "Server-Game/ECS/Components/CreatureLifecycleInfo.h"
 #include "Server-Game/ECS/Components/CreatureThreatTable.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
+#include "Server-Game/ECS/Components/MovementIntent.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
+#include "Server-Game/ECS/Components/PermissionInfo.h"
 #include "Server-Game/ECS/Components/ProximityTrigger.h"
 #include "Server-Game/ECS/Components/SpellEffectInfo.h"
 #include "Server-Game/ECS/Components/SpellInfo.h"
@@ -48,6 +52,7 @@
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/ECS/Util/DatabaseRetryUtil.h"
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
+#include "Server-Game/ECS/Util/PermissionUtil.h"
 #include "Server-Game/ECS/Util/Persistence/CharacterUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
 
@@ -80,6 +85,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -94,6 +100,166 @@ namespace ECS::Systems
     namespace
     {
         constexpr u8 MAX_DEFERRED_DATABASE_RETRIES = 5;
+        constexpr f32 CREATURE_MELEE_RANGE = 2.5f;
+        constexpr f32 CREATURE_MELEE_VERTICAL_RANGE = 3.0f;
+        constexpr f32 CREATURE_MELEE_DAMAGE_VARIANCE = 0.1f;
+        constexpr f32 DEFAULT_CREATURE_LEASH_RANGE = 40.0f;
+        constexpr f32 CREATURE_HOME_REACHED_DISTANCE = 0.5f;
+        constexpr f32 CREATURE_HOME_REACHED_VERTICAL_DISTANCE = 2.0f;
+        constexpr f32 CREATURE_CORPSE_DURATION = 60.0f;
+        constexpr f64 MAX_ARMOR_DAMAGE_REDUCTION = 0.75;
+
+        enum class CreatureMovementType : u16
+        {
+            Idle = 0,
+            Random = 1,
+            Waypoint = 2
+        };
+
+        void ResetCreatureResources(World& world, entt::entity entity, Components::UnitPowersComponent& powers,
+            Components::UnitStatsComponent& stats)
+        {
+            for (auto& [powerType, power] : powers.powerTypeToValue)
+            {
+                f64 resetCurrent = 0.0;
+                if (powerType == MetaGen::Shared::Unit::PowerTypeEnum::Health ||
+                    powerType == MetaGen::Shared::Unit::PowerTypeEnum::Mana ||
+                    powerType == MetaGen::Shared::Unit::PowerTypeEnum::Energy)
+                {
+                    resetCurrent = power.max;
+                }
+                Util::Unit::SetPower(world, entity, powers, powerType, power.base, resetCurrent, power.max);
+            }
+
+            if (auto healthStatItr = stats.statTypeToValue.find(MetaGen::Shared::Unit::StatTypeEnum::Health);
+                healthStatItr != stats.statTypeToValue.end())
+            {
+                healthStatItr->second.current = healthStatItr->second.base;
+            }
+        }
+
+        void StartCreatureDefaultMovement(World& world, entt::entity entity, const Components::CreatureInfo& creatureInfo,
+            const Components::CreatureCombatInfo& creatureCombatInfo)
+        {
+            if (static_cast<CreatureMovementType>(creatureInfo.movementType) != CreatureMovementType::Random ||
+                creatureInfo.wanderDistance <= 0.0f || creatureInfo.walkSpeed <= 0.0f)
+            {
+                return;
+            }
+
+            Util::Movement::WanderParams params;
+            params.speed = creatureInfo.walkSpeed;
+            params.radius = creatureInfo.wanderDistance;
+            Util::Movement::Wander(world, entity, creatureCombatInfo.homePosition, params);
+        }
+
+        bool CanPlayerSeeCreature(World& world, const Singletons::GameCache& gameCache, entt::entity playerEntity,
+            entt::entity creatureEntity)
+        {
+            const auto* lifecycleInfo = world.TryGet<Components::CreatureLifecycleInfo>(creatureEntity);
+            if (!lifecycleInfo || lifecycleInfo->state != Components::CreatureLifecycleState::Despawned)
+                return true;
+
+            const auto* permissionInfo = world.TryGet<Components::CharacterPermissionInfo>(playerEntity);
+            return permissionInfo && Util::Permission::HasPermission(gameCache, permissionInfo->effectivePermissions,
+                MetaGen::Server::Permission::Permission::VisibilityCreatureSeeDespawned);
+        }
+
+        void HideCreature(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, entt::entity entity,
+            const Components::ObjectInfo& objectInfo, Components::VisibilityInfo& visibilityInfo)
+        {
+            for (auto itr = visibilityInfo.visiblePlayers.begin(); itr != visibilityInfo.visiblePlayers.end();)
+            {
+                const ObjectGUID playerGUID = *itr;
+                entt::entity playerEntity = world.GetEntity(playerGUID);
+                if (!world.ValidEntity(playerEntity))
+                {
+                    itr = visibilityInfo.visiblePlayers.erase(itr);
+                    continue;
+                }
+
+                if (CanPlayerSeeCreature(world, gameCache, playerEntity, entity))
+                {
+                    ++itr;
+                    continue;
+                }
+
+                if (auto* playerNetInfo = world.TryGet<Components::NetInfo>(playerEntity))
+                {
+                    if (!Util::Network::SendPacket(networkState, playerNetInfo->socketID, MetaGen::Shared::Packet::ServerUnitRemovePacket{
+                        .guid = objectInfo.guid
+                    }))
+                    {
+                        ++itr;
+                        continue;
+                    }
+                }
+
+                if (auto* playerVisibilityInfo = world.TryGet<Components::VisibilityInfo>(playerEntity))
+                    playerVisibilityInfo->visibleCreatures.erase(objectInfo.guid);
+                itr = visibilityInfo.visiblePlayers.erase(itr);
+            }
+        }
+
+        void ShowCreature(Components::VisibilityUpdateInfo& visibilityUpdateInfo)
+        {
+            visibilityUpdateInfo.timeSinceLastUpdate = visibilityUpdateInfo.updateInterval;
+        }
+
+        GameDefine::UnitClass ResolveCreatureUnitClass(u16 value)
+        {
+            switch (value)
+            {
+                case static_cast<u16>(GameDefine::UnitClass::Warrior): return GameDefine::UnitClass::Warrior;
+                case static_cast<u16>(GameDefine::UnitClass::Paladin): return GameDefine::UnitClass::Paladin;
+                case static_cast<u16>(GameDefine::UnitClass::Hunter): return GameDefine::UnitClass::Hunter;
+                case static_cast<u16>(GameDefine::UnitClass::Rogue): return GameDefine::UnitClass::Rogue;
+                case static_cast<u16>(GameDefine::UnitClass::Priest): return GameDefine::UnitClass::Priest;
+                case static_cast<u16>(GameDefine::UnitClass::Shaman): return GameDefine::UnitClass::Shaman;
+                case static_cast<u16>(GameDefine::UnitClass::Mage): return GameDefine::UnitClass::Mage;
+                case static_cast<u16>(GameDefine::UnitClass::Warlock): return GameDefine::UnitClass::Warlock;
+                case static_cast<u16>(GameDefine::UnitClass::Druid): return GameDefine::UnitClass::Druid;
+                default: return GameDefine::UnitClass::None;
+            }
+        }
+
+        u16 RollCreatureLevel(World& world, const Database::CreatureTemplate& creatureTemplate)
+        {
+            const u16 minLevel = std::max<u16>(1, std::min(creatureTemplate.minLevel, creatureTemplate.maxLevel));
+            const u16 maxLevel = std::max<u16>(minLevel, std::max(creatureTemplate.minLevel, creatureTemplate.maxLevel));
+            const u64 levelCount = static_cast<u64>(maxLevel - minLevel) + 1;
+            return static_cast<u16>(minLevel + (world.rng.Next() % levelCount));
+        }
+
+        bool IsWithinCreatureMeleeRange(const Components::Transform& creatureTransform, const Components::Transform& targetTransform)
+        {
+            const vec3 offset = targetTransform.position - creatureTransform.position;
+            const f32 horizontalDistanceSq = offset.x * offset.x + offset.z * offset.z;
+            return horizontalDistanceSq <= CREATURE_MELEE_RANGE * CREATURE_MELEE_RANGE &&
+                std::abs(offset.y) <= CREATURE_MELEE_VERTICAL_RANGE;
+        }
+
+        u32 CalculateCreatureMeleeDamage(World& world, const Components::CreatureInfo& creatureInfo,
+            const Components::CreatureCombatInfo& creatureCombatInfo,
+            const Components::UnitStatsComponent* targetStats)
+        {
+            const f32 variance = 1.0f - CREATURE_MELEE_DAMAGE_VARIANCE +
+                world.rng.NextF32() * (CREATURE_MELEE_DAMAGE_VARIANCE * 2.0f);
+            const u32 rawDamage = std::max(1u, static_cast<u32>(std::lround(creatureCombatInfo.meleeDamage * variance)));
+            if (creatureCombatInfo.damageSchool != 0 || !targetStats)
+                return rawDamage;
+
+            const auto armorItr = targetStats->statTypeToValue.find(MetaGen::Shared::Unit::StatTypeEnum::Armor);
+            if (armorItr == targetStats->statTypeToValue.end())
+                return rawDamage;
+
+            const UnitStat& armorStat = armorItr->second;
+            const f64 armor = std::max(0.0, armorStat.current);
+            // Classic physical mitigation uses the attacker's level and caps armor reduction at 75%.
+            const f64 armorConstant = 400.0 + 85.0 * static_cast<f64>(creatureInfo.level);
+            const f64 reduction = std::min(MAX_ARMOR_DAMAGE_REDUCTION, armor / (armor + armorConstant));
+            return std::max(1u, static_cast<u32>(std::lround(static_cast<f64>(rawDamage) * (1.0 - reduction))));
+        }
 
         bool IsDeferredDatabaseRetryable(Database::OperationFailure failure)
         {
@@ -276,7 +442,7 @@ namespace ECS::Systems
             world.movementScheduler.ReservePathRequests(static_cast<u32>(creatures.size()) + 128);
             for (const auto& creature : creatures)
             {
-                GameDefine::Database::CreatureTemplate* creatureTemplate = nullptr;
+                Database::CreatureTemplate* creatureTemplate = nullptr;
                 if (!Util::Cache::GetCreatureTemplateByID(gameCache, creature.templateId, creatureTemplate))
                     continue;
 
@@ -291,7 +457,11 @@ namespace ECS::Systems
                     .position = vec3(creature.positionX, creature.positionY, creature.positionZ),
                     .scale = vec3(creatureTemplate->scale),
                     .orientation = creature.positionO,
-                    .scriptName = creature.scriptName
+                    .scriptName = creature.scriptName.empty() ? creatureTemplate->scriptName : creature.scriptName,
+                    .spawnTimeInSecMin = creature.spawnTimeInSecMin,
+                    .spawnTimeInSecMax = creature.spawnTimeInSecMax,
+                    .wanderDistance = creature.wanderDistance,
+                    .movementType = creature.movementType
                 };
 
                 world.Emplace<Events::CreatureNeedsInitialization>(creatureEntity, event);
@@ -561,7 +731,7 @@ namespace ECS::Systems
             if (DeferredDatabaseRetryIsPending(world, entity, timeState))
                 return;
 
-            GameDefine::Database::CreatureTemplate* creatureTemplate = nullptr;
+            Database::CreatureTemplate* creatureTemplate = nullptr;
             if (!Util::Cache::GetCreatureTemplateByID(gameCache, event.templateID, creatureTemplate))
             {
                 world.DestroyEntity(entity);
@@ -570,7 +740,9 @@ namespace ECS::Systems
 
             auto result = gameCache.database->CreateCreature(Database::CreatureCreateRequest{
                 .templateID = event.templateID, .displayID = event.displayID, .mapID = event.mapID,
-                .position = event.position, .orientation = event.orientation, .scriptName = event.scriptName });
+                .position = event.position, .orientation = event.orientation, .scriptName = event.scriptName,
+                .spawnTimeInSecMin = event.spawnTimeInSecMin, .spawnTimeInSecMax = event.spawnTimeInSecMax,
+                .wanderDistance = event.wanderDistance, .movementType = event.movementType });
             if (!result)
             {
                 if (ScheduleDeferredDatabaseRetry(world, entity, timeState, result.Failure()))
@@ -590,7 +762,11 @@ namespace ECS::Systems
                 .position = event.position,
                 .scale = event.scale,
                 .orientation = event.orientation,
-                .scriptName = event.scriptName
+                .scriptName = event.scriptName,
+                .spawnTimeInSecMin = creature.spawnTimeInSecMin,
+                .spawnTimeInSecMax = creature.spawnTimeInSecMax,
+                .wanderDistance = creature.wanderDistance,
+                .movementType = creature.movementType
             };
 
             world.Emplace<Events::CreatureNeedsInitialization>(entity, initEvent);
@@ -601,7 +777,7 @@ namespace ECS::Systems
         auto initView = world.View<Events::CreatureNeedsInitialization>();
         initView.each([&](entt::entity entity, Events::CreatureNeedsInitialization& event)
         {
-            GameDefine::Database::CreatureTemplate* creatureTemplate = nullptr;
+            Database::CreatureTemplate* creatureTemplate = nullptr;
             if (!Util::Cache::GetCreatureTemplateByID(gameCache, event.templateID, creatureTemplate))
                 return;
 
@@ -612,7 +788,23 @@ namespace ECS::Systems
             auto& creatureInfo = world.Emplace<Components::CreatureInfo>(entity);
             creatureInfo.templateID = event.templateID;
             creatureInfo.name = creatureTemplate->name;
-            creatureInfo.unitClass = GameDefine::UnitClass::Paladin;
+            creatureInfo.unitClass = ResolveCreatureUnitClass(creatureTemplate->unitClass);
+            creatureInfo.level = RollCreatureLevel(world, *creatureTemplate);
+            creatureInfo.walkSpeed = Util::Movement::DEFAULT_WALK_SPEED * std::max(0.0f, creatureTemplate->walkSpeedMod);
+            creatureInfo.runSpeed = Util::Movement::DEFAULT_RUN_SPEED * std::max(0.0f, creatureTemplate->runSpeedMod);
+            creatureInfo.wanderDistance = std::max(0.0f, event.wanderDistance);
+            creatureInfo.movementType = event.movementType;
+
+            auto& creatureCombatInfo = world.Emplace<Components::CreatureCombatInfo>(entity);
+            creatureCombatInfo.homePosition = event.position;
+            creatureCombatInfo.homeOrientation = event.orientation;
+            creatureCombatInfo.leashRange = creatureTemplate->leashRange > 0.0f
+                ? creatureTemplate->leashRange
+                : DEFAULT_CREATURE_LEASH_RANGE;
+
+            auto& creatureLifecycleInfo = world.Emplace<Components::CreatureLifecycleInfo>(entity);
+            creatureLifecycleInfo.spawnTimeInSecMin = std::min(event.spawnTimeInSecMin, event.spawnTimeInSecMax);
+            creatureLifecycleInfo.spawnTimeInSecMax = std::max(event.spawnTimeInSecMin, event.spawnTimeInSecMax);
 
             auto& creatureTransform = world.Emplace<Components::Transform>(entity);
             creatureTransform.mapID = event.mapID;
@@ -629,30 +821,69 @@ namespace ECS::Systems
             constexpr u8 unitClassBytesOffset = (u8)MetaGen::Shared::NetField::UnitLevelRaceGenderClassPackedInfoEnum::ClassByteOffset;
             constexpr u8 unitClassBitOffset = (u8)MetaGen::Shared::NetField::UnitLevelRaceGenderClassPackedInfoEnum::ClassBitOffset;
             constexpr u8 unitClassBitSize = (u8)MetaGen::Shared::NetField::UnitLevelRaceGenderClassPackedInfoEnum::ClassBitSize;
-            unitFields.fields.SetField(MetaGen::Shared::NetField::UnitNetFieldEnum::LevelRaceGenderClassPacked, 1);
-            unitFields.fields.SetField(MetaGen::Shared::NetField::UnitNetFieldEnum::LevelRaceGenderClassPacked, GameDefine::UnitClass::Warrior, unitClassBytesOffset, unitClassBitOffset, unitClassBitSize);
-            const u32 displayID = event.displayID != 0 ? event.displayID : creatureTemplate->displayID;
+            unitFields.fields.SetField(MetaGen::Shared::NetField::UnitNetFieldEnum::LevelRaceGenderClassPacked, creatureInfo.level);
+            unitFields.fields.SetField(MetaGen::Shared::NetField::UnitNetFieldEnum::LevelRaceGenderClassPacked, creatureInfo.unitClass, unitClassBytesOffset, unitClassBitOffset, unitClassBitSize);
+            const u32 displayID = event.displayID != 0 ? event.displayID : creatureTemplate->displayId;
             Util::Unit::UpdateDisplayID(*world.registry, entity, unitFields, displayID);
 
             auto& visualItems = world.Emplace<Components::UnitVisualItems>(entity);
             auto& displayInfo = world.Emplace<Components::DisplayInfo>(entity);
             displayInfo.displayID = displayID;
 
-            Components::UnitPowersComponent& unitPowersComponent = Util::Unit::AddPowersComponent(world, entity, GameDefine::UnitClass::Paladin);
-            {
-                UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, MetaGen::Shared::Unit::PowerTypeEnum::Health);
-                healthPower.base *= creatureTemplate->healthMod;
-                healthPower.current *= creatureTemplate->healthMod;
-                healthPower.max *= creatureTemplate->healthMod;
+            Database::CreatureClassLevelStats* classLevelStats = nullptr;
+            const bool hasClassLevelStats = Util::Cache::GetCreatureClassLevelStats(
+                gameCache, creatureTemplate->unitClass, creatureInfo.level, classLevelStats);
+            creatureCombatInfo.meleeDamage = hasClassLevelStats
+                ? std::max(1.0f, classLevelStats->damage * std::max(0.0f, creatureTemplate->damageMod))
+                : std::max(1.0f, creatureTemplate->damageMod);
+            creatureCombatInfo.meleeAttackTime = std::max(0.1f, static_cast<f32>(creatureTemplate->meleeAttackTimeMs) / 1000.0f);
+            creatureCombatInfo.damageSchool = creatureTemplate->damageSchool;
 
-                UnitPower& manaPower = Util::Unit::GetPower(unitPowersComponent, MetaGen::Shared::Unit::PowerTypeEnum::Mana);
-                manaPower.base *= creatureTemplate->resourceMod;
-                manaPower.current *= creatureTemplate->resourceMod;
-                manaPower.max *= creatureTemplate->resourceMod;
+            Components::UnitPowersComponent& unitPowersComponent = Util::Unit::AddPowersComponent(world, entity, creatureInfo.unitClass);
+            UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, MetaGen::Shared::Unit::PowerTypeEnum::Health);
+            {
+                if (hasClassLevelStats)
+                {
+                    const f64 health = static_cast<f64>(classLevelStats->health) * std::max(0.0f, creatureTemplate->healthMod);
+                    healthPower.base = health;
+                    healthPower.current = health;
+                    healthPower.max = health;
+                }
+                else
+                {
+                    healthPower.base *= creatureTemplate->healthMod;
+                    healthPower.current *= creatureTemplate->healthMod;
+                    healthPower.max *= creatureTemplate->healthMod;
+                }
+
+                for (auto& [powerType, power] : unitPowersComponent.powerTypeToValue)
+                {
+                    if (powerType == MetaGen::Shared::Unit::PowerTypeEnum::Health)
+                        continue;
+
+                    const f64 currentRatio = power.max > 0.0 ? power.current / power.max : 0.0;
+                    const f64 resource = hasClassLevelStats
+                        ? static_cast<f64>(classLevelStats->resource) * std::max(0.0f, creatureTemplate->resourceMod)
+                        : power.max * std::max(0.0f, creatureTemplate->resourceMod);
+                    power.base = resource;
+                    power.current = resource * currentRatio;
+                    power.max = resource;
+                }
             }
 
             Util::Unit::AddResistancesComponent(world, entity);
-            Util::Unit::AddStatsComponent(world, entity);
+            Components::UnitStatsComponent& unitStatsComponent = Util::Unit::AddStatsComponent(world, entity);
+            UnitStat& healthStat = Util::Unit::GetStat(unitStatsComponent, MetaGen::Shared::Unit::StatTypeEnum::Health);
+            healthStat.base = healthPower.base;
+            healthStat.current = healthPower.current;
+
+            if (hasClassLevelStats)
+            {
+                UnitStat& armorStat = Util::Unit::GetStat(unitStatsComponent, MetaGen::Shared::Unit::StatTypeEnum::Armor);
+                const f64 armor = static_cast<f64>(classLevelStats->armor) * std::max(0.0f, creatureTemplate->armorMod);
+                armorStat.base = armor;
+                armorStat.current = armor;
+            }
 
             world.Emplace<Tags::IsAlive>(entity);
             auto& visibilityInfo = world.Emplace<Components::VisibilityInfo>(entity);
@@ -677,7 +908,15 @@ namespace ECS::Systems
 
             world.AddEntity(objectInfo.guid, entity, vec2(creatureTransform.position.x, creatureTransform.position.z));
 
-            Util::Movement::Wander(world, entity, creatureTransform.position);
+            // Idle spawns need no intent. Waypoint movement remains stationary until the server has a waypoint system.
+            if (static_cast<CreatureMovementType>(creatureInfo.movementType) == CreatureMovementType::Random &&
+                creatureInfo.wanderDistance > 0.0f && creatureInfo.walkSpeed > 0.0f)
+            {
+                Util::Movement::WanderParams params;
+                params.speed = creatureInfo.walkSpeed;
+                params.radius = creatureInfo.wanderDistance;
+                Util::Movement::Wander(world, entity, creatureTransform.position, params);
+            }
         });
         world.Clear<Events::CreatureNeedsInitialization>();
     }
@@ -728,6 +967,9 @@ namespace ECS::Systems
         auto updateAIView = world.View<Components::CreatureAIInfo>();
         updateAIView.each([&](entt::entity entity, Components::CreatureAIInfo& creatureAIInfo)
         {
+            if (!world.AllOf<Tags::IsAlive>(entity))
+                return;
+
             creatureAIInfo.timeToNextUpdate -= timeState.deltaTime;
             if (creatureAIInfo.timeToNextUpdate > 0.0f)
                 return;
@@ -746,14 +988,73 @@ namespace ECS::Systems
             Util::Combat::SortThreatTable(creatureThreatTable);
         });
         world.Clear<Events::CreatureNeedsThreatTableUpdate>();
+
+        auto evadeResetView = world.View<Components::ObjectInfo, Components::CreatureInfo, Components::CreatureCombatInfo, Components::Transform,
+            Components::VisibilityInfo, Components::TargetInfo, Components::UnitPowersComponent, Components::UnitStatsComponent,
+            Tags::IsAlive>();
+        evadeResetView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::CreatureInfo& creatureInfo,
+            Components::CreatureCombatInfo& creatureCombatInfo, Components::Transform& transform,
+            Components::VisibilityInfo& visibilityInfo, Components::TargetInfo& targetInfo,
+            Components::UnitPowersComponent& powers, Components::UnitStatsComponent& stats)
+        {
+            if (!creatureCombatInfo.isEvading || world.AllOf<Tags::IsInCombat>(entity))
+                return;
+
+            const vec3 homeOffset = transform.position - creatureCombatInfo.homePosition;
+            const f32 horizontalDistanceSq = homeOffset.x * homeOffset.x + homeOffset.z * homeOffset.z;
+            if (horizontalDistanceSq > CREATURE_HOME_REACHED_DISTANCE * CREATURE_HOME_REACHED_DISTANCE ||
+                std::abs(homeOffset.y) > CREATURE_HOME_REACHED_VERTICAL_DISTANCE)
+            {
+                return;
+            }
+
+            Util::Movement::Stop(world, entity);
+            transform.position = creatureCombatInfo.homePosition;
+            transform.pitchYaw.y = creatureCombatInfo.homeOrientation;
+            targetInfo.target = entt::null;
+
+            ResetCreatureResources(world, entity, powers, stats);
+
+            creatureCombatInfo.isEvading = false;
+            const Components::MovementFlags movementFlags{
+                .grounded = 1
+            };
+            ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, false,
+                ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitMovePacket::PACKET_ID, objectInfo.guid),
+                MetaGen::Shared::Packet::ServerUnitMovePacket{
+                    .guid = objectInfo.guid,
+                    .movementFlags = movementFlags.ToBitMask(),
+                    .position = transform.position,
+                    .pitchYaw = transform.pitchYaw,
+                    .verticalVelocity = 0.0f
+                });
+            world.creatureVisData.Update(objectInfo.guid, transform.position.x, transform.position.z);
+
+            StartCreatureDefaultMovement(world, entity, creatureInfo, creatureCombatInfo);
+        });
     }
 
     void UpdateWorld::HandleUnitUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         auto deathView = world.View<Components::UnitCombatInfo, Events::UnitDied, Tags::IsAlive>();
-        deathView.each([&](entt::entity entity, Components::UnitCombatInfo& combatInfo, Events::UnitDied& event)
+        deathView.each([&](entt::entity entity, Components::UnitCombatInfo&, Events::UnitDied& event)
         {
             Util::Movement::Stop(world, entity);
+
+            if (auto* lifecycleInfo = world.TryGet<Components::CreatureLifecycleInfo>(entity))
+            {
+                Util::Combat::ClearCreatureThreatTable(world, entity);
+                world.Remove<Tags::IsInCombat>(entity);
+                world.Remove<Events::UnitEnterCombat>(entity);
+                if (auto* targetInfo = world.TryGet<Components::TargetInfo>(entity))
+                    targetInfo->target = entt::null;
+                if (auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(entity))
+                    creatureCombatInfo->isEvading = false;
+
+                lifecycleInfo->state = Components::CreatureLifecycleState::Corpse;
+                lifecycleInfo->timeRemaining = CREATURE_CORPSE_DURATION;
+            }
+
             world.Remove<Tags::IsAlive>(entity);
             world.Emplace<Tags::IsDead>(entity);
 
@@ -768,10 +1069,23 @@ namespace ECS::Systems
         world.Clear<Events::UnitDied>();
 
         auto resurrectView = world.View<Components::UnitCombatInfo, Events::UnitResurrected, Tags::IsDead>();
-        resurrectView.each([&](entt::entity entity, Components::UnitCombatInfo& combatInfo, Events::UnitResurrected& event)
+        resurrectView.each([&](entt::entity entity, Components::UnitCombatInfo&, Events::UnitResurrected& event)
         {
             world.Remove<Tags::IsDead>(entity);
             world.Emplace<Tags::IsAlive>(entity);
+
+            if (auto* lifecycleInfo = world.TryGet<Components::CreatureLifecycleInfo>(entity))
+            {
+                lifecycleInfo->state = Components::CreatureLifecycleState::Alive;
+                lifecycleInfo->timeRemaining = 0.0f;
+                auto& visibilityUpdateInfo = world.Get<Components::VisibilityUpdateInfo>(entity);
+                ShowCreature(visibilityUpdateInfo);
+
+                const auto* creatureInfo = world.TryGet<Components::CreatureInfo>(entity);
+                const auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(entity);
+                if (creatureInfo && creatureCombatInfo)
+                    StartCreatureDefaultMovement(world, entity, *creatureInfo, *creatureCombatInfo);
+            }
 
             if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
             {
@@ -782,6 +1096,62 @@ namespace ECS::Systems
             }
         });
         world.Clear<Events::UnitResurrected>();
+
+        auto lifecycleView = world.View<Components::ObjectInfo, Components::CreatureInfo, Components::CreatureCombatInfo,
+            Components::CreatureLifecycleInfo, Components::Transform, Components::VisibilityInfo, Components::VisibilityUpdateInfo,
+            Components::TargetInfo, Components::UnitPowersComponent, Components::UnitStatsComponent>();
+        lifecycleView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::CreatureInfo& creatureInfo,
+            Components::CreatureCombatInfo& creatureCombatInfo, Components::CreatureLifecycleInfo& lifecycleInfo,
+            Components::Transform& transform, Components::VisibilityInfo& visibilityInfo,
+            Components::VisibilityUpdateInfo& visibilityUpdateInfo, Components::TargetInfo& targetInfo,
+            Components::UnitPowersComponent& powers, Components::UnitStatsComponent& stats)
+        {
+            if (lifecycleInfo.state == Components::CreatureLifecycleState::Alive)
+                return;
+
+            lifecycleInfo.timeRemaining = std::max(0.0f, lifecycleInfo.timeRemaining - timeState.deltaTime);
+            if (lifecycleInfo.timeRemaining > 0.0f)
+                return;
+
+            if (lifecycleInfo.state == Components::CreatureLifecycleState::Corpse)
+            {
+                lifecycleInfo.state = Components::CreatureLifecycleState::Despawned;
+                HideCreature(world, gameCache, networkState, entity, objectInfo, visibilityInfo);
+                const u64 delayCount = static_cast<u64>(lifecycleInfo.spawnTimeInSecMax - lifecycleInfo.spawnTimeInSecMin) + 1;
+                lifecycleInfo.timeRemaining = static_cast<f32>(lifecycleInfo.spawnTimeInSecMin + world.rng.Next() % delayCount);
+                return;
+            }
+
+            Util::Combat::ClearCreatureThreatTable(world, entity);
+            transform.position = creatureCombatInfo.homePosition;
+            transform.pitchYaw.y = creatureCombatInfo.homeOrientation;
+            world.creatureVisData.Update(objectInfo.guid, transform.position.x, transform.position.z);
+            targetInfo.target = entt::null;
+            creatureCombatInfo.isEvading = false;
+            creatureCombatInfo.timeToNextMeleeAttack = 0.0f;
+            ResetCreatureResources(world, entity, powers, stats);
+
+            world.Remove<Tags::IsDead>(entity);
+            world.EmplaceOrReplace<Tags::IsAlive>(entity);
+            lifecycleInfo.state = Components::CreatureLifecycleState::Alive;
+            Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, false,
+                MetaGen::Shared::Packet::ServerUnitTeleportPacket{
+                    .guid = objectInfo.guid,
+                    .position = transform.position,
+                    .orientation = transform.pitchYaw.y
+                });
+            ShowCreature(visibilityUpdateInfo);
+
+            if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
+            {
+                zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnResurrect, MetaGen::Server::Lua::CreatureAIEventDataOnResurrect{
+                    .creatureEntity = entt::to_integral(entity),
+                    .resurrectorEntity = entt::to_integral(entt::entity{ entt::null })
+                });
+            }
+
+            StartCreatureDefaultMovement(world, entity, creatureInfo, creatureCombatInfo);
+        });
 
         auto netFieldUpdateView = world.View<Components::ObjectFields, Components::UnitFields, Components::VisibilityInfo, Events::ObjectNeedsNetFieldUpdate>();
         netFieldUpdateView.each([&](entt::entity entity, Components::ObjectFields& objectFields, Components::UnitFields& unitFields, Components::VisibilityInfo& visibilityInfo)
@@ -1053,7 +1423,8 @@ namespace ECS::Systems
         });
     }
 
-    void UpdateWorld::HandleReplication(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleReplication(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState,
+        Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         robin_hood::unordered_set<ObjectGUID> cachedList;
 
@@ -1123,6 +1494,10 @@ namespace ECS::Systems
 
                 world.GetCreaturesInRadius(vec2(transform.position.x, transform.position.z), World::DEFAULT_VISIBILITY_DISTANCE, [&](const ObjectGUID guid) -> bool
                 {
+                    entt::entity creatureEntity = world.GetEntity(guid);
+                    if (!world.ValidEntity(creatureEntity) || !CanPlayerSeeCreature(world, gameCache, entity, creatureEntity))
+                        return true;
+
                     if (cachedList.contains(guid))
                     {
                         cachedList.erase(guid);
@@ -1182,6 +1557,10 @@ namespace ECS::Systems
 
             world.GetPlayersInRadius(vec2(transform.position.x, transform.position.z), World::DEFAULT_VISIBILITY_DISTANCE, [&](const ObjectGUID guid) -> bool
             {
+                entt::entity playerEntity = world.GetEntity(guid);
+                if (!world.ValidEntity(playerEntity) || !CanPlayerSeeCreature(world, gameCache, playerEntity, entity))
+                    return true;
+
                 if (cachedList.contains(guid))
                 {
                     cachedList.erase(guid);
@@ -1439,7 +1818,7 @@ namespace ECS::Systems
             }
         });
     }
-    void UpdateWorld::HandleCombatUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleCombatUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState)
     {
         auto enterCombatView = world.View<Components::ObjectInfo, Components::UnitCombatInfo, Events::UnitEnterCombat>();
         enterCombatView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::UnitCombatInfo& unitCombatInfo, Events::UnitEnterCombat& event)
@@ -1453,15 +1832,93 @@ namespace ECS::Systems
                 });
             }
 
-            if (world.AllOf<Components::CreatureInfo>(entity))
-                Util::Movement::Follow(world, entity, event.target);
+            if (auto* creatureInfo = world.TryGet<Components::CreatureInfo>(entity))
+            {
+                if (auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(entity))
+                {
+                    creatureCombatInfo->timeToNextMeleeAttack = 0.0f;
+                    Util::Movement::Follow(world, entity, event.target, Util::Movement::FollowParams{
+                        .speed = creatureInfo->runSpeed,
+                        .stopDistance = Util::Movement::DEFAULT_FOLLOW_DISTANCE
+                    });
+                }
+            }
         });
         world.Clear<Events::UnitEnterCombat>();
 
+        auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
+        auto creatureMeleeView = world.View<Components::ObjectInfo, Components::CreatureInfo, Components::CreatureCombatInfo,
+            Components::CreatureThreatTable, Components::Transform, Components::TargetInfo, Tags::IsInCombat, Tags::IsAlive>();
+        creatureMeleeView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::CreatureInfo& creatureInfo,
+            Components::CreatureCombatInfo& creatureCombatInfo, Components::CreatureThreatTable& threatTable,
+            Components::Transform& transform, Components::TargetInfo& targetInfo)
+        {
+            const vec3 homeOffset = transform.position - creatureCombatInfo.homePosition;
+            const f32 horizontalHomeDistanceSq = homeOffset.x * homeOffset.x + homeOffset.z * homeOffset.z;
+            if (horizontalHomeDistanceSq > creatureCombatInfo.leashRange * creatureCombatInfo.leashRange ||
+                std::abs(homeOffset.y) > creatureCombatInfo.leashRange)
+            {
+                creatureCombatInfo.isEvading = true;
+                targetInfo.target = entt::null;
+                Util::Movement::Stop(world, entity);
+                Util::Combat::ClearCreatureThreatTable(world, entity);
+                return;
+            }
+
+            creatureCombatInfo.timeToNextMeleeAttack = std::max(0.0f, creatureCombatInfo.timeToNextMeleeAttack - timeState.deltaTime);
+
+            entt::entity targetEntity = entt::null;
+            while (!threatTable.threatList.empty())
+            {
+                const ObjectGUID targetGUID = threatTable.threatList.front().guid;
+                targetEntity = world.GetEntity(targetGUID);
+                if (world.ValidEntity(targetEntity) &&
+                    world.AllOf<Components::ObjectInfo, Components::Transform, Tags::IsAlive>(targetEntity))
+                {
+                    break;
+                }
+
+                Util::Combat::RemoveUnitFromThreatTable(threatTable, targetGUID);
+                targetEntity = entt::null;
+            }
+
+            if (targetEntity == entt::null)
+            {
+                targetInfo.target = entt::null;
+                return;
+            }
+
+            targetInfo.target = targetEntity;
+            const auto* movementIntent = world.TryGet<Components::MovementIntent>(entity);
+            const bool needsFollowIntent = !movementIntent ||
+                movementIntent->type != Components::MovementIntentType::Follow ||
+                movementIntent->follow.target != targetEntity;
+            if (needsFollowIntent)
+            {
+                Util::Movement::Follow(world, entity, targetEntity, Util::Movement::FollowParams{
+                    .speed = creatureInfo.runSpeed,
+                    .stopDistance = Util::Movement::DEFAULT_FOLLOW_DISTANCE
+                });
+            }
+
+            const auto& targetTransform = world.Get<Components::Transform>(targetEntity);
+            if (!IsWithinCreatureMeleeRange(transform, targetTransform) || creatureCombatInfo.timeToNextMeleeAttack > 0.0f)
+                return;
+
+            const auto* targetStats = world.TryGet<Components::UnitStatsComponent>(targetEntity);
+            const u32 damage = CalculateCreatureMeleeDamage(world, creatureInfo, creatureCombatInfo, targetStats);
+            const auto& targetObjectInfo = world.Get<Components::ObjectInfo>(targetEntity);
+            Util::Combat::RefreshCreatureCombatParticipants(world, entity, creatureCombatInfo.leashRange);
+            Util::CombatEvent::AddDamageEvent(combatEventState, objectInfo.guid, targetObjectInfo.guid, damage);
+            creatureCombatInfo.timeToNextMeleeAttack = creatureCombatInfo.meleeAttackTime;
+        });
+    }
+
+    void UpdateWorld::HandleCombatTimeoutUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState)
+    {
         auto combatView = world.View<Components::ObjectInfo, Components::UnitCombatInfo, Tags::IsInCombat>();
         combatView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::UnitCombatInfo& unitCombatInfo)
         {
-            bool cantDropCombat = false;
             for (auto itr = unitCombatInfo.threatTables.begin(); itr != unitCombatInfo.threatTables.end();)
             {
                 ThreatTableEntry& threatTableEntry = itr->second;
@@ -1512,30 +1969,27 @@ namespace ECS::Systems
                 });
             }
 
-            if (world.AllOf<Components::CreatureInfo>(entity))
+            if (auto* creatureInfo = world.TryGet<Components::CreatureInfo>(entity))
             {
-                Util::Movement::Stop(world, entity);
+                auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(entity);
+                if (creatureCombatInfo && world.AllOf<Tags::IsAlive>(entity))
+                {
+                    creatureCombatInfo->isEvading = true;
+                    if (auto* targetInfo = world.TryGet<Components::TargetInfo>(entity))
+                        targetInfo->target = entt::null;
 
-                auto& transform = world.Get<Components::Transform>(entity);
-                auto& visibilityInfo = world.Get<Components::VisibilityInfo>(entity);
-
-                transform.pitchYaw.y = 0.0f;
-                const Components::MovementFlags movementFlags{
-                    .grounded = 1
-                };
-
-                ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, false, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitMovePacket::PACKET_ID, objectInfo.guid), MetaGen::Shared::Packet::ServerUnitMovePacket{
-                    .guid = objectInfo.guid,
-                    .movementFlags = movementFlags.ToBitMask(),
-                    .position = transform.position,
-                    .pitchYaw = transform.pitchYaw,
-                    .verticalVelocity = 0.0f
-                });
-
-                world.creatureVisData.Update(objectInfo.guid, transform.position.x, transform.position.z);
+                    Util::Movement::MoveTo(world, entity, creatureCombatInfo->homePosition, Util::Movement::PointParams{
+                        .speed = creatureInfo->runSpeed,
+                        .repathDistance = CREATURE_HOME_REACHED_DISTANCE,
+                        .clearOnReach = true
+                    });
+                }
+                else
+                {
+                    Util::Movement::Stop(world, entity);
+                }
             }
         });
-
     }
     void UpdateWorld::HandlePowerUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
     {
@@ -1553,6 +2007,11 @@ namespace ECS::Systems
             // Disalllow Health Regen while in combat
             if (world.AllOf<Tags::IsInCombat>(entity))
                 return;
+            if (const auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(entity);
+                creatureCombatInfo && creatureCombatInfo->isEvading)
+            {
+                return;
+            }
 
             UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, MetaGen::Shared::Unit::PowerTypeEnum::Health);
             
@@ -1567,6 +2026,15 @@ namespace ECS::Systems
         auto powerUpdateView = world.View<Components::ObjectInfo, Components::UnitPowersComponent>();
         powerUpdateView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, Components::UnitPowersComponent& unitPowersComponent)
         {
+            if (world.AllOf<Tags::IsDead>(entity))
+                return;
+
+            if (const auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(entity);
+                creatureCombatInfo && creatureCombatInfo->isEvading)
+            {
+                return;
+            }
+
             for (auto& pair : unitPowersComponent.powerTypeToValue)
             {
                 MetaGen::Shared::Unit::PowerTypeEnum powerType = pair.first;
@@ -1991,6 +2459,12 @@ namespace ECS::Systems
                 Util::Spell::CheckSpellProc(world, zenith, timeState, gameCache, spellEffectInfo, spellProcInfo, MetaGen::Shared::Spell::SpellProcPhaseTypeEnum::OnSpellCast, spellInfo.spellID, entity, casterEntity);
             }
 
+            if (const auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(casterEntity);
+                creatureCombatInfo && world.AllOf<Tags::IsInCombat>(casterEntity))
+            {
+                Util::Combat::RefreshCreatureCombatParticipants(world, casterEntity, creatureCombatInfo->leashRange);
+            }
+
             auto& visibilityInfo = world.Get<Components::VisibilityInfo>(casterEntity);
             ECS::Util::Network::SendToNearby(networkState, world, casterEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitCastSpellPacket{
                 .guid = spellInfo.caster,
@@ -2120,12 +2594,20 @@ namespace ECS::Systems
             UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, MetaGen::Shared::Unit::PowerTypeEnum::Health);
             bool isDead = (healthPower.current <= 0.0);
 
+            if (validSourceEntity && sourceEntity != targetEntity &&
+                (eventInfo.eventType == CombatEventType::Damage || eventInfo.eventType == CombatEventType::Heal))
+            {
+                if (const auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(sourceEntity))
+                    Util::Combat::RefreshCreatureCombatParticipants(world, sourceEntity, creatureCombatInfo->leashRange);
+            }
+
             bool builtMessage = false;
             switch (eventInfo.eventType)
             {
                 case CombatEventType::Damage:
                 {
-                    if (isDead)
+                    const auto* targetCreatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(targetEntity);
+                    if (isDead || (targetCreatureCombatInfo && targetCreatureCombatInfo->isEvading))
                         break;
 
                     f64 amount = static_cast<f32>(eventInfo.amount);
@@ -2260,6 +2742,9 @@ namespace ECS::Systems
                 auto& objectInfo = world.Emplace<Components::ObjectInfo>(characterEntity);
                 objectInfo.guid = ObjectGUID(ObjectGUID::Type::Player, request.characterID);
 
+                auto& permissionInfo = world.Emplace<Components::CharacterPermissionInfo>(characterEntity);
+                permissionInfo.accountPermissions = std::move(request.accountPermissions);
+
                 worldState.SetMapIDForSocket(request.socketID, request.targetMapID);
                 Util::Network::LinkSocketToCharacter(networkState, request.socketID, request.characterID, characterEntity);
                 networkState.server->SetSocketIDLane(request.socketID, laneID);
@@ -2310,15 +2795,16 @@ namespace ECS::Systems
 
             HandleProximityTriggerUpdate(world, zenith, timeState, gameCache, networkState);
 
-            HandleReplication(world, zenith, timeState, networkState);
+            HandleReplication(world, zenith, timeState, gameCache, networkState);
             HandleContainerUpdate(world, zenith, timeState, gameCache, networkState);
             HandleDisplayUpdate(world, zenith, timeState, networkState);
-            HandleCombatUpdate(world, zenith, timeState, networkState);
+            HandleCombatUpdate(world, zenith, timeState);
             Movement::HandleUpdate(world, timeState, networkState);
             HandlePowerUpdate(world, zenith, timeState, networkState);
             HandleAuraUpdate(world, zenith, timeState, gameCache, networkState);
             HandleSpellUpdate(world, zenith, timeState, gameCache, networkState);
             HandleCombatEventUpdate(world, zenith, timeState, networkState);
+            HandleCombatTimeoutUpdate(world, zenith, timeState);
         }
     }
 }

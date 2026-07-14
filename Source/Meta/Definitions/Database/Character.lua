@@ -45,21 +45,26 @@ return D.Definitions
         } }),
 
     Table("character", "character_permissions", {
-        Column("id", Type.U64, P.BigInt, I), Column("character_id", Type.U64, P.BigInt), Column("permission_id", Type.U16, P.SmallInt)
+        Column("id", Type.U64, P.BigInt, I), Column("character_id", Type.U64, P.BigInt), Column("permission_id", Type.U32, P.Integer),
+        Column("value", Type.I64, P.BigInt, D0(1))
     }, { constraints = {
             Unique("character_permissions", "character_permission_key", { "character_id", "permission_id" }),
             ForeignKey("character_permissions", "character_permissions_character_fk", { "character_id" }, "characters", { "id" }, "cascade")
         }, operations = {
-            P.Upsert("Set", { "characterId", "permissionId" }, { "characterId", "permissionId" }, {}, { persistentId = "postgres.character_permissions.set" }),
+            P.Upsert("Set", { "characterId", "permissionId", "value" }, { "characterId", "permissionId" }, { "value" }, { persistentId = "postgres.character_permissions.set" }),
             P.Delete("Delete", { "characterId", "permissionId" }, { persistentId = "postgres.character_permissions.delete" }),
             P.Delete("DeleteByCharacter", { "characterId" }, { persistentId = "postgres.character_permissions.delete_by_character", cardinality = "zeroOrMore" })
+        }, queries = {
+            P.Query("ByCharacter", { "characterId" }, { persistentId = "postgres.character_permissions.by_character", orderBy = { P.Asc("id") } })
         } }),
 
     Table("character", "character_permission_groups", {
-        Column("id", Type.U64, P.BigInt, I), Column("character_id", Type.U64, P.BigInt), Column("permission_group_id", Type.U16, P.SmallInt)
+        Column("id", Type.U64, P.BigInt, I), Column("character_id", Type.U64, P.BigInt), Column("permission_group_id", Type.U32, P.Integer)
     }, { constraints = {
             Unique("character_permission_groups", "character_permission_group_key", { "character_id", "permission_group_id" }),
             ForeignKey("character_permission_groups", "character_permission_groups_character_fk", { "character_id" }, "characters", { "id" }, "cascade")
+        }, queries = {
+            P.Query("ByCharacter", { "characterId" }, { persistentId = "postgres.character_permission_groups.by_character", orderBy = { P.Asc("id") } })
         }, operations = {
             P.Upsert("Set", { "characterId", "permissionGroupId" }, { "characterId", "permissionGroupId" }, {}, { persistentId = "postgres.character_permission_groups.set" }),
             P.Delete("Delete", { "characterId", "permissionGroupId" }, { persistentId = "postgres.character_permission_groups.delete" }),

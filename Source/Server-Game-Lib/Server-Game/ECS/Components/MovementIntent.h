@@ -19,6 +19,7 @@ namespace ECS::Components
         entt::entity target = entt::null;
         f32 repathInterval = 0.25f;
         f32 repathDistance = 2.0f;
+        f32 stopDistance = 2.0f;
     };
 
     struct MovementPointIntent

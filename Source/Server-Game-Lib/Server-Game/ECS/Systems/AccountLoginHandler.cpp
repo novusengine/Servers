@@ -7,6 +7,7 @@
 #include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
+#include "Server-Game/ECS/Components/PermissionInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
@@ -18,6 +19,7 @@
 #include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
+#include "Server-Game/ECS/Util/PermissionUtil.h"
 
 #include <Server-Common/Database/DatabaseService.h>
 
@@ -69,6 +71,13 @@ namespace ECS::Systems
                 // TODO : Implement disconnecting previous session if already logged in
                 if (!isAccountLoggedIn)
                 {
+                    auto permissionsResult = gameCache.database->GetAccountPermissions(accountID);
+                    if (!permissionsResult)
+                    {
+                        networkState.server->CloseSocketID(socketID);
+                        continue;
+                    }
+
                     if (!account.blob || account.blob->writtenData != crypto_spake_STOREDBYTES)
                     {
                         Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerConnectResultPacket{
@@ -89,6 +98,9 @@ namespace ECS::Systems
                     accountInfo.flags = account.flags;
                     accountInfo.creationTimestamp = account.registrationTimestamp;
                     accountInfo.lastLoginTimestamp = account.lastLoginTimestamp;
+
+                    auto& permissionInfo = registry.emplace<Components::AccountPermissionInfo>(accountEntity);
+                    Util::Permission::Merge(permissionInfo.permissions, gameCache.permissionTables, permissionsResult.Value());
 
                     auto& authInfo = registry.emplace<Components::AuthenticationInfo>(accountEntity);
                     authInfo.state = AuthenticationState::Step1;

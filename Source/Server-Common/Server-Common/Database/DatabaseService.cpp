@@ -13,6 +13,10 @@
 #include "Detail/ProximityTriggerUtils.h"
 #include "Detail/SpellUtils.h"
 
+#include <MetaGen/Postgres/Auth/Tables/AccountPermissionGroups.h>
+#include <MetaGen/Postgres/Auth/Tables/AccountPermissions.h>
+#include <MetaGen/Postgres/Character/Tables/CharacterPermissionGroups.h>
+#include <MetaGen/Postgres/Character/Tables/CharacterPermissions.h>
 #include <MetaGen/Postgres/World/Tables/ItemArmorTemplates.h>
 #include <MetaGen/Postgres/World/Tables/ItemShieldTemplates.h>
 #include <MetaGen/Postgres/World/Tables/ItemStatTemplates.h>
@@ -78,6 +82,47 @@ namespace Database
     }
 
     OperationResult<std::optional<MetaGen::Postgres::Auth::AccountsRecord>> DatabaseService::GetAccountByName(const std::string& name) { return Detail::Account::AccountGetInfoByName(*_controller, name); }
+    OperationResult<PermissionAssignmentSnapshot> DatabaseService::GetAccountPermissions(u64 accountID) { return Detail::Account::AccountGetPermissions(*_controller, accountID); }
+    OperationResult<bool> DatabaseService::SetAccountPermission(u64 accountID, u32 permissionID, i64 value)
+    {
+        return RunTransaction(*_controller, DBType::Auth, "set_account_permission", [&](auto& tx)
+        {
+            Generated::Execute<MetaGen::Postgres::Auth::AccountPermissionsTable::Set>(tx, accountID, permissionID, value);
+            return true;
+        });
+    }
+    OperationResult<DeleteOutcome> DatabaseService::DeleteAccountPermission(u64 accountID, u32 permissionID)
+    {
+        return RunTransaction(*_controller, DBType::Auth, "delete_account_permission", [&](auto& tx)
+        {
+            return Deleted(Generated::Execute<MetaGen::Postgres::Auth::AccountPermissionsTable::Delete>(
+                tx, accountID, permissionID).affected_rows() != 0);
+        });
+    }
+    OperationResult<bool> DatabaseService::AddAccountPermissionGroup(u64 accountID, u32 permissionGroupID)
+    {
+        return RunTransaction(*_controller, DBType::Auth, "add_account_permission_group", [&](auto& tx)
+        {
+            Generated::Execute<MetaGen::Postgres::Auth::AccountPermissionGroupsTable::Set>(tx, accountID, permissionGroupID);
+            return true;
+        });
+    }
+    OperationResult<DeleteOutcome> DatabaseService::DeleteAccountPermissionGroup(u64 accountID, u32 permissionGroupID)
+    {
+        return RunTransaction(*_controller, DBType::Auth, "delete_account_permission_group", [&](auto& tx)
+        {
+            return Deleted(Generated::Execute<MetaGen::Postgres::Auth::AccountPermissionGroupsTable::Delete>(
+                tx, accountID, permissionGroupID).affected_rows() != 0);
+        });
+    }
+    OperationResult<PermissionTables> DatabaseService::LoadPermissionTables() { return Detail::Account::LoadPermissionTables(*_controller); }
+    OperationResult<bool> DatabaseService::SynchronizePermissionTables()
+    {
+        return RunTransaction(*_controller, DBType::Auth, "synchronize_permission_tables", [&](auto& tx)
+        {
+            return Detail::Account::SynchronizePermissionTables(tx);
+        });
+    }
     OperationResult<MetaGen::Postgres::Auth::AccountsRecord> DatabaseService::CreateAccount(const std::string& name, const std::string& email, u64 timestamp, unsigned char* blob, u32 size)
     {
         return RunTransaction(*_controller, DBType::Auth, "create_account", [&](auto& tx) { return Detail::Account::AccountCreate(tx, name, email, timestamp, blob, size); });
@@ -86,17 +131,75 @@ namespace Database
     OperationResult<std::optional<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharacterByID(u64 id) { return Detail::Character::CharacterGetInfoByID(*_controller, id); }
     OperationResult<std::optional<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharacterByName(const std::string& name) { return Detail::Character::CharacterGetInfoByName(*_controller, name); }
     OperationResult<std::vector<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharactersByAccount(u64 id) { return Detail::Character::CharacterGetInfosByAccount(*_controller, id); }
+    OperationResult<PermissionAssignmentSnapshot> DatabaseService::GetCharacterPermissions(u64 id)
+    {
+        return RunRead(*_controller, DBType::Character, "get_character_permissions", [&](auto& tx)
+        {
+            PermissionAssignmentSnapshot snapshot;
+            auto permissions = Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionsTable::ByCharacter>(tx, id);
+            snapshot.permissions.reserve(permissions.size());
+            for (const auto& permission : permissions)
+                snapshot.permissions.push_back({ permission.permissionId, permission.value });
+            auto groups = Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionGroupsTable::ByCharacter>(tx, id);
+            snapshot.permissionGroupIDs.reserve(groups.size());
+            for (const auto& group : groups)
+                snapshot.permissionGroupIDs.push_back(group.permissionGroupId);
+            return snapshot;
+        });
+    }
+    OperationResult<bool> DatabaseService::SetCharacterPermission(u64 characterID, u32 permissionID, i64 value)
+    {
+        return RunTransaction(*_controller, DBType::Character, "set_character_permission", [&](auto& tx)
+        {
+            Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionsTable::Set>(tx, characterID, permissionID, value);
+            return true;
+        });
+    }
+    OperationResult<DeleteOutcome> DatabaseService::DeleteCharacterPermission(u64 characterID, u32 permissionID)
+    {
+        return RunTransaction(*_controller, DBType::Character, "delete_character_permission", [&](auto& tx)
+        {
+            return Deleted(Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionsTable::Delete>(
+                tx, characterID, permissionID).affected_rows() != 0);
+        });
+    }
+    OperationResult<bool> DatabaseService::AddCharacterPermissionGroup(u64 characterID, u32 permissionGroupID)
+    {
+        return RunTransaction(*_controller, DBType::Character, "add_character_permission_group", [&](auto& tx)
+        {
+            Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionGroupsTable::Set>(tx, characterID, permissionGroupID);
+            return true;
+        });
+    }
+    OperationResult<DeleteOutcome> DatabaseService::DeleteCharacterPermissionGroup(u64 characterID, u32 permissionGroupID)
+    {
+        return RunTransaction(*_controller, DBType::Character, "delete_character_permission_group", [&](auto& tx)
+        {
+            return Deleted(Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionGroupsTable::Delete>(
+                tx, characterID, permissionGroupID).affected_rows() != 0);
+        });
+    }
     OperationResult<std::vector<MetaGen::Postgres::Character::ItemInstancesRecord>> DatabaseService::GetCharacterItems(u64 id) { return Detail::Character::CharacterGetItems(*_controller, id); }
     OperationResult<std::vector<MetaGen::Postgres::Character::CharacterItemsRecord>> DatabaseService::GetCharacterItemPlacements(u64 id) { return Detail::Character::CharacterGetItemPlacements(*_controller, id); }
     OperationResult<CharacterInitializationSnapshot> DatabaseService::GetCharacterInitialization(u64 id)
     {
         return RunRead(*_controller, DBType::Character, "get_character_initialization", [&](auto& tx)
         {
-            return CharacterInitializationSnapshot{
-                .character = Generated::Execute<MetaGen::Postgres::Character::CharactersTable::ByPrimaryKey>(tx, id),
-                .items = Generated::Execute<MetaGen::Postgres::Character::ItemInstancesTable::ByOwner>(tx, id),
-                .placements = Generated::Execute<MetaGen::Postgres::Character::CharacterItemsTable::ByCharacter>(tx, id)
-            };
+            CharacterInitializationSnapshot snapshot;
+            snapshot.character = Generated::Execute<MetaGen::Postgres::Character::CharactersTable::ByPrimaryKey>(tx, id);
+            snapshot.items = Generated::Execute<MetaGen::Postgres::Character::ItemInstancesTable::ByOwner>(tx, id);
+            snapshot.placements = Generated::Execute<MetaGen::Postgres::Character::CharacterItemsTable::ByCharacter>(tx, id);
+
+            auto permissions = Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionsTable::ByCharacter>(tx, id);
+            snapshot.permissions.permissions.reserve(permissions.size());
+            for (const auto& permission : permissions)
+                snapshot.permissions.permissions.push_back({ permission.permissionId, permission.value });
+
+            auto groups = Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionGroupsTable::ByCharacter>(tx, id);
+            snapshot.permissions.permissionGroupIDs.reserve(groups.size());
+            for (const auto& group : groups)
+                snapshot.permissions.permissionGroupIDs.push_back(group.permissionGroupId);
+            return snapshot;
         });
     }
     OperationResult<MetaGen::Postgres::Character::CharactersRecord> DatabaseService::CreateCharacter(u64 accountID, const std::string& name, u16 packed)
@@ -174,7 +277,11 @@ namespace Database
     OperationResult<MetaGen::Postgres::World::CreaturesRecord> DatabaseService::CreateCreature(const CreatureCreateRequest& r)
     {
         if (!ValidMapID(r.mapID)) return OperationFailure::Rejected;
-        return RunTransaction(*_controller, DBType::World, "create_creature", [&](auto& tx) { return Detail::Creature::CreatureCreate(tx, r.templateID, r.displayID, r.mapID, r.position, r.orientation, r.scriptName); });
+        return RunTransaction(*_controller, DBType::World, "create_creature", [&](auto& tx)
+        {
+            return Detail::Creature::CreatureCreate(tx, r.templateID, r.displayID, r.mapID, r.position, r.orientation,
+                r.scriptName, r.spawnTimeInSecMin, r.spawnTimeInSecMax, r.wanderDistance, r.movementType);
+        });
     }
     OperationResult<DeleteOutcome> DatabaseService::DeleteCreature(u64 id)
     {

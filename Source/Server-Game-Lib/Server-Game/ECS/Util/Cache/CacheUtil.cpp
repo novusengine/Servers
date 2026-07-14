@@ -167,7 +167,18 @@ namespace ECS::Util::Cache
         bool exists = cache.creatureTables.templateIDToDefinition.contains(creatureTemplateID);
         return exists;
     }
-    bool GetCreatureTemplateByID(Singletons::GameCache& cache, u32 creatureTemplateID, GameDefine::Database::CreatureTemplate*& creatureTemplate)
+    bool GetCreatureClassLevelStats(Singletons::GameCache& cache, u16 unitClass, u16 level, Database::CreatureClassLevelStats*& stats)
+    {
+        stats = nullptr;
+        const u32 key = Database::MakeCreatureClassLevelKey(unitClass, level);
+        auto itr = cache.creatureTables.classLevelKeyToStats.find(key);
+        if (itr == cache.creatureTables.classLevelKeyToStats.end())
+            return false;
+
+        stats = &itr->second;
+        return true;
+    }
+    bool GetCreatureTemplateByID(Singletons::GameCache& cache, u32 creatureTemplateID, Database::CreatureTemplate*& creatureTemplate)
     {
         if (!CreatureTemplateExistsByID(cache, creatureTemplateID))
             return false;

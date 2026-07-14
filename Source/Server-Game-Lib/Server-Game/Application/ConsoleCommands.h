@@ -12,4 +12,6 @@ public:
     static void CommandDoString(Application& app, std::vector<std::string>& subCommands);
     static void CommandReloadScripts(Application& app, std::vector<std::string>& subCommands);
     static void CommandAddAccount(Application& app, std::vector<std::string>& subCommands);
+    static void CommandPermission(Application& app, std::vector<std::string>& subCommands);
+    static void ExecutePermission(std::vector<std::string>& subCommands);
 };

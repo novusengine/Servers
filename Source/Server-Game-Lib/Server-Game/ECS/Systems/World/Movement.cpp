@@ -112,6 +112,7 @@ namespace ECS::Systems
             f32 repathDistance = 0.0f;
             bool repathOnTimer = false;
             bool clearOnReach = false;
+            bool atStopDistance = false;
         };
 
         enum class MovementDestinationResult : u8
@@ -148,7 +149,7 @@ namespace ECS::Systems
             movementPath.requestedEndPosition = wanderIntent.center + vec3(std::sin(angle) * distance, 0.0f, std::cos(angle) * distance);
         }
 
-        MovementDestinationResult TryResolveDestination(World& world, const Components::MovementIntent& movementIntent, Components::MovementPath& movementPath, MovementDestination& destination)
+        MovementDestinationResult TryResolveDestination(World& world, entt::entity entity, const Components::MovementIntent& movementIntent, Components::MovementPath& movementPath, MovementDestination& destination)
         {
             switch (movementIntent.type)
             {
@@ -157,8 +158,30 @@ namespace ECS::Systems
                     if (!world.ValidEntity(movementIntent.follow.target))
                         return MovementDestinationResult::Invalid;
 
-                    auto& targetTransform = world.Get<Components::Transform>(movementIntent.follow.target);
-                    destination.position = targetTransform.position;
+                    const auto& transform = world.Get<Components::Transform>(entity);
+                    const auto& targetTransform = world.Get<Components::Transform>(movementIntent.follow.target);
+                    const f32 stopDistance = glm::max(movementIntent.follow.stopDistance, 0.0f);
+                    vec3 targetToFollower = transform.position - targetTransform.position;
+                    const f32 verticalDistance = glm::abs(targetToFollower.y);
+                    targetToFollower.y = 0.0f;
+                    const f32 distanceSq = glm::length2(targetToFollower);
+                    if (stopDistance <= 0.0f)
+                    {
+                        destination.position = targetTransform.position;
+                    }
+                    else if (distanceSq > stopDistance * stopDistance)
+                    {
+                        destination.position = targetTransform.position + glm::normalize(targetToFollower) * stopDistance;
+                    }
+                    else if (verticalDistance <= stopDistance)
+                    {
+                        destination.position = transform.position;
+                        destination.atStopDistance = true;
+                    }
+                    else
+                    {
+                        destination.position = targetTransform.position;
+                    }
                     destination.repathInterval = movementIntent.follow.repathInterval;
                     destination.repathDistance = movementIntent.follow.repathDistance;
                     destination.repathOnTimer = true;
@@ -332,7 +355,7 @@ namespace ECS::Systems
                     SelectWanderDestination(world, movementIntent.wander, movementPath);
 
                 MovementDestination destination;
-                MovementDestinationResult destinationResult = TryResolveDestination(world, movementIntent, movementPath, destination);
+                MovementDestinationResult destinationResult = TryResolveDestination(world, entity, movementIntent, movementPath, destination);
                 if (destinationResult == MovementDestinationResult::None)
                 {
                     movementPath.status = Components::MovementPathStatus::None;
@@ -347,6 +370,16 @@ namespace ECS::Systems
                     movementPath.failure = Components::MovementPathFailure::InvalidIntent;
                     world.Remove<Components::MovementRoute>(entity);
                     world.Remove<Tags::IsMovementActive>(entity);
+                    continue;
+                }
+
+                if (destination.atStopDistance)
+                {
+                    movementPath.status = Components::MovementPathStatus::Reached;
+                    movementPath.failure = Components::MovementPathFailure::None;
+                    world.Remove<Components::MovementRoute>(entity);
+                    world.Remove<Tags::IsMovementActive>(entity);
+                    Util::Movement::QueuePathRequest(world, entity, glm::max(destination.repathInterval, MOVEMENT_PATH_RETRY_MIN_DELAY));
                     continue;
                 }
 
@@ -429,7 +462,7 @@ namespace ECS::Systems
             movementPath.networkUpdateTimer = glm::max(movementPath.networkUpdateTimer - timeState.deltaTime, 0.0f);
 
             MovementDestination destination;
-            MovementDestinationResult destinationResult = TryResolveDestination(world, movementIntent, movementPath, destination);
+            MovementDestinationResult destinationResult = TryResolveDestination(world, entity, movementIntent, movementPath, destination);
             if (destinationResult == MovementDestinationResult::None)
             {
                 world.Remove<Components::MovementRoute>(entity);
@@ -443,6 +476,16 @@ namespace ECS::Systems
                 movementPath.failure = Components::MovementPathFailure::InvalidIntent;
                 world.Remove<Components::MovementRoute>(entity);
                 world.Remove<Tags::IsMovementActive>(entity);
+                return;
+            }
+
+            if (destination.atStopDistance)
+            {
+                movementPath.status = Components::MovementPathStatus::Reached;
+                movementPath.failure = Components::MovementPathFailure::None;
+                world.Remove<Components::MovementRoute>(entity);
+                world.Remove<Tags::IsMovementActive>(entity);
+                Util::Movement::QueuePathRequest(world, entity, glm::max(destination.repathInterval, MOVEMENT_PATH_RETRY_MIN_DELAY));
                 return;
             }
 

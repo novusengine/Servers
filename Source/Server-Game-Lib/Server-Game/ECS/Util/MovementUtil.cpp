@@ -204,6 +204,7 @@ namespace ECS::Util::Movement
         movementIntent.follow.target = target;
         movementIntent.follow.repathInterval = params.repathInterval;
         movementIntent.follow.repathDistance = params.repathDistance;
+        movementIntent.follow.stopDistance = std::max(params.stopDistance, 0.0f);
         movementIntent.speed = params.speed;
         movementIntent.revision++;
 

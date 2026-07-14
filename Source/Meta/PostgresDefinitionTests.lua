@@ -9,18 +9,24 @@ local PostgresBackend = require("PostgresBackend")
 local PostgresModel = require("PostgresModel")
 local TestSuite = require("TestSuite")
 
-local expectedCounts = { auth = 1, character = 6, world = 18 }
+local expectedCounts = { auth = 6, character = 6, world = 16 }
 local expectedNames =
 {
-    auth = "accounts",
+    auth = "account_permission_groups|account_permissions|accounts|permission_group_data|permission_groups|permissions",
     character = "character_currency|character_items|character_permission_groups|character_permissions|characters|item_instances",
-    world = "creature_templates|creatures|currency|item_armor_templates|item_shield_templates|item_stat_templates|" ..
-        "item_templates|item_weapon_templates|map_locations|maps|permission_group_data|permission_groups|permissions|" ..
-        "proximity_triggers|spell_effects|spell_proc_data|spell_proc_link|spells"
+    world = "creature_class_level_stats|creature_templates|creatures|currency|item_armor_templates|item_shield_templates|item_stat_templates|" ..
+        "item_templates|item_weapon_templates|map_locations|maps|proximity_triggers|spell_effects|spell_proc_data|spell_proc_link|spells"
 }
 
 local function Run()
     local profile = MetaGen.ResolveProject()
+    for _, provider in ipairs(profile.providers) do
+        for _, moduleRoot in ipairs(provider.moduleRoots) do
+            assert(os.isdir(moduleRoot), "MetaGen provider module root does not exist: " .. moduleRoot)
+            package.path = moduleRoot .. "/?.lua;" .. moduleRoot .. "/?/Init.lua;" .. package.path
+        end
+    end
+
     local sourceSets = {}
     for _, provider in ipairs(profile.providers) do
         for _, source in ipairs(provider.sources) do
@@ -33,7 +39,7 @@ local function Run()
     local definitions = model.definitionsByTarget.postgres or {}
     local normalized = PostgresModel.Build(model, definitions)
 
-    assert(#normalized.tables == 25)
+    assert(#normalized.tables == 28)
     assert(#normalized.bundles == 3)
     for _, bundle in ipairs(normalized.bundles) do
         assert(#bundle.tables == expectedCounts[bundle.name])
@@ -58,9 +64,9 @@ local function Run()
 
     local context = { postgresHistoryByBundle = assert(profile.postgres and profile.postgres.historyByBundle) }
     PostgresBackend.Validate(model, definitions, context)
-    assert(#context.postgresMigrations.auth == 1)
-    assert(#context.postgresMigrations.character == 1)
-    assert(#context.postgresMigrations.world == 1)
+    assert(#context.postgresMigrations.auth == 5)
+    assert(#context.postgresMigrations.character == 3)
+    assert(#context.postgresMigrations.world == 3)
     Model.AssertUnchanged(model, "production PostgreSQL definition validation")
     print("MetaGen PostgreSQL production definitions passed")
 end

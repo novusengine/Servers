@@ -34,6 +34,10 @@ namespace Database
         vec3 position = {};
         f32 orientation = 0.0f;
         std::string scriptName;
+        u32 spawnTimeInSecMin = 120;
+        u32 spawnTimeInSecMax = 120;
+        f32 wanderDistance = 5.0f;
+        u16 movementType = 0;
     };
 
     struct ProximityTriggerCreateRequest
@@ -58,6 +62,7 @@ namespace Database
         std::optional<MetaGen::Postgres::Character::CharactersRecord> character;
         std::vector<MetaGen::Postgres::Character::ItemInstancesRecord> items;
         std::vector<MetaGen::Postgres::Character::CharacterItemsRecord> placements;
+        PermissionAssignmentSnapshot permissions;
     };
 
     class DatabaseService
@@ -71,12 +76,24 @@ namespace Database
         void InitializeBundle(DBType bundle, const DBEntry& configuration);
 
         OperationResult<std::optional<MetaGen::Postgres::Auth::AccountsRecord>> GetAccountByName(const std::string& name);
+        OperationResult<PermissionAssignmentSnapshot> GetAccountPermissions(u64 accountID);
+        OperationResult<bool> SetAccountPermission(u64 accountID, u32 permissionID, i64 value);
+        OperationResult<DeleteOutcome> DeleteAccountPermission(u64 accountID, u32 permissionID);
+        OperationResult<bool> AddAccountPermissionGroup(u64 accountID, u32 permissionGroupID);
+        OperationResult<DeleteOutcome> DeleteAccountPermissionGroup(u64 accountID, u32 permissionGroupID);
+        OperationResult<PermissionTables> LoadPermissionTables();
+        OperationResult<bool> SynchronizePermissionTables();
         OperationResult<MetaGen::Postgres::Auth::AccountsRecord> CreateAccount(const std::string& name, const std::string& email,
             u64 registrationTimestamp, unsigned char* blob, u32 blobSize);
 
         OperationResult<std::optional<MetaGen::Postgres::Character::CharactersRecord>> GetCharacterByID(u64 characterID);
         OperationResult<std::optional<MetaGen::Postgres::Character::CharactersRecord>> GetCharacterByName(const std::string& name);
         OperationResult<std::vector<MetaGen::Postgres::Character::CharactersRecord>> GetCharactersByAccount(u64 accountID);
+        OperationResult<PermissionAssignmentSnapshot> GetCharacterPermissions(u64 characterID);
+        OperationResult<bool> SetCharacterPermission(u64 characterID, u32 permissionID, i64 value);
+        OperationResult<DeleteOutcome> DeleteCharacterPermission(u64 characterID, u32 permissionID);
+        OperationResult<bool> AddCharacterPermissionGroup(u64 characterID, u32 permissionGroupID);
+        OperationResult<DeleteOutcome> DeleteCharacterPermissionGroup(u64 characterID, u32 permissionGroupID);
         OperationResult<std::vector<MetaGen::Postgres::Character::ItemInstancesRecord>> GetCharacterItems(u64 characterID);
         OperationResult<std::vector<MetaGen::Postgres::Character::CharacterItemsRecord>> GetCharacterItemPlacements(u64 characterID);
         OperationResult<CharacterInitializationSnapshot> GetCharacterInitialization(u64 characterID);

@@ -22,6 +22,7 @@ namespace ECS
             Database::ItemTables itemTables;
             Database::CharacterTables characterTables;
             Database::CreatureTables creatureTables;
+            Database::PermissionTables permissionTables;
         };
     }
 

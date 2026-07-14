@@ -12,30 +12,18 @@ return D.Definitions
         Column("name", Type.STRING, P.Text)
     }, { constraints = { Unique("currency", "currency_unique_name", { "name" }) } }),
 
-    Table("world", "permissions",
-    {
-        Column("id", Type.U16, P.SmallInt, I),
-        Column("name", Type.STRING, P.Text)
-    }, { constraints = { Unique("permissions", "permissions_unique_name", { "name" }) } }),
-
-    Table("world", "permission_groups",
-    {
-        Column("id", Type.U16, P.SmallInt, I),
-        Column("name", Type.STRING, P.Text)
-    }, { constraints = { Unique("permission_groups", "permission_groups_unique_name", { "name" }) } }),
-
-    Table("world", "permission_group_data",
+    Table("world", "creature_class_level_stats",
     {
         Column("id", Type.U32, P.Integer, I),
-        Column("group_id", Type.U16, P.SmallInt),
-        Column("permission_id", Type.U16, P.SmallInt)
-    }, { constraints =
-        {
-            Unique("permission_group_data", "permission_group_data_key", { "group_id", "permission_id" }),
-            ForeignKey("permission_group_data", "permission_group_data_group_fk", { "group_id" }, "permission_groups", { "id" }, "cascade"),
-            ForeignKey("permission_group_data", "permission_group_data_permission_fk", { "permission_id" }, "permissions", { "id" }, "cascade")
-        }
-    }),
+        Column("unit_class", Type.U16, P.SmallInt),
+        Column("level", Type.U16, P.SmallInt),
+        Column("health", Type.U32, P.Integer),
+        Column("resource", Type.U32, P.Integer),
+        Column("armor", Type.U32, P.Integer),
+        Column("damage", Type.F32, P.Real)
+    }, { constraints = {
+        Unique("creature_class_level_stats", "creature_class_level_stats_class_level_key", { "unit_class", "level" })
+    } }),
 
     Table("world", "creature_templates",
     {
@@ -51,7 +39,19 @@ return D.Definitions
         Column("health_mod", Type.F32, P.Real, D0(1.0)),
         Column("resource_mod", Type.F32, P.Real, D0(1.0)),
         Column("damage_mod", Type.F32, P.Real, D0(1.0)),
-        Column("script_name", Type.STRING, P.Text, D0(""))
+        Column("script_name", Type.STRING, P.Text, D0("")),
+        Column("unit_class", Type.U16, P.SmallInt, D0(1)),
+        Column("faction_id", Type.U16, P.SmallInt, D0(0)),
+        Column("creature_type", Type.U16, P.SmallInt, D0(0)),
+        Column("rank", Type.U16, P.SmallInt, D0(0)),
+        Column("damage_school", Type.U16, P.SmallInt, D0(0)),
+        Column("experience_mod", Type.F32, P.Real, D0(1.0)),
+        Column("walk_speed_mod", Type.F32, P.Real, D0(1.0)),
+        Column("run_speed_mod", Type.F32, P.Real, D0(1.0)),
+        Column("default_movement_type", Type.U16, P.SmallInt, D0(0)),
+        Column("detection_range", Type.F32, P.Real, D0(20.0)),
+        Column("leash_range", Type.F32, P.Real, D0(0.0)),
+        Column("melee_attack_time_ms", Type.U32, P.Integer, D0(2000))
     }),
 
     Table("world", "creatures",
@@ -64,7 +64,11 @@ return D.Definitions
         Column("position_y", Type.F32, P.Real),
         Column("position_z", Type.F32, P.Real),
         Column("position_o", Type.F32, P.Real),
-        Column("script_name", Type.STRING, P.Text, D0(""))
+        Column("script_name", Type.STRING, P.Text, D0("")),
+        Column("spawn_time_in_sec_min", Type.U32, P.Integer, D0(120)),
+        Column("spawn_time_in_sec_max", Type.U32, P.Integer, D0(120)),
+        Column("wander_distance", Type.F32, P.Real, D0(5.0)),
+        Column("movement_type", Type.U16, P.SmallInt, D0(0))
     }, { indexes = { P.Index("creatures_map_id_idx", { P.Asc("mapId") }, { persistentId = "postgres.creatures.map_id_idx" }) },
         queries = { P.Query("ByMap", { "mapId" }, { persistentId = "postgres.creatures.by_map" }) },
         operations = { P.Delete("Delete", { "id" }, { persistentId = "postgres.creatures.delete" }) } }),

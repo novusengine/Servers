@@ -80,6 +80,18 @@ namespace ECS::Systems
         gameCache.database->InitializeBundle(Database::DBType::Auth, ReadBundle(gameCache.config, "Auth"));
         gameCache.database->InitializeBundle(Database::DBType::Character, ReadBundle(gameCache.config, "Character"));
         gameCache.database->InitializeBundle(Database::DBType::World, ReadBundle(gameCache.config, "World"));
+
+        auto permissionSyncResult = gameCache.database->SynchronizePermissionTables();
+        if (!permissionSyncResult)
+            throw std::runtime_error("Failed to synchronize the Auth permission catalogue (" +
+                std::string(Database::OperationFailureName(permissionSyncResult.Failure())) + ")");
+
+        auto permissionResult = gameCache.database->LoadPermissionTables();
+        if (!permissionResult)
+            throw std::runtime_error("Failed to load the Auth permission cache (" +
+                std::string(Database::OperationFailureName(permissionResult.Failure())) + ")");
+        gameCache.permissionTables = std::move(permissionResult).Value();
+
         auto worldResult = gameCache.database->LoadWorldCache();
         if (!worldResult)
             throw std::runtime_error("Failed to load the World database cache (" +

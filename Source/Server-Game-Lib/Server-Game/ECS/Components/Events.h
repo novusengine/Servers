@@ -42,6 +42,10 @@ namespace ECS::Events
         f32 orientation;
 
         std::string scriptName;
+        u32 spawnTimeInSecMin = 120;
+        u32 spawnTimeInSecMax = 120;
+        f32 wanderDistance = 0.0f;
+        u16 movementType = 0;
     };
     struct CreatureNeedsInitialization
     {
@@ -56,6 +60,10 @@ namespace ECS::Events
         f32 orientation;
 
         std::string scriptName;
+        u32 spawnTimeInSecMin = 120;
+        u32 spawnTimeInSecMax = 120;
+        f32 wanderDistance = 0.0f;
+        u16 movementType = 0;
     };
     struct CreatureNeedsDeinitialization
     {

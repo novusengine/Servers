@@ -9,11 +9,14 @@
 #include "Server-Game/ECS/Components/CharacterListInfo.h"
 #include "Server-Game/ECS/Components/CharacterSpellCastInfo.h"
 #include "Server-Game/ECS/Components/CreatureAIInfo.h"
+#include "Server-Game/ECS/Components/CreatureCombatInfo.h"
 #include "Server-Game/ECS/Components/CreatureInfo.h"
+#include "Server-Game/ECS/Components/CreatureLifecycleInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
+#include "Server-Game/ECS/Components/PermissionInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
 #include "Server-Game/ECS/Components/ProximityTrigger.h"
 #include "Server-Game/ECS/Components/SpellEffectInfo.h"
@@ -38,6 +41,7 @@
 #include "Server-Game/ECS/Util/ContainerUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/ECS/Util/MovementUtil.h"
+#include "Server-Game/ECS/Util/PermissionUtil.h"
 #include "Server-Game/ECS/Util/ProximityTriggerUtil.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
@@ -88,6 +92,59 @@ namespace ECS::Systems
             if (failure == Database::OperationFailure::Indeterminate)
                 response += "; the database outcome is unknown and requires manual reconciliation";
             Util::Unit::SendChatMessage(world, networkState, socketID, response);
+        }
+
+        bool GetCheatCommandPermission(MetaGen::Shared::Cheat::CheatCommandEnum command,
+            MetaGen::Server::Permission::Permission& permission)
+        {
+            using CheatCommand = MetaGen::Shared::Cheat::CheatCommandEnum;
+            using Permission = MetaGen::Server::Permission::Permission;
+            switch (command)
+            {
+                case CheatCommand::Damage: permission = Permission::CommandDamage; return true;
+                case CheatCommand::Heal: permission = Permission::CommandHeal; return true;
+                case CheatCommand::Kill: permission = Permission::CommandKill; return true;
+                case CheatCommand::Resurrect: permission = Permission::CommandResurrect; return true;
+                case CheatCommand::UnitMorph: permission = Permission::CommandUnitMorph; return true;
+                case CheatCommand::UnitDemorph: permission = Permission::CommandUnitDemorph; return true;
+                case CheatCommand::Teleport: permission = Permission::CommandTeleport; return true;
+                case CheatCommand::CharacterAdd: permission = Permission::CommandCharacterAdd; return true;
+                case CheatCommand::CharacterRemove: permission = Permission::CommandCharacterRemove; return true;
+                case CheatCommand::UnitSetRace: permission = Permission::CommandUnitSetRace; return true;
+                case CheatCommand::UnitSetGender: permission = Permission::CommandUnitSetGender; return true;
+                case CheatCommand::UnitSetClass: permission = Permission::CommandUnitSetClass; return true;
+                case CheatCommand::UnitSetLevel: permission = Permission::CommandUnitSetLevel; return true;
+                case CheatCommand::ItemSetTemplate: permission = Permission::CommandItemSetTemplate; return true;
+                case CheatCommand::ItemSetStatTemplate: permission = Permission::CommandItemSetStatTemplate; return true;
+                case CheatCommand::ItemSetArmorTemplate: permission = Permission::CommandItemSetArmorTemplate; return true;
+                case CheatCommand::ItemSetWeaponTemplate: permission = Permission::CommandItemSetWeaponTemplate; return true;
+                case CheatCommand::ItemSetShieldTemplate: permission = Permission::CommandItemSetShieldTemplate; return true;
+                case CheatCommand::ItemAdd: permission = Permission::CommandItemAdd; return true;
+                case CheatCommand::ItemRemove: permission = Permission::CommandItemRemove; return true;
+                case CheatCommand::CreatureAdd: permission = Permission::CommandCreatureAdd; return true;
+                case CheatCommand::CreatureRemove: permission = Permission::CommandCreatureRemove; return true;
+                case CheatCommand::CreatureInfo: permission = Permission::CommandCreatureInfo; return true;
+                case CheatCommand::MapAdd: permission = Permission::CommandMapAdd; return true;
+                case CheatCommand::GotoAdd: permission = Permission::CommandGotoAdd; return true;
+                case CheatCommand::GotoAddHere: permission = Permission::CommandGotoAddHere; return true;
+                case CheatCommand::GotoRemove: permission = Permission::CommandGotoRemove; return true;
+                case CheatCommand::GotoMap: permission = Permission::CommandGotoMap; return true;
+                case CheatCommand::GotoLocation: permission = Permission::CommandGotoLocation; return true;
+                case CheatCommand::GotoXYZ: permission = Permission::CommandGotoXYZ; return true;
+                case CheatCommand::TriggerAdd: permission = Permission::CommandTriggerAdd; return true;
+                case CheatCommand::TriggerRemove: permission = Permission::CommandTriggerRemove; return true;
+                case CheatCommand::SpellSet: permission = Permission::CommandSpellSet; return true;
+                case CheatCommand::SpellEffectSet: permission = Permission::CommandSpellEffectSet; return true;
+                case CheatCommand::SpellProcDataSet: permission = Permission::CommandSpellProcDataSet; return true;
+                case CheatCommand::SpellProcLinkSet: permission = Permission::CommandSpellProcLinkSet; return true;
+                case CheatCommand::CreatureAddScript: permission = Permission::CommandCreatureAddScript; return true;
+                case CheatCommand::CreatureRemoveScript: permission = Permission::CommandCreatureRemoveScript; return true;
+                case CheatCommand::CreatureMove: permission = Permission::CommandCreatureMove; return true;
+                case CheatCommand::CreatureFollow: permission = Permission::CommandCreatureFollow; return true;
+                case CheatCommand::CreatureWander: permission = Permission::CommandCreatureWander; return true;
+                case CheatCommand::CreatureStop: permission = Permission::CommandCreatureStop; return true;
+                default: return false;
+            }
         }
 
         AutoCVar_Int CVAR_NetworkMaxConnections(CVarCategory::Server, "network.maxConnections", "Maximum concurrent server connections. Read during server startup.", 20000);
@@ -397,15 +454,24 @@ namespace ECS::Systems
         entt::registry::context& ctx = registry->ctx();
         auto& gameCache = ctx.get<Singletons::GameCache>();
 
-        GameDefine::Database::CreatureTemplate* creatureTemplate = nullptr;
+        Database::CreatureTemplate* creatureTemplate = nullptr;
         if (!Util::Cache::GetCreatureTemplateByID(gameCache, creatureTemplateID, creatureTemplate))
             return true;
 
         auto& playerTransform = world.Get<Components::Transform>(entity);
 
         entt::entity creatureEntity = world.CreateEntity();
-        world.EmplaceOrReplace<Events::CreatureCreate>(creatureEntity, creatureTemplateID, creatureTemplate->displayID,
-            playerTransform.mapID, playerTransform.position, vec3(creatureTemplate->scale), playerTransform.pitchYaw.y);
+        world.EmplaceOrReplace<Events::CreatureCreate>(creatureEntity, Events::CreatureCreate{
+            .templateID = creatureTemplateID,
+            .displayID = creatureTemplate->displayId,
+            .mapID = playerTransform.mapID,
+            .position = playerTransform.position,
+            .scale = vec3(creatureTemplate->scale),
+            .orientation = playerTransform.pitchYaw.y,
+            .scriptName = creatureTemplate->scriptName,
+            .wanderDistance = Util::Movement::DEFAULT_WANDER_RADIUS,
+            .movementType = creatureTemplate->defaultMovementType
+        });
         world.EmplaceOrReplace<Components::AdministrativeRequestContext>(creatureEntity, socketID);
 
         return true;
@@ -438,26 +504,44 @@ namespace ECS::Systems
         auto& gameCache = ctx.get<Singletons::GameCache>();
         auto& networkState = ctx.get<Singletons::NetworkState>();
 
-        if (!world.AllOf<Components::CreatureInfo>(creatureEntity))
+        if (!world.AllOf<Components::CreatureInfo, Components::CreatureCombatInfo, Components::CreatureLifecycleInfo>(creatureEntity))
         {
             Util::Unit::SendChatMessage(world, networkState, socketID, "Failed to get creature info, entity is not a creature");
             return true;
         }
 
         auto& creatureInfo = world.Get<Components::CreatureInfo>(creatureEntity);
+        auto& creatureCombatInfo = world.Get<Components::CreatureCombatInfo>(creatureEntity);
+        auto& creatureLifecycleInfo = world.Get<Components::CreatureLifecycleInfo>(creatureEntity);
 
-        GameDefine::Database::CreatureTemplate* creatureTemplate = nullptr;
+        Database::CreatureTemplate* creatureTemplate = nullptr;
         if (!Util::Cache::GetCreatureTemplateByID(gameCache, creatureInfo.templateID, creatureTemplate))
             return true;
 
-        std::string response = std::format("Creature Info:\n- GUID : {}\n- TemplateID : {}\n- Name : {}\n- Display ID : {}\n- Mods : (Health : {}, Armor : {}, Resource : {})\n- AI Script Name : ",
+        std::string response = std::format("Creature Info:\n- GUID : {}\n- TemplateID : {}\n- Name : {}\n- Display ID : {}\n- Level : {}\n- Unit Class : {}\n- Movement : (Type : {}, Radius : {}, Walk Speed : {}, Run Speed : {})\n- Leash : (Range : {}, Evading : {})\n- Lifecycle : (State : {}, Timer : {:.1f}, Respawn : {}-{} sec)\n- Melee : (Damage : {}, Attack Time : {:.0f} ms, School : {})\n- Mods : (Health : {}, Armor : {}, Resource : {}, Damage : {})\n- AI Script Name : ",
             creatureGUID.ToString(),
             creatureInfo.templateID,
             creatureInfo.name,
-            creatureTemplate->displayID,
+            creatureTemplate->displayId,
+            creatureInfo.level,
+            static_cast<u16>(creatureInfo.unitClass),
+            creatureInfo.movementType,
+            creatureInfo.wanderDistance,
+            creatureInfo.walkSpeed,
+            creatureInfo.runSpeed,
+            creatureCombatInfo.leashRange,
+            creatureCombatInfo.isEvading,
+            static_cast<u16>(creatureLifecycleInfo.state),
+            creatureLifecycleInfo.timeRemaining,
+            creatureLifecycleInfo.spawnTimeInSecMin,
+            creatureLifecycleInfo.spawnTimeInSecMax,
+            creatureCombatInfo.meleeDamage,
+            creatureCombatInfo.meleeAttackTime * 1000.0f,
+            creatureCombatInfo.damageSchool,
             creatureTemplate->healthMod,
             creatureTemplate->armorMod,
-            creatureTemplate->resourceMod);
+            creatureTemplate->resourceMod,
+            creatureTemplate->damageMod);
 
         if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(creatureEntity))
         {
@@ -1322,6 +1406,18 @@ namespace ECS::Systems
         auto command = MetaGen::Shared::Cheat::CheatCommandEnum::None;
         if (!message.buffer->Get(command))
             return false;
+
+        MetaGen::Server::Permission::Permission requiredPermission;
+        if (!GetCheatCommandPermission(command, requiredPermission))
+            return true;
+        const auto* permissionInfo = world->TryGet<Components::CharacterPermissionInfo>(entity);
+        if (!permissionInfo || !Util::Permission::HasPermission(ctx.get<Singletons::GameCache>(),
+            permissionInfo->effectivePermissions, requiredPermission))
+        {
+            Util::Unit::SendChatMessage(*world, networkState, socketID,
+                "You do not have permission to use this administrative command.");
+            return true;
+        }
 
         switch (command)
         {

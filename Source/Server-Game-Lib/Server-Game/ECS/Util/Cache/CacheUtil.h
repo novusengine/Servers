@@ -1,6 +1,8 @@
 #pragma once
 #include <Base/Types.h>
 
+#include <Server-Common/Database/Definitions.h>
+
 #include <Gameplay/GameDefine.h>
 
 #include <entt/fwd.hpp>
@@ -56,7 +58,8 @@ namespace ECS::Util::Cache
     bool ItemInstanceDelete(Singletons::GameCache& cache, u64 itemInstanceID);
 
     bool CreatureTemplateExistsByID(Singletons::GameCache& cache, u32 creatureTemplateID);
-    bool GetCreatureTemplateByID(Singletons::GameCache& cache, u32 creatureTemplateID, GameDefine::Database::CreatureTemplate*& creatureTemplate);
+    bool GetCreatureClassLevelStats(Singletons::GameCache& cache, u16 unitClass, u16 level, Database::CreatureClassLevelStats*& stats);
+    bool GetCreatureTemplateByID(Singletons::GameCache& cache, u32 creatureTemplateID, Database::CreatureTemplate*& creatureTemplate);
 
     bool MapExistsByID(Singletons::GameCache& cache, u32 mapID);
     bool GetMapByID(Singletons::GameCache& cache, u32 mapID, GameDefine::Database::Map*& map);

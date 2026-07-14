@@ -33,7 +33,7 @@ project.Init = function(self, rootDir, buildDir, binDir)
     MetaGen.ConfigureProject {
         name = self.Name,
         outputRoot = path.getabsolute("Source/Meta/MetaGen", self.RootDir),
-        providers = { "Servers.Runtime", "Servers.Database" },
+        providers = { "Servers.Runtime", "Servers.Database", "Servers.Permission" },
         postgres = {
             historyByBundle = {
                 auth = path.getabsolute("Source/Meta/PostgresHistory/auth", self.RootDir),

@@ -6,6 +6,14 @@ MetaGen.RegisterProvider {
 }
 
 MetaGen.RegisterProvider {
+    name = "Servers.Permission",
+    definitionRoot = path.getabsolute("Definitions/Permission", _SCRIPT_DIR),
+    namespace = "MetaGen.Server.Permission",
+    moduleRoots = { path.getabsolute("Permission", _SCRIPT_DIR) },
+    extensions = { path.getabsolute("Permission/PermissionExtension.lua", _SCRIPT_DIR) }
+}
+
+MetaGen.RegisterProvider {
     name = "Servers.Database",
     definitionRoot = path.getabsolute("Definitions/Database", _SCRIPT_DIR),
     namespace = "MetaGen.Database",

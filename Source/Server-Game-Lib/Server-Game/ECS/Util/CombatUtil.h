@@ -27,6 +27,8 @@ namespace ECS::Util::Combat
     bool AddUnitToThreatTable(World& world, Components::UnitCombatInfo& targetCombatInfo, entt::entity creatureEntity, entt::entity targetEntity, f64 threatAmount = 0.0f, bool setInCombat = true);
     void AddUnitToThreatTables(World& world, Components::UnitCombatInfo& targetCombatInfo, entt::entity creatureEntity, entt::entity targetEntity, f64 threatAmount = 0.0f, bool setInCombat = true);
     bool RemoveUnitFromThreatTable(Components::CreatureThreatTable& threatTable, ObjectGUID targetGUID);
+    void ClearCreatureThreatTable(World& world, entt::entity creatureEntity);
+    void RefreshCreatureCombatParticipants(World& world, entt::entity creatureEntity, f32 range);
     void SortThreatTable(Components::CreatureThreatTable& threatTable);
     void ReindexThreatTable(Components::CreatureThreatTable& threatTable);
 }

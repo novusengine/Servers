@@ -2,11 +2,118 @@
 return {
     bundle = "world",
     format = 3,
-    hash = "85f1c244e559f033f7c4eadc017527ead4fbe76ff10a5c8bd5ba94a17433a5e7",
+    hash = "73f9f6c438618662fef32b5b414bee5d3b9f9daf8feb2bc54221f04afe75ade1",
     schemas = {
         public = true,
     },
     tables = {
+        ["postgres.creature_class_level_stats"] = {
+            constraints = {
+                ["postgres.creature_class_level_stats.creature_class_level_stats_class_level_key"] = {
+                    kind = "unique",
+                    name = "creature_class_level_stats_class_level_key",
+                    persistentId = "postgres.creature_class_level_stats.creature_class_level_stats_class_level_key",
+                    signature = "unique|creature_class_level_stats_class_level_key|postgres.creature_class_level_stats.unit_class:asc,postgres.creature_class_level_stats.level:asc||nil:nil|||||",
+                },
+            },
+            fields = {
+                ["postgres.creature_class_level_stats.armor"] = {
+                    columnName = "armor",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 6,
+                    persistentId = "postgres.creature_class_level_stats.armor",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.creature_class_level_stats.damage"] = {
+                    columnName = "damage",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 7,
+                    persistentId = "postgres.creature_class_level_stats.damage",
+                    postgresType = {
+                        name = "real",
+                        sql = "real",
+                    },
+                },
+                ["postgres.creature_class_level_stats.health"] = {
+                    columnName = "health",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 4,
+                    persistentId = "postgres.creature_class_level_stats.health",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.creature_class_level_stats.id"] = {
+                    columnName = "id",
+                    hasDefault = false,
+                    identity = "byDefault",
+                    nullable = false,
+                    order = 1,
+                    persistentId = "postgres.creature_class_level_stats.id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.creature_class_level_stats.level"] = {
+                    columnName = "level",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 3,
+                    persistentId = "postgres.creature_class_level_stats.level",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.creature_class_level_stats.resource"] = {
+                    columnName = "resource",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 5,
+                    persistentId = "postgres.creature_class_level_stats.resource",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.creature_class_level_stats.unit_class"] = {
+                    columnName = "unit_class",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 2,
+                    persistentId = "postgres.creature_class_level_stats.unit_class",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+            },
+            indexes = {
+            },
+            persistentId = "postgres.creature_class_level_stats",
+            primaryKey = {
+                fields = {
+                    [1] = {
+                        columnName = "id",
+                        direction = "asc",
+                        persistentId = "postgres.creature_class_level_stats.id",
+                    },
+                },
+                name = "creature_class_level_stats_pkey",
+                persistentId = "postgres.creature_class_level_stats.pk",
+                signature = "creature_class_level_stats_pkey|postgres.creature_class_level_stats.id:asc",
+            },
+            schema = "public",
+            tableName = "creature_class_level_stats",
+        },
         ["postgres.creature_templates"] = {
             constraints = {
             },
@@ -23,6 +130,18 @@ return {
                         sql = "real",
                     },
                 },
+                ["postgres.creature_templates.creature_type"] = {
+                    columnName = "creature_type",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 16,
+                    persistentId = "postgres.creature_templates.creature_type",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
                 ["postgres.creature_templates.damage_mod"] = {
                     columnName = "damage_mod",
                     defaultValue = 1.0,
@@ -30,6 +149,42 @@ return {
                     nullable = false,
                     order = 12,
                     persistentId = "postgres.creature_templates.damage_mod",
+                    postgresType = {
+                        name = "real",
+                        sql = "real",
+                    },
+                },
+                ["postgres.creature_templates.damage_school"] = {
+                    columnName = "damage_school",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 18,
+                    persistentId = "postgres.creature_templates.damage_school",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.creature_templates.default_movement_type"] = {
+                    columnName = "default_movement_type",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 22,
+                    persistentId = "postgres.creature_templates.default_movement_type",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.creature_templates.detection_range"] = {
+                    columnName = "detection_range",
+                    defaultValue = 20.0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 23,
+                    persistentId = "postgres.creature_templates.detection_range",
                     postgresType = {
                         name = "real",
                         sql = "real",
@@ -45,6 +200,30 @@ return {
                     postgresType = {
                         name = "integer",
                         sql = "integer",
+                    },
+                },
+                ["postgres.creature_templates.experience_mod"] = {
+                    columnName = "experience_mod",
+                    defaultValue = 1.0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 19,
+                    persistentId = "postgres.creature_templates.experience_mod",
+                    postgresType = {
+                        name = "real",
+                        sql = "real",
+                    },
+                },
+                ["postgres.creature_templates.faction_id"] = {
+                    columnName = "faction_id",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 15,
+                    persistentId = "postgres.creature_templates.faction_id",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
                     },
                 },
                 ["postgres.creature_templates.flags"] = {
@@ -83,6 +262,18 @@ return {
                         sql = "integer",
                     },
                 },
+                ["postgres.creature_templates.leash_range"] = {
+                    columnName = "leash_range",
+                    defaultValue = 0.0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 24,
+                    persistentId = "postgres.creature_templates.leash_range",
+                    postgresType = {
+                        name = "real",
+                        sql = "real",
+                    },
+                },
                 ["postgres.creature_templates.max_level"] = {
                     columnName = "max_level",
                     defaultValue = 1,
@@ -93,6 +284,18 @@ return {
                     postgresType = {
                         name = "smallint",
                         sql = "smallint",
+                    },
+                },
+                ["postgres.creature_templates.melee_attack_time_ms"] = {
+                    columnName = "melee_attack_time_ms",
+                    defaultValue = 2000,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 25,
+                    persistentId = "postgres.creature_templates.melee_attack_time_ms",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
                     },
                 },
                 ["postgres.creature_templates.min_level"] = {
@@ -119,6 +322,18 @@ return {
                         sql = "text",
                     },
                 },
+                ["postgres.creature_templates.rank"] = {
+                    columnName = "rank",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 17,
+                    persistentId = "postgres.creature_templates.rank",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
                 ["postgres.creature_templates.resource_mod"] = {
                     columnName = "resource_mod",
                     defaultValue = 1.0,
@@ -126,6 +341,18 @@ return {
                     nullable = false,
                     order = 11,
                     persistentId = "postgres.creature_templates.resource_mod",
+                    postgresType = {
+                        name = "real",
+                        sql = "real",
+                    },
+                },
+                ["postgres.creature_templates.run_speed_mod"] = {
+                    columnName = "run_speed_mod",
+                    defaultValue = 1.0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 21,
+                    persistentId = "postgres.creature_templates.run_speed_mod",
                     postgresType = {
                         name = "real",
                         sql = "real",
@@ -165,6 +392,30 @@ return {
                     postgresType = {
                         name = "text",
                         sql = "text",
+                    },
+                },
+                ["postgres.creature_templates.unit_class"] = {
+                    columnName = "unit_class",
+                    defaultValue = 1,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 14,
+                    persistentId = "postgres.creature_templates.unit_class",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.creature_templates.walk_speed_mod"] = {
+                    columnName = "walk_speed_mod",
+                    defaultValue = 1.0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 20,
+                    persistentId = "postgres.creature_templates.walk_speed_mod",
+                    postgresType = {
+                        name = "real",
+                        sql = "real",
                     },
                 },
             },
@@ -224,6 +475,18 @@ return {
                         sql = "integer",
                     },
                 },
+                ["postgres.creatures.movement_type"] = {
+                    columnName = "movement_type",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 13,
+                    persistentId = "postgres.creatures.movement_type",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
                 ["postgres.creatures.position_o"] = {
                     columnName = "position_o",
                     hasDefault = false,
@@ -280,6 +543,30 @@ return {
                         sql = "text",
                     },
                 },
+                ["postgres.creatures.spawn_time_in_sec_max"] = {
+                    columnName = "spawn_time_in_sec_max",
+                    defaultValue = 120,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 11,
+                    persistentId = "postgres.creatures.spawn_time_in_sec_max",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.creatures.spawn_time_in_sec_min"] = {
+                    columnName = "spawn_time_in_sec_min",
+                    defaultValue = 120,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 10,
+                    persistentId = "postgres.creatures.spawn_time_in_sec_min",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
                 ["postgres.creatures.template_id"] = {
                     columnName = "template_id",
                     hasDefault = false,
@@ -289,6 +576,18 @@ return {
                     postgresType = {
                         name = "integer",
                         sql = "integer",
+                    },
+                },
+                ["postgres.creatures.wander_distance"] = {
+                    columnName = "wander_distance",
+                    defaultValue = 5.0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 12,
+                    persistentId = "postgres.creatures.wander_distance",
+                    postgresType = {
+                        name = "real",
+                        sql = "real",
                     },
                 },
             },
@@ -1235,185 +1534,6 @@ return {
             },
             schema = "public",
             tableName = "maps",
-        },
-        ["postgres.permission_group_data"] = {
-            constraints = {
-                ["postgres.permission_group_data.permission_group_data_group_fk"] = {
-                    kind = "foreignKey",
-                    name = "permission_group_data_group_fk",
-                    persistentId = "postgres.permission_group_data.permission_group_data_group_fk",
-                    signature = "foreignKey|permission_group_data_group_fk|postgres.permission_group_data.group_id:asc||nil:nil||postgres.permission_groups|postgres.permission_groups.id:asc|noAction|cascade",
-                },
-                ["postgres.permission_group_data.permission_group_data_key"] = {
-                    kind = "unique",
-                    name = "permission_group_data_key",
-                    persistentId = "postgres.permission_group_data.permission_group_data_key",
-                    signature = "unique|permission_group_data_key|postgres.permission_group_data.group_id:asc,postgres.permission_group_data.permission_id:asc||nil:nil|||||",
-                },
-                ["postgres.permission_group_data.permission_group_data_permission_fk"] = {
-                    kind = "foreignKey",
-                    name = "permission_group_data_permission_fk",
-                    persistentId = "postgres.permission_group_data.permission_group_data_permission_fk",
-                    signature = "foreignKey|permission_group_data_permission_fk|postgres.permission_group_data.permission_id:asc||nil:nil||postgres.permissions|postgres.permissions.id:asc|noAction|cascade",
-                },
-            },
-            fields = {
-                ["postgres.permission_group_data.group_id"] = {
-                    columnName = "group_id",
-                    hasDefault = false,
-                    nullable = false,
-                    order = 2,
-                    persistentId = "postgres.permission_group_data.group_id",
-                    postgresType = {
-                        name = "smallint",
-                        sql = "smallint",
-                    },
-                },
-                ["postgres.permission_group_data.id"] = {
-                    columnName = "id",
-                    hasDefault = false,
-                    identity = "byDefault",
-                    nullable = false,
-                    order = 1,
-                    persistentId = "postgres.permission_group_data.id",
-                    postgresType = {
-                        name = "integer",
-                        sql = "integer",
-                    },
-                },
-                ["postgres.permission_group_data.permission_id"] = {
-                    columnName = "permission_id",
-                    hasDefault = false,
-                    nullable = false,
-                    order = 3,
-                    persistentId = "postgres.permission_group_data.permission_id",
-                    postgresType = {
-                        name = "smallint",
-                        sql = "smallint",
-                    },
-                },
-            },
-            indexes = {
-            },
-            persistentId = "postgres.permission_group_data",
-            primaryKey = {
-                fields = {
-                    [1] = {
-                        columnName = "id",
-                        direction = "asc",
-                        persistentId = "postgres.permission_group_data.id",
-                    },
-                },
-                name = "permission_group_data_pkey",
-                persistentId = "postgres.permission_group_data.pk",
-                signature = "permission_group_data_pkey|postgres.permission_group_data.id:asc",
-            },
-            schema = "public",
-            tableName = "permission_group_data",
-        },
-        ["postgres.permission_groups"] = {
-            constraints = {
-                ["postgres.permission_groups.permission_groups_unique_name"] = {
-                    kind = "unique",
-                    name = "permission_groups_unique_name",
-                    persistentId = "postgres.permission_groups.permission_groups_unique_name",
-                    signature = "unique|permission_groups_unique_name|postgres.permission_groups.name:asc||nil:nil|||||",
-                },
-            },
-            fields = {
-                ["postgres.permission_groups.id"] = {
-                    columnName = "id",
-                    hasDefault = false,
-                    identity = "byDefault",
-                    nullable = false,
-                    order = 1,
-                    persistentId = "postgres.permission_groups.id",
-                    postgresType = {
-                        name = "smallint",
-                        sql = "smallint",
-                    },
-                },
-                ["postgres.permission_groups.name"] = {
-                    columnName = "name",
-                    hasDefault = false,
-                    nullable = false,
-                    order = 2,
-                    persistentId = "postgres.permission_groups.name",
-                    postgresType = {
-                        name = "text",
-                        sql = "text",
-                    },
-                },
-            },
-            indexes = {
-            },
-            persistentId = "postgres.permission_groups",
-            primaryKey = {
-                fields = {
-                    [1] = {
-                        columnName = "id",
-                        direction = "asc",
-                        persistentId = "postgres.permission_groups.id",
-                    },
-                },
-                name = "permission_groups_pkey",
-                persistentId = "postgres.permission_groups.pk",
-                signature = "permission_groups_pkey|postgres.permission_groups.id:asc",
-            },
-            schema = "public",
-            tableName = "permission_groups",
-        },
-        ["postgres.permissions"] = {
-            constraints = {
-                ["postgres.permissions.permissions_unique_name"] = {
-                    kind = "unique",
-                    name = "permissions_unique_name",
-                    persistentId = "postgres.permissions.permissions_unique_name",
-                    signature = "unique|permissions_unique_name|postgres.permissions.name:asc||nil:nil|||||",
-                },
-            },
-            fields = {
-                ["postgres.permissions.id"] = {
-                    columnName = "id",
-                    hasDefault = false,
-                    identity = "byDefault",
-                    nullable = false,
-                    order = 1,
-                    persistentId = "postgres.permissions.id",
-                    postgresType = {
-                        name = "smallint",
-                        sql = "smallint",
-                    },
-                },
-                ["postgres.permissions.name"] = {
-                    columnName = "name",
-                    hasDefault = false,
-                    nullable = false,
-                    order = 2,
-                    persistentId = "postgres.permissions.name",
-                    postgresType = {
-                        name = "text",
-                        sql = "text",
-                    },
-                },
-            },
-            indexes = {
-            },
-            persistentId = "postgres.permissions",
-            primaryKey = {
-                fields = {
-                    [1] = {
-                        columnName = "id",
-                        direction = "asc",
-                        persistentId = "postgres.permissions.id",
-                    },
-                },
-                name = "permissions_pkey",
-                persistentId = "postgres.permissions.pk",
-                signature = "permissions_pkey|postgres.permissions.id:asc",
-            },
-            schema = "public",
-            tableName = "permissions",
         },
         ["postgres.proximity_triggers"] = {
             constraints = {

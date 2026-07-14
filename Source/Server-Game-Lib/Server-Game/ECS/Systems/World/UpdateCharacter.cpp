@@ -6,6 +6,7 @@
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
+#include "Server-Game/ECS/Components/PermissionInfo.h"
 #include "Server-Game/ECS/Components/ProximityTrigger.h"
 #include "Server-Game/ECS/Components/Tags.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
@@ -27,6 +28,7 @@
 #include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
+#include "Server-Game/ECS/Util/PermissionUtil.h"
 #include "Server-Game/ECS/Util/Persistence/CharacterUtil.h"
 
 #include <Server-Common/Database/DatabaseService.h>
@@ -138,6 +140,7 @@ namespace ECS::Systems
 
                         .characterName = characterInfo.name,
                         .characterID = characterID,
+                        .accountPermissions = world.Get<Components::CharacterPermissionInfo>(entity).accountPermissions,
 
                         .targetMapID = worldTransfter.targetMapID,
                         .targetPosition = worldTransfter.targetPosition,
@@ -174,6 +177,10 @@ namespace ECS::Systems
             const auto& character = *initialization.character;
             const auto& itemRecords = initialization.items;
             const auto& itemPlacements = initialization.placements;
+
+            auto& permissionInfo = world.Get<Components::CharacterPermissionInfo>(entity);
+            permissionInfo.effectivePermissions = permissionInfo.accountPermissions;
+            Util::Permission::Merge(permissionInfo.effectivePermissions, gameCache.permissionTables, initialization.permissions);
 
             world.Emplace<Tags::IsPlayer>(entity);
             auto& characterInfo = world.Emplace<Components::CharacterInfo>(entity);

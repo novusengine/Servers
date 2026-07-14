@@ -1,5 +1,6 @@
 #pragma once
 #include "Server-Game/ECS/Components/Events.h"
+#include "Server-Game/ECS/Components/PermissionInfo.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/WorldNavmeshData.h"
 #include "Server-Game/ECS/Singletons/WorldSpatialIndex.h"
@@ -248,6 +249,7 @@ namespace ECS
 
         std::string characterName;
         u64 characterID;
+        Components::PermissionSet accountPermissions;
 
         u32 targetMapID;
         vec3 targetPosition;

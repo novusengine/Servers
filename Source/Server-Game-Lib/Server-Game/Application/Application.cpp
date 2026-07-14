@@ -1,4 +1,5 @@
 #include "Application.h"
+#include "ConsoleCommands.h"
 #include "Server-Game/ECS/Scheduler.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/TimeState.h"
@@ -19,6 +20,7 @@
 #include <Base/Util/Timer.h>
 #include <Base/Util/JsonUtils.h>
 #include <Base/Util/DebugHandler.h>
+#include <Base/Util/StringUtils.h>
 
 #include <MetaGen/Server/Lua/Lua.h>
 
@@ -225,6 +227,13 @@ bool Application::Tick(f32 deltaTime)
             case MessageInbound::Type::ReloadScripts:
             {
                 ServiceLocator::GetLuaManager()->SetDirty();
+                break;
+            }
+
+            case MessageInbound::Type::PermissionCommand:
+            {
+                std::vector<std::string> subCommands = StringUtils::SplitString(message.data);
+                ConsoleCommands::ExecutePermission(subCommands);
                 break;
             }
 

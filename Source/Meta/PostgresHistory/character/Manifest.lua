@@ -2,7 +2,7 @@
 return {
     bundle = "character",
     format = 3,
-    hash = "7906646833f1a5815ae1ee1f03ae61c117723fb7125d37a30c92d627885bc25f",
+    hash = "f590c458be6688f0a1ae5d90eacf1230ba69d13f08118f30becc163a679cffd4",
     schemas = {
         public = true,
     },
@@ -213,8 +213,8 @@ return {
                     order = 3,
                     persistentId = "postgres.character_permission_groups.permission_group_id",
                     postgresType = {
-                        name = "smallint",
-                        sql = "smallint",
+                        name = "integer",
+                        sql = "integer",
                     },
                 },
             },
@@ -282,8 +282,20 @@ return {
                     order = 3,
                     persistentId = "postgres.character_permissions.permission_id",
                     postgresType = {
-                        name = "smallint",
-                        sql = "smallint",
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.character_permissions.value"] = {
+                    columnName = "value",
+                    defaultValue = 1,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 4,
+                    persistentId = "postgres.character_permissions.value",
+                    postgresType = {
+                        name = "bigint",
+                        sql = "bigint",
                     },
                 },
             },

@@ -13,6 +13,7 @@ ConsoleCommandHandler::ConsoleCommandHandler()
     RegisterCommand("reload"_h, &ConsoleCommands::CommandReloadScripts);
     RegisterCommand("reloadscripts"_h, &ConsoleCommands::CommandReloadScripts);
     RegisterCommand("addaccount"_h, &ConsoleCommands::CommandAddAccount);
+    RegisterCommand("permission"_h, &ConsoleCommands::CommandPermission);
 
     RegisterCommand("exit"_h, &ConsoleCommands::CommandExit);
     RegisterCommand("quit"_h, &ConsoleCommands::CommandExit);

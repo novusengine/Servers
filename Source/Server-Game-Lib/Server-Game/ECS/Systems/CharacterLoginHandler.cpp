@@ -1,9 +1,11 @@
 #include "CharacterLoginHandler.h"
 
+#include "Server-Game/ECS/Components/AccountInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
+#include "Server-Game/ECS/Components/PermissionInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
@@ -70,22 +72,32 @@ namespace ECS::Systems
 
                     if (Util::Cache::MapExistsByID(gameCache, mapID))
                     {
-                        worldState.AddWorldTransferRequest(WorldTransferRequest{
-                            .socketID = socketID,
+                        entt::entity accountEntity = entt::null;
+                        if (Util::Network::GetAccountEntity(networkState, socketID, accountEntity))
+                        {
+                            const auto* accountInfo = registry.try_get<Components::AccountInfo>(accountEntity);
+                            const auto* accountPermissionInfo = registry.try_get<Components::AccountPermissionInfo>(accountEntity);
+                            if (accountInfo && accountPermissionInfo && accountInfo->id == character.accountId)
+                            {
+                                worldState.AddWorldTransferRequest(WorldTransferRequest{
+                                    .socketID = socketID,
 
-                            .characterName = request.name,
-                            .characterID = characterID,
+                                    .characterName = request.name,
+                                    .characterID = characterID,
+                                    .accountPermissions = accountPermissionInfo->permissions,
 
-                            .targetMapID = mapID
-                        });
+                                    .targetMapID = mapID
+                                });
 
-                        gameCache.characterTables.charNameToCharID[request.name] = characterID;
+                                gameCache.characterTables.charNameToCharID[request.name] = characterID;
 
-                        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerConnectResultPacket{
-                            .result = static_cast<u8>(Network::ConnectResult::Success)
-                        });
+                                Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerConnectResultPacket{
+                                    .result = static_cast<u8>(Network::ConnectResult::Success)
+                                });
 
-                        continue;
+                                continue;
+                            }
+                        }
                     }
                 }
             }

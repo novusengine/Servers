@@ -15,10 +15,13 @@ namespace Database
         namespace Loading
         {
             void LoadCreatureTables(pqxx::read_transaction& transaction, Database::CreatureTables& creatureTables);
+            u64 LoadCreatureClassLevelStats(pqxx::read_transaction& transaction, Database::CreatureTables& creatureTables);
             u64 LoadCreatureTemplates(pqxx::read_transaction& transaction, Database::CreatureTables& creatureTables);
         }
 
-        MetaGen::Postgres::World::CreaturesRecord CreatureCreate(pqxx::work& transaction, u32 templateID, u32 displayID, u32 mapID, const vec3& position, f32 orientation, const std::string& scriptName);
+        MetaGen::Postgres::World::CreaturesRecord CreatureCreate(pqxx::work& transaction, u32 templateID, u32 displayID, u32 mapID,
+            const vec3& position, f32 orientation, const std::string& scriptName, u32 spawnTimeInSecMin,
+            u32 spawnTimeInSecMax, f32 wanderDistance, u16 movementType);
         bool CreatureDelete(pqxx::work& transaction, u64 creatureID);
         OperationResult<std::vector<MetaGen::Postgres::World::CreaturesRecord>> CreatureGetInfoByMap(DBController& dbController, u32 mapID);
     }

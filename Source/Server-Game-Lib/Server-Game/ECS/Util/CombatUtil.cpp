@@ -2,6 +2,7 @@
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
 
 #include "Server-Game/ECS/Components/CreatureThreatTable.h"
+#include "Server-Game/ECS/Components/CreatureCombatInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
@@ -19,6 +20,9 @@
 
 #include <entt/entt.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 using namespace ECS;
 
 namespace ECS::Util::Combat
@@ -31,6 +35,12 @@ namespace ECS::Util::Combat
 
     bool AddUnitToThreatTable(World& world, Components::UnitCombatInfo& targetCombatInfo, entt::entity creatureEntity, entt::entity targetEntity, f64 threatAmount, bool setInCombat)
     {
+        if (const auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(creatureEntity);
+            creatureCombatInfo && creatureCombatInfo->isEvading)
+        {
+            return false;
+        }
+
         auto* creatureThreatTable = world.TryGet<Components::CreatureThreatTable>(creatureEntity);
         if (!creatureThreatTable)
             return false;
@@ -99,6 +109,73 @@ namespace ECS::Util::Combat
 
         ReindexThreatTable(threatTable);
         return true;
+    }
+
+    void ClearCreatureThreatTable(World& world, entt::entity creatureEntity)
+    {
+        auto* threatTable = world.TryGet<Components::CreatureThreatTable>(creatureEntity);
+        auto* objectInfo = world.TryGet<Components::ObjectInfo>(creatureEntity);
+        if (!threatTable || !objectInfo)
+            return;
+
+        for (const ThreatEntry& entry : threatTable->threatList)
+        {
+            entt::entity targetEntity = world.GetEntity(entry.guid);
+            if (!world.ValidEntity(targetEntity))
+                continue;
+
+            if (auto* targetCombatInfo = world.TryGet<Components::UnitCombatInfo>(targetEntity))
+                targetCombatInfo->threatTables.erase(objectInfo->guid);
+        }
+
+        threatTable->threatList.clear();
+        threatTable->guidToIndex.clear();
+
+        auto* combatInfo = world.TryGet<Components::UnitCombatInfo>(creatureEntity);
+        if (!combatInfo)
+            return;
+
+        for (const auto& pair : combatInfo->threatTables)
+        {
+            entt::entity otherCreatureEntity = world.GetEntity(pair.first);
+            if (!world.ValidEntity(otherCreatureEntity))
+                continue;
+
+            if (auto* otherThreatTable = world.TryGet<Components::CreatureThreatTable>(otherCreatureEntity))
+                RemoveUnitFromThreatTable(*otherThreatTable, objectInfo->guid);
+        }
+        combatInfo->threatTables.clear();
+    }
+
+    void RefreshCreatureCombatParticipants(World& world, entt::entity creatureEntity, f32 range)
+    {
+        const auto* threatTable = world.TryGet<Components::CreatureThreatTable>(creatureEntity);
+        const auto* objectInfo = world.TryGet<Components::ObjectInfo>(creatureEntity);
+        const auto* transform = world.TryGet<Components::Transform>(creatureEntity);
+        if (!threatTable || !objectInfo || !transform)
+            return;
+
+        const f32 clampedRange = std::max(range, 0.0f);
+        const f32 rangeSq = clampedRange * clampedRange;
+        for (const ThreatEntry& entry : threatTable->threatList)
+        {
+            entt::entity targetEntity = world.GetEntity(entry.guid);
+            if (!world.ValidEntity(targetEntity) || !world.AllOf<Tags::IsAlive>(targetEntity))
+                continue;
+
+            const auto* targetTransform = world.TryGet<Components::Transform>(targetEntity);
+            auto* targetCombatInfo = world.TryGet<Components::UnitCombatInfo>(targetEntity);
+            if (!targetTransform || !targetCombatInfo)
+                continue;
+
+            const vec3 offset = targetTransform->position - transform->position;
+            if (offset.x * offset.x + offset.z * offset.z > rangeSq || std::abs(offset.y) > clampedRange)
+                continue;
+
+            auto timerItr = targetCombatInfo->threatTables.find(objectInfo->guid);
+            if (timerItr != targetCombatInfo->threatTables.end())
+                timerItr->second.timeSinceLastActivity = 0.0f;
+        }
     }
 
     void SortThreatTable(Components::CreatureThreatTable& threatTable)

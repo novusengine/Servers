@@ -15,18 +15,24 @@ namespace ECS
 
 namespace ECS::Util::Movement
 {
+    inline constexpr f32 DEFAULT_RUN_SPEED = 7.1111f;
+    inline constexpr f32 DEFAULT_WALK_SPEED = 3.5555f;
+    inline constexpr f32 DEFAULT_WANDER_RADIUS = 5.0f;
+    inline constexpr f32 DEFAULT_FOLLOW_DISTANCE = 2.0f;
+
     struct FollowParams
     {
     public:
-        f32 speed = 7.1111f;
+        f32 speed = DEFAULT_RUN_SPEED;
         f32 repathInterval = 0.25f;
         f32 repathDistance = 2.0f;
+        f32 stopDistance = DEFAULT_FOLLOW_DISTANCE;
     };
 
     struct PointParams
     {
     public:
-        f32 speed = 7.1111f;
+        f32 speed = DEFAULT_RUN_SPEED;
         f32 repathDistance = 0.25f;
         bool clearOnReach = true;
     };
@@ -34,8 +40,8 @@ namespace ECS::Util::Movement
     struct WanderParams
     {
     public:
-        f32 speed = 3.5555f;
-        f32 radius = 5.0f;
+        f32 speed = DEFAULT_WALK_SPEED;
+        f32 radius = DEFAULT_WANDER_RADIUS;
         f32 minPause = 3.0f;
         f32 maxPause = 6.0f;
         f32 repathDistance = 0.25f;
