@@ -45,7 +45,11 @@ local PermissionID = P.IDs("permission",
     CreatureMove = 40,
     CreatureFollow = 41,
     CreatureWander = 42,
-    CreatureStop = 43
+    CreatureStop = 43,
+    FactionReaction = 44,
+    FactionReputationView = 45,
+    FactionReputationModify = 46,
+    UnitSetFaction = 47
 })
 
 local GroupID = P.IDs("group",
@@ -106,7 +110,11 @@ local Command = P.Category("command",
     CreatureMove = P.Boolean(PermissionID.CreatureMove, "creature.move", { description = "Allows moving creature spawns." }),
     CreatureFollow = P.Boolean(PermissionID.CreatureFollow, "creature.follow", { description = "Allows forcing creatures to follow a target." }),
     CreatureWander = P.Boolean(PermissionID.CreatureWander, "creature.wander", { description = "Allows forcing creatures to wander." }),
-    CreatureStop = P.Boolean(PermissionID.CreatureStop, "creature.stop", { description = "Allows stopping creature movement." })
+    CreatureStop = P.Boolean(PermissionID.CreatureStop, "creature.stop", { description = "Allows stopping creature movement." }),
+    FactionReaction = P.Boolean(PermissionID.FactionReaction, "faction.reaction", { description = "Allows explaining faction reaction calculations." }),
+    FactionReputationView = P.Boolean(PermissionID.FactionReputationView, "faction.reputation.view", { description = "Allows inspecting character reputation state." }),
+    FactionReputationModify = P.Boolean(PermissionID.FactionReputationModify, "faction.reputation.modify", { description = "Allows modifying character reputation state." }),
+    UnitSetFaction = P.Boolean(PermissionID.UnitSetFaction, "unit.set_faction", { description = "Allows changing the calling character's assigned faction." })
 })
 
 local Player = P.Group(GroupID.Player, "player",
@@ -165,7 +173,11 @@ local GameMaster = P.Group(GroupID.GameMaster, "game_master",
         P.Allow(Command.CreatureMove),
         P.Allow(Command.CreatureFollow),
         P.Allow(Command.CreatureWander),
-        P.Allow(Command.CreatureStop)
+        P.Allow(Command.CreatureStop),
+        P.Allow(Command.FactionReaction),
+        P.Allow(Command.FactionReputationView),
+        P.Allow(Command.FactionReputationModify),
+        P.Allow(Command.UnitSetFaction)
     }
 })
 

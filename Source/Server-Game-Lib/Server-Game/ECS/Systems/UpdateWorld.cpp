@@ -10,6 +10,7 @@
 #include "Server-Game/ECS/Components/CharacterSpellCastInfo.h"
 #include "Server-Game/ECS/Components/CreatureAIInfo.h"
 #include "Server-Game/ECS/Components/CreatureCombatInfo.h"
+#include "Server-Game/ECS/Components/CreatureFactionPolicy.h"
 #include "Server-Game/ECS/Components/CreatureInfo.h"
 #include "Server-Game/ECS/Components/CreatureLifecycleInfo.h"
 #include "Server-Game/ECS/Components/CreatureThreatTable.h"
@@ -28,6 +29,7 @@
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/UnitAuraInfo.h"
 #include "Server-Game/ECS/Components/UnitCombatInfo.h"
+#include "Server-Game/ECS/Components/UnitFaction.h"
 #include "Server-Game/ECS/Components/UnitPowersComponent.h"
 #include "Server-Game/ECS/Components/UnitResistancesComponent.h"
 #include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
@@ -44,6 +46,7 @@
 #include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Util/CombatUtil.h"
 #include "Server-Game/ECS/Util/CombatEventUtil.h"
+#include "Server-Game/ECS/Util/FactionUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/ECS/Util/MovementUtil.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
@@ -51,6 +54,7 @@
 #include "Server-Game/ECS/Util/SpellUtil.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/ECS/Util/DatabaseRetryUtil.h"
+#include "Server-Game/ECS/Util/FactionModifierUtil.h"
 #include "Server-Game/ECS/Util/Network/NetworkUtil.h"
 #include "Server-Game/ECS/Util/PermissionUtil.h"
 #include "Server-Game/ECS/Util/Persistence/CharacterUtil.h"
@@ -108,6 +112,8 @@ namespace ECS::Systems
         constexpr f32 CREATURE_HOME_REACHED_VERTICAL_DISTANCE = 2.0f;
         constexpr f32 CREATURE_CORPSE_DURATION = 60.0f;
         constexpr f64 MAX_ARMOR_DAMAGE_REDUCTION = 0.75;
+        constexpr f32 MAX_FACTION_ASSISTANCE_RADIUS = Gameplay::Faction::MAX_CREATURE_ASSISTANCE_RANGE;
+        constexpr u32 MAX_FACTION_ASSISTANCE_CANDIDATES = 64;
 
         enum class CreatureMovementType : u16
         {
@@ -115,6 +121,53 @@ namespace ECS::Systems
             Random = 1,
             Waypoint = 2
         };
+
+        Gameplay::Faction::CreatureAggressionPolicy ResolveAggressionPolicy(const Database::CreatureTemplate& creatureTemplate)
+        {
+            if (Gameplay::Faction::IsValidCreatureAggressionPolicy(creatureTemplate.aggressionPolicy))
+                return static_cast<Gameplay::Faction::CreatureAggressionPolicy>(creatureTemplate.aggressionPolicy);
+
+            NC_LOG_ERROR("Creature template {0} has invalid aggression policy {1}; Defensive will be used", creatureTemplate.id, creatureTemplate.aggressionPolicy);
+            return Gameplay::Faction::CreatureAggressionPolicy::Defensive;
+        }
+
+        Gameplay::Faction::CreatureAssistancePolicy ResolveAssistancePolicy(const Database::CreatureTemplate& creatureTemplate)
+        {
+            if (Gameplay::Faction::IsValidCreatureAssistancePolicy(creatureTemplate.assistancePolicy))
+                return static_cast<Gameplay::Faction::CreatureAssistancePolicy>(creatureTemplate.assistancePolicy);
+
+            NC_LOG_ERROR("Creature template {0} has invalid assistance policy {1}; None will be used", creatureTemplate.id, creatureTemplate.assistancePolicy);
+            return Gameplay::Faction::CreatureAssistancePolicy::None;
+        }
+
+        f32 ResolveDetectionRange(const Database::CreatureTemplate& creatureTemplate)
+        {
+            if (!std::isfinite(creatureTemplate.detectionRange) || creatureTemplate.detectionRange < 0.0f)
+            {
+                NC_LOG_ERROR("Creature template {0} has invalid detection range {1}; zero will be used", creatureTemplate.id, creatureTemplate.detectionRange);
+                return 0.0f;
+            }
+
+            if (creatureTemplate.detectionRange > Gameplay::Faction::MAX_CREATURE_DETECTION_RANGE)
+            {
+                NC_LOG_ERROR("Creature template {0} detection range {1} exceeds the bounded maximum {2}; maximum will be used", creatureTemplate.id, creatureTemplate.detectionRange, Gameplay::Faction::MAX_CREATURE_DETECTION_RANGE);
+                return Gameplay::Faction::MAX_CREATURE_DETECTION_RANGE;
+            }
+
+            return creatureTemplate.detectionRange;
+        }
+
+        f32 ResolveAssistanceRange(const Database::CreatureTemplate& creatureTemplate)
+        {
+            const f32 assistanceRange = static_cast<f32>(creatureTemplate.assistanceRange);
+            if (assistanceRange > Gameplay::Faction::MAX_CREATURE_ASSISTANCE_RANGE)
+            {
+                NC_LOG_ERROR("Creature template {0} assistance range {1} exceeds the bounded maximum {2}; maximum will be used", creatureTemplate.id, assistanceRange, Gameplay::Faction::MAX_CREATURE_ASSISTANCE_RANGE);
+                return Gameplay::Faction::MAX_CREATURE_ASSISTANCE_RANGE;
+            }
+
+            return assistanceRange;
+        }
 
         void ResetCreatureResources(World& world, entt::entity entity, Components::UnitPowersComponent& powers,
             Components::UnitStatsComponent& stats)
@@ -162,7 +215,7 @@ namespace ECS::Systems
 
             const auto* permissionInfo = world.TryGet<Components::CharacterPermissionInfo>(playerEntity);
             return permissionInfo && Util::Permission::HasPermission(gameCache, permissionInfo->effectivePermissions,
-                MetaGen::Server::Permission::Permission::VisibilityCreatureSeeDespawned);
+                                         MetaGen::Server::Permission::Permission::VisibilityCreatureSeeDespawned);
         }
 
         void HideCreature(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, entt::entity entity,
@@ -186,9 +239,7 @@ namespace ECS::Systems
 
                 if (auto* playerNetInfo = world.TryGet<Components::NetInfo>(playerEntity))
                 {
-                    if (!Util::Network::SendPacket(networkState, playerNetInfo->socketID, MetaGen::Shared::Packet::ServerUnitRemovePacket{
-                        .guid = objectInfo.guid
-                    }))
+                    if (!Util::Network::SendPacket(networkState, playerNetInfo->socketID, MetaGen::Shared::Packet::ServerUnitRemovePacket{ .guid = objectInfo.guid }))
                     {
                         ++itr;
                         continue;
@@ -210,16 +261,26 @@ namespace ECS::Systems
         {
             switch (value)
             {
-                case static_cast<u16>(GameDefine::UnitClass::Warrior): return GameDefine::UnitClass::Warrior;
-                case static_cast<u16>(GameDefine::UnitClass::Paladin): return GameDefine::UnitClass::Paladin;
-                case static_cast<u16>(GameDefine::UnitClass::Hunter): return GameDefine::UnitClass::Hunter;
-                case static_cast<u16>(GameDefine::UnitClass::Rogue): return GameDefine::UnitClass::Rogue;
-                case static_cast<u16>(GameDefine::UnitClass::Priest): return GameDefine::UnitClass::Priest;
-                case static_cast<u16>(GameDefine::UnitClass::Shaman): return GameDefine::UnitClass::Shaman;
-                case static_cast<u16>(GameDefine::UnitClass::Mage): return GameDefine::UnitClass::Mage;
-                case static_cast<u16>(GameDefine::UnitClass::Warlock): return GameDefine::UnitClass::Warlock;
-                case static_cast<u16>(GameDefine::UnitClass::Druid): return GameDefine::UnitClass::Druid;
-                default: return GameDefine::UnitClass::None;
+                case static_cast<u16>(GameDefine::UnitClass::Warrior):
+                    return GameDefine::UnitClass::Warrior;
+                case static_cast<u16>(GameDefine::UnitClass::Paladin):
+                    return GameDefine::UnitClass::Paladin;
+                case static_cast<u16>(GameDefine::UnitClass::Hunter):
+                    return GameDefine::UnitClass::Hunter;
+                case static_cast<u16>(GameDefine::UnitClass::Rogue):
+                    return GameDefine::UnitClass::Rogue;
+                case static_cast<u16>(GameDefine::UnitClass::Priest):
+                    return GameDefine::UnitClass::Priest;
+                case static_cast<u16>(GameDefine::UnitClass::Shaman):
+                    return GameDefine::UnitClass::Shaman;
+                case static_cast<u16>(GameDefine::UnitClass::Mage):
+                    return GameDefine::UnitClass::Mage;
+                case static_cast<u16>(GameDefine::UnitClass::Warlock):
+                    return GameDefine::UnitClass::Warlock;
+                case static_cast<u16>(GameDefine::UnitClass::Druid):
+                    return GameDefine::UnitClass::Druid;
+                default:
+                    return GameDefine::UnitClass::None;
             }
         }
 
@@ -236,7 +297,7 @@ namespace ECS::Systems
             const vec3 offset = targetTransform.position - creatureTransform.position;
             const f32 horizontalDistanceSq = offset.x * offset.x + offset.z * offset.z;
             return horizontalDistanceSq <= CREATURE_MELEE_RANGE * CREATURE_MELEE_RANGE &&
-                std::abs(offset.y) <= CREATURE_MELEE_VERTICAL_RANGE;
+                   std::abs(offset.y) <= CREATURE_MELEE_VERTICAL_RANGE;
         }
 
         u32 CalculateCreatureMeleeDamage(World& world, const Components::CreatureInfo& creatureInfo,
@@ -244,7 +305,7 @@ namespace ECS::Systems
             const Components::UnitStatsComponent* targetStats)
         {
             const f32 variance = 1.0f - CREATURE_MELEE_DAMAGE_VARIANCE +
-                world.rng.NextF32() * (CREATURE_MELEE_DAMAGE_VARIANCE * 2.0f);
+                                 world.rng.NextF32() * (CREATURE_MELEE_DAMAGE_VARIANCE * 2.0f);
             const u32 rawDamage = std::max(1u, static_cast<u32>(std::lround(creatureCombatInfo.meleeDamage * variance)));
             if (creatureCombatInfo.damageSchool != 0 || !targetStats)
                 return rawDamage;
@@ -264,6 +325,54 @@ namespace ECS::Systems
         bool IsDeferredDatabaseRetryable(Database::OperationFailure failure)
         {
             return Util::DatabaseRetry::IsDeferredRetryable(failure);
+        }
+
+        void RecruitFactionAssistance(World& world, const Gameplay::Faction::FactionRuntimeData& runtime, entt::entity attackedEntity, entt::entity attackerEntity)
+        {
+            const auto* attackedTransform = world.TryGet<Components::Transform>(attackedEntity);
+            auto* attackerCombatInfo = world.TryGet<Components::UnitCombatInfo>(attackerEntity);
+            if (!attackedTransform || !attackerCombatInfo)
+                return;
+
+            u32 scannedCandidates = 0;
+            world.GetCreaturesInRadius(vec2(attackedTransform->position.x, attackedTransform->position.z), MAX_FACTION_ASSISTANCE_RADIUS, [&](ObjectGUID candidateGUID)
+            {
+                if (++scannedCandidates > MAX_FACTION_ASSISTANCE_CANDIDATES)
+                    return false;
+
+                const entt::entity candidate = world.GetEntity(candidateGUID);
+                if (!world.ValidEntity(candidate) || candidate == attackedEntity || candidate == attackerEntity || !world.AllOf<Components::CreatureThreatTable, Components::Transform, Tags::IsAlive>(candidate))
+                {
+                    return true;
+                }
+
+                const auto* policy = world.TryGet<Components::CreatureFactionPolicy>(candidate);
+                if (!policy || policy->assistance == Gameplay::Faction::CreatureAssistancePolicy::None || policy->assistanceRange <= 0.0f)
+                {
+                    return true;
+                }
+
+                const vec3 offset = world.Get<Components::Transform>(candidate).position - attackedTransform->position;
+                if (glm::dot(offset, offset) > policy->assistanceRange * policy->assistanceRange)
+                    return true;
+
+                bool policyAllowsAssist = false;
+                if (policy->assistance == Gameplay::Faction::CreatureAssistancePolicy::SameFaction)
+                {
+                    const auto* candidateFaction = world.TryGet<Components::UnitFaction>(candidate);
+                    const auto* attackedFaction = world.TryGet<Components::UnitFaction>(attackedEntity);
+                    policyAllowsAssist = candidateFaction && attackedFaction && candidateFaction->effectiveFaction == attackedFaction->effectiveFaction;
+                }
+                else if (policy->assistance == Gameplay::Faction::CreatureAssistancePolicy::Friendly)
+                {
+                    policyAllowsAssist = Util::Faction::CanAssist(world, candidate, attackedEntity, runtime);
+                }
+
+                if (policyAllowsAssist && Util::Faction::CanAttack(world, candidate, attackerEntity, runtime))
+                    Util::Combat::AddUnitToThreatTable(world, *attackerCombatInfo, candidate, attackerEntity);
+
+                return scannedCandidates < MAX_FACTION_ASSISTANCE_CANDIDATES;
+            });
         }
 
         bool ScheduleDeferredDatabaseRetry(World& world, entt::entity entity, const Singletons::TimeState& timeState,
@@ -305,7 +414,7 @@ namespace ECS::Systems
         {
             const bool manualReconciliation = failure == Database::OperationFailure::Indeterminate;
             std::string message = "Administrative operation '" + std::string(operation) + "' failed (" +
-                std::string(Database::OperationFailureName(failure)) + ")";
+                                  std::string(Database::OperationFailureName(failure)) + ")";
             if (manualReconciliation)
                 message += "; the database outcome is unknown and requires manual reconciliation";
             if (socketID != Network::SOCKET_ID_INVALID && Util::Network::IsSocketActive(networkState, socketID))
@@ -313,10 +422,12 @@ namespace ECS::Systems
             NC_LOG_ERROR("{0}", message);
         }
     }
+
     namespace
     {
         struct PendingNavmeshTile
         {
+        public:
             u32 chunkX;
             u32 chunkY;
             u32 polyCount;
@@ -343,7 +454,7 @@ namespace ECS::Systems
             auto chunkXResult = std::from_chars(chunkXStr.data(), chunkXStr.data() + chunkXStr.size(), chunkX);
             auto chunkYResult = std::from_chars(chunkYStr.data(), chunkYStr.data() + chunkYStr.size(), chunkY);
             return chunkXResult.ec == std::errc() && chunkXResult.ptr == chunkXStr.data() + chunkXStr.size() &&
-                chunkYResult.ec == std::errc() && chunkYResult.ptr == chunkYStr.data() + chunkYStr.size();
+                   chunkYResult.ec == std::errc() && chunkYResult.ptr == chunkYStr.data() + chunkYStr.size();
         }
 
         bool ReadBinaryFile(const fs::path& path, std::vector<u8>& data)
@@ -448,8 +559,7 @@ namespace ECS::Systems
 
                 entt::entity creatureEntity = world.CreateEntity();
 
-                Events::CreatureNeedsInitialization event =
-                {
+                Events::CreatureNeedsInitialization event = {
                     .guid = ObjectGUID::CreateCreature(creature.id),
                     .templateID = creature.templateId,
                     .displayID = creature.displayId,
@@ -475,8 +585,7 @@ namespace ECS::Systems
             {
                 entt::entity triggerEntity = world.CreateEntity();
 
-                Events::ProximityTriggerNeedsInitialization event =
-                {
+                Events::ProximityTriggerNeedsInitialization event = {
                     .triggerID = trigger.id,
 
                     .name = trigger.name,
@@ -527,7 +636,7 @@ namespace ECS::Systems
         //
         //    world.AddEntity(objectInfo.guid, entity, vec2(transform.position.x, transform.position.z));
         //}
-        
+
         // The server currently makes the whole map available at once. Keep tile loading
         // chunk-addressable so a future chunk streamer can call AddTile/RemoveTile directly.
         {
@@ -739,10 +848,7 @@ namespace ECS::Systems
             }
 
             auto result = gameCache.database->CreateCreature(Database::CreatureCreateRequest{
-                .templateID = event.templateID, .displayID = event.displayID, .mapID = event.mapID,
-                .position = event.position, .orientation = event.orientation, .scriptName = event.scriptName,
-                .spawnTimeInSecMin = event.spawnTimeInSecMin, .spawnTimeInSecMax = event.spawnTimeInSecMax,
-                .wanderDistance = event.wanderDistance, .movementType = event.movementType });
+                .templateID = event.templateID, .displayID = event.displayID, .mapID = event.mapID, .position = event.position, .orientation = event.orientation, .scriptName = event.scriptName, .spawnTimeInSecMin = event.spawnTimeInSecMin, .spawnTimeInSecMax = event.spawnTimeInSecMax, .wanderDistance = event.wanderDistance, .movementType = event.movementType });
             if (!result)
             {
                 if (ScheduleDeferredDatabaseRetry(world, entity, timeState, result.Failure()))
@@ -753,8 +859,7 @@ namespace ECS::Systems
             }
             auto creature = std::move(result).Value();
 
-            Events::CreatureNeedsInitialization initEvent =
-            {
+            Events::CreatureNeedsInitialization initEvent = {
                 .guid = ObjectGUID::CreateCreature(creature.id),
                 .templateID = event.templateID,
                 .displayID = creature.displayId,
@@ -781,6 +886,15 @@ namespace ECS::Systems
             if (!Util::Cache::GetCreatureTemplateByID(gameCache, event.templateID, creatureTemplate))
                 return;
 
+            Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+            if (!gameCache.factionRuntimeData || !gameCache.factionRuntimeData->TryGetFactionIndex(creatureTemplate->factionId, factionIndex))
+            {
+                NC_LOG_ERROR("Creature template {0} has no compiled faction for ID {1}", event.templateID, creatureTemplate->factionId);
+                return;
+            }
+
+            const u8 reactionBounds = gameCache.factionRuntimeData->ResolveCreatureReactionBounds(*creatureTemplate);
+
             world.Emplace<Tags::IsCreature>(entity);
             auto& objectInfo = world.Emplace<Components::ObjectInfo>(entity);
             objectInfo.guid = event.guid;
@@ -795,12 +909,25 @@ namespace ECS::Systems
             creatureInfo.wanderDistance = std::max(0.0f, event.wanderDistance);
             creatureInfo.movementType = event.movementType;
 
+            world.Emplace<Components::CreatureFactionPolicy>(entity, Components::CreatureFactionPolicy{
+                .aggression = ResolveAggressionPolicy(*creatureTemplate),
+                .assistance = ResolveAssistancePolicy(*creatureTemplate),
+                .detectionRange = ResolveDetectionRange(*creatureTemplate),
+                .assistanceRange = ResolveAssistanceRange(*creatureTemplate),
+                .timeToNextAcquisition = static_cast<f32>(event.guid.GetCounter() % 250u) / 1000.0f
+            });
+
+            world.Emplace<Components::UnitFaction>(entity, Components::UnitFaction{
+                .assignedFaction = factionIndex,
+                .effectiveFaction = factionIndex,
+                .assignedPlayerReactionBounds = reactionBounds,
+                .effectivePlayerReactionBounds = reactionBounds
+            });
+
             auto& creatureCombatInfo = world.Emplace<Components::CreatureCombatInfo>(entity);
             creatureCombatInfo.homePosition = event.position;
             creatureCombatInfo.homeOrientation = event.orientation;
-            creatureCombatInfo.leashRange = creatureTemplate->leashRange > 0.0f
-                ? creatureTemplate->leashRange
-                : DEFAULT_CREATURE_LEASH_RANGE;
+            creatureCombatInfo.leashRange = creatureTemplate->leashRange > 0.0f ? creatureTemplate->leashRange : DEFAULT_CREATURE_LEASH_RANGE;
 
             auto& creatureLifecycleInfo = world.Emplace<Components::CreatureLifecycleInfo>(entity);
             creatureLifecycleInfo.spawnTimeInSecMin = std::min(event.spawnTimeInSecMin, event.spawnTimeInSecMax);
@@ -834,8 +961,8 @@ namespace ECS::Systems
             const bool hasClassLevelStats = Util::Cache::GetCreatureClassLevelStats(
                 gameCache, creatureTemplate->unitClass, creatureInfo.level, classLevelStats);
             creatureCombatInfo.meleeDamage = hasClassLevelStats
-                ? std::max(1.0f, classLevelStats->damage * std::max(0.0f, creatureTemplate->damageMod))
-                : std::max(1.0f, creatureTemplate->damageMod);
+                                                 ? std::max(1.0f, classLevelStats->damage * std::max(0.0f, creatureTemplate->damageMod))
+                                                 : std::max(1.0f, creatureTemplate->damageMod);
             creatureCombatInfo.meleeAttackTime = std::max(0.1f, static_cast<f32>(creatureTemplate->meleeAttackTimeMs) / 1000.0f);
             creatureCombatInfo.damageSchool = creatureTemplate->damageSchool;
 
@@ -863,8 +990,8 @@ namespace ECS::Systems
 
                     const f64 currentRatio = power.max > 0.0 ? power.current / power.max : 0.0;
                     const f64 resource = hasClassLevelStats
-                        ? static_cast<f64>(classLevelStats->resource) * std::max(0.0f, creatureTemplate->resourceMod)
-                        : power.max * std::max(0.0f, creatureTemplate->resourceMod);
+                                             ? static_cast<f64>(classLevelStats->resource) * std::max(0.0f, creatureTemplate->resourceMod)
+                                             : power.max * std::max(0.0f, creatureTemplate->resourceMod);
                     power.base = resource;
                     power.current = resource * currentRatio;
                     power.max = resource;
@@ -899,12 +1026,7 @@ namespace ECS::Systems
 
             world.Emplace<Components::CreatureThreatTable>(entity);
             if (!event.scriptName.empty())
-            {
-                world.Emplace<Events::CreatureAddScript>(entity, Events::CreatureAddScript
-                {
-                    .scriptName = event.scriptName
-                });
-            }
+                world.Emplace<Events::CreatureAddScript>(entity, Events::CreatureAddScript{ .scriptName = event.scriptName });
 
             world.AddEntity(objectInfo.guid, entity, vec2(creatureTransform.position.x, creatureTransform.position.z));
 
@@ -933,7 +1055,7 @@ namespace ECS::Systems
             zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnDeinit, MetaGen::Server::Lua::CreatureAIEventDataOnDeinit{
                 .creatureEntity = entt::to_integral(entity)
             });
-            
+
             world.Remove<Components::CreatureAIInfo>(entity);
             creatureAIState.creatureGUIDToScriptNameHash.erase(objectInfo.guid);
         });
@@ -945,25 +1067,25 @@ namespace ECS::Systems
             u32 scriptNameHash = StringUtils::fnv1a_32(event.scriptName.c_str(), event.scriptName.length());
             if (!creatureAIState.loadedScriptNameHashes.contains(scriptNameHash))
                 return;
-        
+
             auto& creatureAIInfo = world.GetOrEmplace<Components::CreatureAIInfo>(entity);
             if (creatureAIInfo.scriptName == event.scriptName)
             {
                 NC_LOG_WARNING("Creature {} already has script {} assigned", objectInfo.guid.ToString(), event.scriptName);
                 return;
             }
-        
+
             creatureAIInfo.timeToNextUpdate = 0.0f;
             creatureAIInfo.scriptName = event.scriptName;
             creatureAIState.creatureGUIDToScriptNameHash[objectInfo.guid] = scriptNameHash;
-        
+
             zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnInit, MetaGen::Server::Lua::CreatureAIEventDataOnInit{
                 .creatureEntity = entt::to_integral(entity),
                 .scriptNameHash = scriptNameHash
             });
         });
         world.Clear<Events::CreatureAddScript>();
-        
+
         auto updateAIView = world.View<Components::CreatureAIInfo>();
         updateAIView.each([&](entt::entity entity, Components::CreatureAIInfo& creatureAIInfo)
         {
@@ -973,9 +1095,9 @@ namespace ECS::Systems
             creatureAIInfo.timeToNextUpdate -= timeState.deltaTime;
             if (creatureAIInfo.timeToNextUpdate > 0.0f)
                 return;
-        
+
             creatureAIInfo.timeToNextUpdate += 0.1f;
-        
+
             zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnUpdate, MetaGen::Server::Lua::CreatureAIEventDataOnUpdate{
                 .creatureEntity = entt::to_integral(entity),
                 .deltaTime = 0.1f
@@ -989,13 +1111,72 @@ namespace ECS::Systems
         });
         world.Clear<Events::CreatureNeedsThreatTableUpdate>();
 
+        if (gameCache.factionRuntimeData)
+        {
+            static constexpr u32 MAX_FACTION_ACQUISITION_CANDIDATES = 64;
+            auto acquisitionView = world.View<Components::CreatureCombatInfo, Components::CreatureFactionPolicy, Components::Transform, Tags::IsAlive>(entt::exclude<Tags::IsInCombat>);
+            acquisitionView.each([&](entt::entity entity, Components::CreatureCombatInfo& combatInfo, Components::CreatureFactionPolicy& policy, Components::Transform& transform)
+            {
+                if (combatInfo.isEvading || policy.aggression != Gameplay::Faction::CreatureAggressionPolicy::Aggressive || policy.detectionRange <= 0.0f)
+                    return;
+
+                policy.timeToNextAcquisition -= timeState.deltaTime;
+                if (policy.timeToNextAcquisition > 0.0f)
+                    return;
+
+                policy.timeToNextAcquisition = 0.25f;
+
+                entt::entity bestTarget = entt::null;
+                f32 bestDistanceSq = std::numeric_limits<f32>::max();
+                u64 bestGUID = std::numeric_limits<u64>::max();
+                u32 scannedCandidates = 0;
+                const f32 detectionRangeSq = policy.detectionRange * policy.detectionRange;
+                const auto considerCandidate = [&](ObjectGUID guid) -> bool
+                {
+                    if (++scannedCandidates > MAX_FACTION_ACQUISITION_CANDIDATES)
+                        return false;
+
+                    entt::entity candidate = world.GetEntity(guid);
+                    if (!world.ValidEntity(candidate) || candidate == entity || !world.AllOf<Components::ObjectInfo, Components::Transform, Components::UnitCombatInfo, Tags::IsAlive>(candidate))
+                        return true;
+
+                    if (guid.GetType() == ObjectGUID::Type::Player && !CanPlayerSeeCreature(world, gameCache, candidate, entity))
+                        return true;
+
+                    const vec3 offset = world.Get<Components::Transform>(candidate).position - transform.position;
+                    const f32 distanceSq = glm::dot(offset, offset);
+                    if (distanceSq > detectionRangeSq || !Util::Faction::IsHostileTo(world, entity, candidate, *gameCache.factionRuntimeData))
+                        return true;
+
+                    if (distanceSq < bestDistanceSq || (distanceSq == bestDistanceSq && guid.GetData() < bestGUID))
+                    {
+                        bestTarget = candidate;
+                        bestDistanceSq = distanceSq;
+                        bestGUID = guid.GetData();
+                    }
+
+                    return scannedCandidates < MAX_FACTION_ACQUISITION_CANDIDATES;
+                };
+
+                world.GetPlayersInRadius(vec2(transform.position.x, transform.position.z), policy.detectionRange, considerCandidate);
+                if (scannedCandidates < MAX_FACTION_ACQUISITION_CANDIDATES)
+                    world.GetCreaturesInRadius(vec2(transform.position.x, transform.position.z), policy.detectionRange, considerCandidate);
+
+                if (bestTarget != entt::null)
+                {
+                    auto& targetCombatInfo = world.Get<Components::UnitCombatInfo>(bestTarget);
+                    Util::Combat::AddUnitToThreatTable(world, targetCombatInfo, entity, bestTarget);
+                }
+            });
+        }
+
         auto evadeResetView = world.View<Components::ObjectInfo, Components::CreatureInfo, Components::CreatureCombatInfo, Components::Transform,
             Components::VisibilityInfo, Components::TargetInfo, Components::UnitPowersComponent, Components::UnitStatsComponent,
             Tags::IsAlive>();
         evadeResetView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::CreatureInfo& creatureInfo,
-            Components::CreatureCombatInfo& creatureCombatInfo, Components::Transform& transform,
-            Components::VisibilityInfo& visibilityInfo, Components::TargetInfo& targetInfo,
-            Components::UnitPowersComponent& powers, Components::UnitStatsComponent& stats)
+                                Components::CreatureCombatInfo& creatureCombatInfo, Components::Transform& transform,
+                                Components::VisibilityInfo& visibilityInfo, Components::TargetInfo& targetInfo,
+                                Components::UnitPowersComponent& powers, Components::UnitStatsComponent& stats)
         {
             if (!creatureCombatInfo.isEvading || world.AllOf<Tags::IsInCombat>(entity))
                 return;
@@ -1026,8 +1207,7 @@ namespace ECS::Systems
                     .movementFlags = movementFlags.ToBitMask(),
                     .position = transform.position,
                     .pitchYaw = transform.pitchYaw,
-                    .verticalVelocity = 0.0f
-                });
+                    .verticalVelocity = 0.0f });
             world.creatureVisData.Update(objectInfo.guid, transform.position.x, transform.position.z);
 
             StartCreatureDefaultMovement(world, entity, creatureInfo, creatureCombatInfo);
@@ -1101,10 +1281,10 @@ namespace ECS::Systems
             Components::CreatureLifecycleInfo, Components::Transform, Components::VisibilityInfo, Components::VisibilityUpdateInfo,
             Components::TargetInfo, Components::UnitPowersComponent, Components::UnitStatsComponent>();
         lifecycleView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::CreatureInfo& creatureInfo,
-            Components::CreatureCombatInfo& creatureCombatInfo, Components::CreatureLifecycleInfo& lifecycleInfo,
-            Components::Transform& transform, Components::VisibilityInfo& visibilityInfo,
-            Components::VisibilityUpdateInfo& visibilityUpdateInfo, Components::TargetInfo& targetInfo,
-            Components::UnitPowersComponent& powers, Components::UnitStatsComponent& stats)
+                               Components::CreatureCombatInfo& creatureCombatInfo, Components::CreatureLifecycleInfo& lifecycleInfo,
+                               Components::Transform& transform, Components::VisibilityInfo& visibilityInfo,
+                               Components::VisibilityUpdateInfo& visibilityUpdateInfo, Components::TargetInfo& targetInfo,
+                               Components::UnitPowersComponent& powers, Components::UnitStatsComponent& stats)
         {
             if (lifecycleInfo.state == Components::CreatureLifecycleState::Alive)
                 return;
@@ -1138,8 +1318,7 @@ namespace ECS::Systems
                 MetaGen::Shared::Packet::ServerUnitTeleportPacket{
                     .guid = objectInfo.guid,
                     .position = transform.position,
-                    .orientation = transform.pitchYaw.y
-                });
+                    .orientation = transform.pitchYaw.y });
             ShowCreature(visibilityUpdateInfo);
 
             if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
@@ -1173,7 +1352,7 @@ namespace ECS::Systems
             if (objectFieldsWereDirty)
             {
                 failed |= !Util::MessageBuilder::CreatePacket(buffer, (Network::OpcodeType)MetaGen::PacketListEnum::ServerObjectNetFieldUpdatePacket, [&buffer, &objectFields, objectGUID]() -> bool
-                {
+                    {
                     return buffer.Serialize(objectGUID) && objectFields.fields.SerializeDirtyFields(&buffer, false);
                 });
             }
@@ -1181,7 +1360,7 @@ namespace ECS::Systems
             if (unitFieldsWereDirty)
             {
                 failed |= !Util::MessageBuilder::CreatePacket(buffer, (Network::OpcodeType)MetaGen::PacketListEnum::ServerUnitNetFieldUpdatePacket, [&buffer, &unitFields, objectGUID]() -> bool
-                {
+                    {
                     return buffer.Serialize(objectGUID) && unitFields.fields.SerializeDirtyFields(&buffer, false);
                 });
             }
@@ -1226,8 +1405,7 @@ namespace ECS::Systems
                 return;
             }
 
-            MetaGen::Shared::Packet::ServerTriggerRemovePacket triggerRemovePacket =
-            {
+            MetaGen::Shared::Packet::ServerTriggerRemovePacket triggerRemovePacket = {
                 .triggerID = event.triggerID
             };
 
@@ -1267,8 +1445,7 @@ namespace ECS::Systems
                 return;
 
             auto result = gameCache.database->CreateProximityTrigger(Database::ProximityTriggerCreateRequest{
-                .name = event.name, .flags = static_cast<u16>(event.flags), .mapID = event.mapID,
-                .position = event.position, .extents = event.extents });
+                .name = event.name, .flags = static_cast<u16>(event.flags), .mapID = event.mapID, .position = event.position, .extents = event.extents });
             if (!result)
             {
                 if (ScheduleDeferredDatabaseRetry(world, entity, timeState, result.Failure()))
@@ -1279,8 +1456,7 @@ namespace ECS::Systems
             }
             auto trigger = std::move(result).Value();
 
-            Events::ProximityTriggerNeedsInitialization initEvent =
-            {
+            Events::ProximityTriggerNeedsInitialization initEvent = {
                 .triggerID = trigger.id,
 
                 .name = event.name,
@@ -1325,8 +1501,7 @@ namespace ECS::Systems
             {
                 world.Emplace<Tags::ProximityTriggerIsClientSide>(entity);
 
-                MetaGen::Shared::Packet::ServerTriggerAddPacket triggerAddPacket =
-                {
+                MetaGen::Shared::Packet::ServerTriggerAddPacket triggerAddPacket = {
                     .triggerID = event.triggerID,
 
                     .name = event.name,
@@ -1390,11 +1565,10 @@ namespace ECS::Systems
                 worldAABB.min.x,
                 worldAABB.min.z,
                 worldAABB.max.x,
-                worldAABB.max.z
-            );
+                worldAABB.max.z);
 
             world.GetPlayersInRect(minMaxRect, [&](const ObjectGUID& guid) -> bool
-            {
+                {
                 entt::entity playerEntity = world.GetEntity(guid);
 
                 if (Util::ProximityTrigger::IsPlayerInTrigger(proximityTrigger, playerEntity))
@@ -1423,8 +1597,7 @@ namespace ECS::Systems
         });
     }
 
-    void UpdateWorld::HandleReplication(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState,
-        Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleReplication(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         robin_hood::unordered_set<ObjectGUID> cachedList;
 
@@ -1444,7 +1617,7 @@ namespace ECS::Systems
                 cachedList = visiblePlayers;
 
                 world.GetPlayersInRadius(vec2(transform.position.x, transform.position.z), World::DEFAULT_VISIBILITY_DISTANCE, [&](const ObjectGUID guid) -> bool
-                {
+                    {
                     if (objectInfo.guid == guid)
                         return true;
 
@@ -1467,7 +1640,8 @@ namespace ECS::Systems
                     if (!Util::MessageBuilder::Unit::BuildUnitAdd(buffer, otherObjectInfo.guid, otherCharacterInfo.name, otherCharacterInfo.unitClass, otherTransform.position, otherTransform.scale, otherTransform.pitchYaw))
                         return true;
 
-                    if (!Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, otherEntity, otherObjectInfo.guid))
+                    if (!Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, otherEntity,
+                            otherObjectInfo.guid, *gameCache.factionRuntimeData))
                         return true;
 
                     if (networkState.server->SendPacket(netInfo.socketID, writer.Seal()))
@@ -1478,9 +1652,7 @@ namespace ECS::Systems
 
                 for (ObjectGUID& prevVisibleGUID : cachedList)
                 {
-                    if (Util::Network::SendPacket(networkState, netInfo.socketID, MetaGen::Shared::Packet::ServerUnitRemovePacket{
-                        .guid = prevVisibleGUID
-                    }))
+                    if (Util::Network::SendPacket(networkState, netInfo.socketID, MetaGen::Shared::Packet::ServerUnitRemovePacket{ .guid = prevVisibleGUID }))
                     {
                         visiblePlayers.erase(prevVisibleGUID);
                     }
@@ -1493,7 +1665,7 @@ namespace ECS::Systems
                 cachedList = visibleCreatures;
 
                 world.GetCreaturesInRadius(vec2(transform.position.x, transform.position.z), World::DEFAULT_VISIBILITY_DISTANCE, [&](const ObjectGUID guid) -> bool
-                {
+                    {
                     entt::entity creatureEntity = world.GetEntity(guid);
                     if (!world.ValidEntity(creatureEntity) || !CanPlayerSeeCreature(world, gameCache, entity, creatureEntity))
                         return true;
@@ -1519,9 +1691,7 @@ namespace ECS::Systems
 
                     for (ObjectGUID creatureGUID : cachedList)
                     {
-                        if (!Util::Network::AppendPacketToBuffer(buffer, MetaGen::Shared::Packet::ServerUnitRemovePacket{
-                            .guid = creatureGUID
-                        }))
+                        if (!Util::Network::AppendPacketToBuffer(buffer, MetaGen::Shared::Packet::ServerUnitRemovePacket{ .guid = creatureGUID }))
                         {
                             continue;
                         }
@@ -1532,7 +1702,9 @@ namespace ECS::Systems
                     if (buffer.writtenData > 0 && networkState.server->SendPacket(netInfo.socketID, writer.Seal()))
                     {
                         for (ObjectGUID creatureGUID : removedCreatures)
+                        {
                             visibleCreatures.erase(creatureGUID);
+                        }
                     }
                 }
             }
@@ -1556,7 +1728,7 @@ namespace ECS::Systems
             playersEnteredInView.clear();
 
             world.GetPlayersInRadius(vec2(transform.position.x, transform.position.z), World::DEFAULT_VISIBILITY_DISTANCE, [&](const ObjectGUID guid) -> bool
-            {
+                {
                 entt::entity playerEntity = world.GetEntity(guid);
                 if (!world.ValidEntity(playerEntity) || !CanPlayerSeeCreature(world, gameCache, playerEntity, entity))
                     return true;
@@ -1581,7 +1753,8 @@ namespace ECS::Systems
                 if (!Util::MessageBuilder::Unit::BuildUnitAdd(buffer, objectInfo.guid, creatureInfo.name, creatureInfo.unitClass, transform.position, transform.scale, transform.pitchYaw))
                     return;
 
-                if (!Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, entity, objectInfo.guid))
+                if (!Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, entity, objectInfo.guid,
+                        *gameCache.factionRuntimeData))
                     return;
 
                 PacketRef packet = writer.Seal();
@@ -1617,6 +1790,26 @@ namespace ECS::Systems
 
             visibilityUpdateInfo.timeSinceLastUpdate = 0.0f;
         });
+
+        if (!gameCache.factionRuntimeData)
+            return;
+
+        auto factionUpdateView = world.View<const Components::ObjectInfo, const Components::UnitFaction, const Components::VisibilityInfo, Events::UnitNeedsFactionUpdate>();
+        factionUpdateView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::UnitFaction& unitFaction, const Components::VisibilityInfo& visibilityInfo)
+        {
+            const Gameplay::Faction::FactionID factionID = gameCache.factionRuntimeData->GetFactionID(unitFaction.effectiveFaction);
+            const auto sendOptions = Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitFactionUpdatePacket::PACKET_ID, objectInfo.guid);
+            MetaGen::Shared::Packet::ServerUnitFactionUpdatePacket packet{
+                .guid = objectInfo.guid,
+                .factionID = factionID,
+                .playerReactionBounds = unitFaction.effectivePlayerReactionBounds
+            };
+
+            if (Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, sendOptions, packet))
+            {
+                world.Remove<Events::UnitNeedsFactionUpdate>(entity);
+            }
+        });
     }
     void UpdateWorld::HandleContainerUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
@@ -1637,23 +1830,23 @@ namespace ECS::Systems
             Bytebuffer& equippedItemsBuffer = equippedItemsWriter.GetBuffer();
 
             bool failed = false;
-    
+
             // Bags
             for (ItemEquipSlot_t bagIndex = PLAYER_BAG_INDEX_START; bagIndex <= PLAYER_BAG_INDEX_END; bagIndex++)
             {
                 if (playerContainers.equipment.IsSlotEmpty(bagIndex))
                     continue;
-    
+
                 const Database::ContainerItem& equipmentContainerItem = playerContainers.equipment.GetItem(bagIndex);
                 Database::Container& bag = playerContainers.bags[bagIndex];
                 u16 containerIndex = (bagIndex - PLAYER_BAG_INDEX_START) + 1;
-    
+
                 if (bag.IsUninitialized())
                 {
                     Database::ItemInstance* containerItemInstance = nullptr;
                     if (!Util::Cache::GetItemInstanceByID(gameCache, equipmentContainerItem.objectGUID.GetCounter(), containerItemInstance))
                         continue;
-    
+
                     u16 numSlots = bag.GetTotalSlots();
                     u16 numFreeSlots = bag.GetFreeSlots();
 
@@ -1698,10 +1891,10 @@ namespace ECS::Systems
                         });
                     }
                 }
-    
+
                 bag.ClearDirtySlots();
             }
-    
+
             // Base Equipment Container
             {
                 if (playerContainers.equipment.IsUninitialized())
@@ -1771,9 +1964,8 @@ namespace ECS::Systems
                         });
                     }
                 }
-    
-                playerContainers.equipment.ClearDirtySlots();
 
+                playerContainers.equipment.ClearDirtySlots();
             }
 
             if (failed)
@@ -1804,11 +1996,7 @@ namespace ECS::Systems
             bool sentAllUpdates = true;
             for (ItemEquipSlot_t slot : visualItems.dirtyItemIDs)
             {
-                sentAllUpdates &= ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitVisualItemUpdatePacket{
-                    .guid = objectInfo.guid,
-                    .slot = slot,
-                    .itemID = visualItems.equippedItemIDs[slot]
-                });
+                sentAllUpdates &= ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitVisualItemUpdatePacket{ .guid = objectInfo.guid, .slot = slot, .itemID = visualItems.equippedItemIDs[slot] });
             }
 
             if (sentAllUpdates)
@@ -1827,9 +2015,7 @@ namespace ECS::Systems
 
             if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
             {
-                zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnEnterCombat, MetaGen::Server::Lua::CreatureAIEventDataOnEnterCombat{
-                    .creatureEntity = entt::to_integral(entity)
-                });
+                zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnEnterCombat, MetaGen::Server::Lua::CreatureAIEventDataOnEnterCombat{ .creatureEntity = entt::to_integral(entity) });
             }
 
             if (auto* creatureInfo = world.TryGet<Components::CreatureInfo>(entity))
@@ -1837,10 +2023,7 @@ namespace ECS::Systems
                 if (auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(entity))
                 {
                     creatureCombatInfo->timeToNextMeleeAttack = 0.0f;
-                    Util::Movement::Follow(world, entity, event.target, Util::Movement::FollowParams{
-                        .speed = creatureInfo->runSpeed,
-                        .stopDistance = Util::Movement::DEFAULT_FOLLOW_DISTANCE
-                    });
+                    Util::Movement::Follow(world, entity, event.target, Util::Movement::FollowParams{ .speed = creatureInfo->runSpeed, .stopDistance = Util::Movement::DEFAULT_FOLLOW_DISTANCE });
                 }
             }
         });
@@ -1850,8 +2033,8 @@ namespace ECS::Systems
         auto creatureMeleeView = world.View<Components::ObjectInfo, Components::CreatureInfo, Components::CreatureCombatInfo,
             Components::CreatureThreatTable, Components::Transform, Components::TargetInfo, Tags::IsInCombat, Tags::IsAlive>();
         creatureMeleeView.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::CreatureInfo& creatureInfo,
-            Components::CreatureCombatInfo& creatureCombatInfo, Components::CreatureThreatTable& threatTable,
-            Components::Transform& transform, Components::TargetInfo& targetInfo)
+                                   Components::CreatureCombatInfo& creatureCombatInfo, Components::CreatureThreatTable& threatTable,
+                                   Components::Transform& transform, Components::TargetInfo& targetInfo)
         {
             const vec3 homeOffset = transform.position - creatureCombatInfo.homePosition;
             const f32 horizontalHomeDistanceSq = homeOffset.x * homeOffset.x + homeOffset.z * homeOffset.z;
@@ -1891,14 +2074,11 @@ namespace ECS::Systems
             targetInfo.target = targetEntity;
             const auto* movementIntent = world.TryGet<Components::MovementIntent>(entity);
             const bool needsFollowIntent = !movementIntent ||
-                movementIntent->type != Components::MovementIntentType::Follow ||
-                movementIntent->follow.target != targetEntity;
+                                           movementIntent->type != Components::MovementIntentType::Follow ||
+                                           movementIntent->follow.target != targetEntity;
             if (needsFollowIntent)
             {
-                Util::Movement::Follow(world, entity, targetEntity, Util::Movement::FollowParams{
-                    .speed = creatureInfo.runSpeed,
-                    .stopDistance = Util::Movement::DEFAULT_FOLLOW_DISTANCE
-                });
+                Util::Movement::Follow(world, entity, targetEntity, Util::Movement::FollowParams{ .speed = creatureInfo.runSpeed, .stopDistance = Util::Movement::DEFAULT_FOLLOW_DISTANCE });
             }
 
             const auto& targetTransform = world.Get<Components::Transform>(targetEntity);
@@ -1964,9 +2144,7 @@ namespace ECS::Systems
 
             if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
             {
-                zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnLeaveCombat, MetaGen::Server::Lua::CreatureAIEventDataOnLeaveCombat{
-                    .creatureEntity = entt::to_integral(entity)
-                });
+                zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnLeaveCombat, MetaGen::Server::Lua::CreatureAIEventDataOnLeaveCombat{ .creatureEntity = entt::to_integral(entity) });
             }
 
             if (auto* creatureInfo = world.TryGet<Components::CreatureInfo>(entity))
@@ -1978,11 +2156,7 @@ namespace ECS::Systems
                     if (auto* targetInfo = world.TryGet<Components::TargetInfo>(entity))
                         targetInfo->target = entt::null;
 
-                    Util::Movement::MoveTo(world, entity, creatureCombatInfo->homePosition, Util::Movement::PointParams{
-                        .speed = creatureInfo->runSpeed,
-                        .repathDistance = CREATURE_HOME_REACHED_DISTANCE,
-                        .clearOnReach = true
-                    });
+                    Util::Movement::MoveTo(world, entity, creatureCombatInfo->homePosition, Util::Movement::PointParams{ .speed = creatureInfo->runSpeed, .repathDistance = CREATURE_HOME_REACHED_DISTANCE, .clearOnReach = true });
                 }
                 else
                 {
@@ -2014,7 +2188,7 @@ namespace ECS::Systems
             }
 
             UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, MetaGen::Shared::Unit::PowerTypeEnum::Health);
-            
+
             bool isCreature = world.AllOf<Tags::IsCreature>(entity);
             f64 baseRegenRate = isCreature ? (healthPower.base * 0.75) : (healthPower.base * 0.01);
             f64 regenAmount = baseRegenRate * HEALTH_REGEN_INTERVAL;
@@ -2087,7 +2261,7 @@ namespace ECS::Systems
                     Util::Unit::SetPower(world, entity, unitPowersComponent, powerType, power.base, newRage, power.max);
                 }
             }
-            });
+        });
 
         auto dirtyPowerView = world.View<const Components::ObjectInfo, const Components::VisibilityInfo, Components::UnitPowersComponent, Events::UnitNeedsPowerUpdate>();
         dirtyPowerView.each([&](entt::entity entity, const Components::ObjectInfo& objectInfo, const Components::VisibilityInfo& visibilityInfo, Components::UnitPowersComponent& unitPowersComponent)
@@ -2097,13 +2271,7 @@ namespace ECS::Systems
             {
                 UnitPower& power = Util::Unit::GetPower(unitPowersComponent, dirtyPowerType);
 
-                sentAllUpdates &= ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitPowerUpdatePacket::PACKET_ID, objectInfo.guid, static_cast<u8>(dirtyPowerType)), MetaGen::Shared::Packet::ServerUnitPowerUpdatePacket{
-                    .guid = objectInfo.guid,
-                    .kind = static_cast<u8>(dirtyPowerType),
-                    .base = power.base,
-                    .current = power.current,
-                    .max = power.max
-                });
+                sentAllUpdates &= ECS::Util::Network::SendToNearby(networkState, world, entity, visibilityInfo, true, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitPowerUpdatePacket::PACKET_ID, objectInfo.guid, static_cast<u8>(dirtyPowerType)), MetaGen::Shared::Packet::ServerUnitPowerUpdatePacket{ .guid = objectInfo.guid, .kind = static_cast<u8>(dirtyPowerType), .base = power.base, .current = power.current, .max = power.max });
             }
 
             if (sentAllUpdates)
@@ -2121,12 +2289,7 @@ namespace ECS::Systems
             {
                 UnitResistance& resistance = Util::Unit::GetResistance(unitResistancesComponent, dirtyResistanceType);
 
-                sentAllUpdates &= ECS::Util::Network::SendPacket(networkState, netInfo.socketID, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitResistanceUpdatePacket::PACKET_ID, ObjectGUID::Empty, static_cast<u8>(dirtyResistanceType)), MetaGen::Shared::Packet::ServerUnitResistanceUpdatePacket{
-                    .kind = static_cast<u8>(dirtyResistanceType),
-                    .base = resistance.base,
-                    .current = resistance.current,
-                    .max = resistance.max
-                });
+                sentAllUpdates &= ECS::Util::Network::SendPacket(networkState, netInfo.socketID, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitResistanceUpdatePacket::PACKET_ID, ObjectGUID::Empty, static_cast<u8>(dirtyResistanceType)), MetaGen::Shared::Packet::ServerUnitResistanceUpdatePacket{ .kind = static_cast<u8>(dirtyResistanceType), .base = resistance.base, .current = resistance.current, .max = resistance.max });
             }
 
             if (sentAllUpdates)
@@ -2144,11 +2307,7 @@ namespace ECS::Systems
             {
                 UnitStat& stat = Util::Unit::GetStat(unitStatsComponent, dirtyStatType);
 
-                sentAllUpdates &= ECS::Util::Network::SendPacket(networkState, netInfo.socketID, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitStatUpdatePacket::PACKET_ID, ObjectGUID::Empty, static_cast<u8>(dirtyStatType)), MetaGen::Shared::Packet::ServerUnitStatUpdatePacket{
-                    .kind = static_cast<u8>(dirtyStatType),
-                    .base = stat.base,
-                    .current = stat.current
-                });
+                sentAllUpdates &= ECS::Util::Network::SendPacket(networkState, netInfo.socketID, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitStatUpdatePacket::PACKET_ID, ObjectGUID::Empty, static_cast<u8>(dirtyStatType)), MetaGen::Shared::Packet::ServerUnitStatUpdatePacket{ .kind = static_cast<u8>(dirtyStatType), .base = stat.base, .current = stat.current });
             }
 
             if (sentAllUpdates)
@@ -2189,6 +2348,8 @@ namespace ECS::Systems
                 GameDefine::Database::SpellEffect& spellEffect = dbSpellEffectInfo->effects[i];
 
                 AuraEffect& auraEffect = auraEffectInfo.effects[i];
+                auraEffect.effectID = spellEffect.id;
+                auraEffect.priority = spellEffect.effectPriority;
                 auraEffect.type = spellEffect.effectType;
 
                 auraEffect.value1 = spellEffect.effectValue1;
@@ -2207,11 +2368,10 @@ namespace ECS::Systems
                 auraEffectInfo.periodicEffectsMask |= (1ull << i);
 
                 f32 interval = static_cast<f32>(auraEffect.value1) / 1000.0f;
-                auraEffectInfo.periodicEffects.push_back(AuraPeriodicInfo {
+                auraEffectInfo.periodicEffects.push_back(AuraPeriodicInfo{
                     .interval = interval,
                     .timeToNextTick = interval,
-                    .index = i
-                });
+                    .index = i });
             }
 
             u32 numPeriodicEffects = static_cast<u32>(auraEffectInfo.periodicEffects.size());
@@ -2234,12 +2394,15 @@ namespace ECS::Systems
 
                 Util::Spell::CheckAuraProc(world, zenith, timeState, gameCache, auraEffectInfo, spellProcInfo, MetaGen::Shared::Spell::SpellProcPhaseTypeEnum::OnAuraApply, auraInfo.spellID, entity, casterEntity, targetEntity);
             }
-            
+
             if (!prepared)
             {
                 world.Emplace<Events::AuraExpired>(entity);
                 return;
             }
+
+            if (gameCache.factionRuntimeData)
+                Util::FactionModifier::ApplyAura(world, entity, targetEntity, auraInfo, auraEffectInfo, *gameCache.factionRuntimeData);
 
             auto* spellProcInfo = world.TryGet<Components::SpellProcInfo>(entity);
 
@@ -2260,7 +2423,7 @@ namespace ECS::Systems
                     .auraEntity = entt::to_integral(entity),
                     .spellID = auraInfo.spellID,
                     .effectIndex = static_cast<u8>(i),
-                    .effectType = auraEffect.type,
+                    .effectType = auraEffect.type
                 });
 
                 if (spellProcInfo)
@@ -2271,13 +2434,7 @@ namespace ECS::Systems
 
             auto& objectInfo = world.Get<Components::ObjectInfo>(targetEntity);
             auto& visibilityInfo = world.Get<Components::VisibilityInfo>(targetEntity);
-            ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitAddAuraPacket{
-                .guid = objectInfo.guid,
-                .auraInstanceID = entt::to_integral(entity),
-                .spellID = auraInfo.spellID,
-                .duration = auraInfo.timeRemaining,
-                .stacks = auraInfo.stacks
-            });
+            ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitAddAuraPacket{ .guid = objectInfo.guid, .auraInstanceID = entt::to_integral(entity), .spellID = auraInfo.spellID, .duration = auraInfo.timeRemaining, .stacks = auraInfo.stacks });
 
             world.Emplace<Tags::IsActiveAura>(entity);
         });
@@ -2306,14 +2463,12 @@ namespace ECS::Systems
                 Util::Spell::CheckAuraProc(world, zenith, timeState, gameCache, auraEffectInfo, *spellProcInfo, MetaGen::Shared::Spell::SpellProcPhaseTypeEnum::OnAuraApply, auraInfo.spellID, entity, casterEntity, targetEntity);
             }
 
+            if (gameCache.factionRuntimeData)
+                Util::FactionModifier::RefreshAura(world, entity, targetEntity, auraInfo, auraEffectInfo, *gameCache.factionRuntimeData);
+
             auto& objectInfo = world.Get<Components::ObjectInfo>(targetEntity);
             auto& visibilityInfo = world.Get<Components::VisibilityInfo>(targetEntity);
-            ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitUpdateAuraPacket{
-                .guid = objectInfo.guid,
-                .auraInstanceID = entt::to_integral(entity),
-                .duration = auraInfo.timeRemaining,
-                .stacks = auraInfo.stacks
-            });
+            ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitUpdateAuraPacket{ .guid = objectInfo.guid, .auraInstanceID = entt::to_integral(entity), .duration = auraInfo.timeRemaining, .stacks = auraInfo.stacks });
         });
         world.Clear<Events::AuraRefreshed>();
 
@@ -2322,7 +2477,7 @@ namespace ECS::Systems
         {
             if (auraInfo.duration != -1.0f)
                 auraInfo.timeRemaining = glm::max(0.0f, auraInfo.timeRemaining - timeState.deltaTime);
-            
+
             bool isPeriodicAura = world.AllOf<Tags::IsPeriodicAura>(entity);
             if (isPeriodicAura)
             {
@@ -2336,7 +2491,7 @@ namespace ECS::Systems
                 }
 
                 auto* spellProcInfo = world.TryGet<Components::SpellProcInfo>(entity);
-               
+
                 u8 numEffects = static_cast<u8>(auraEffectInfo.periodicEffects.size());
                 for (u8 i = 0; i < numEffects; i++)
                 {
@@ -2396,6 +2551,8 @@ namespace ECS::Systems
                     Util::Spell::CheckAuraProc(world, zenith, timeState, gameCache, auraEffectInfo, *spellProcInfo, MetaGen::Shared::Spell::SpellProcPhaseTypeEnum::OnAuraRemove, auraInfo.spellID, entity, casterEntity, targetEntity);
                 }
 
+                Util::FactionModifier::RemoveAura(world, entity, targetEntity);
+
                 // Remove from active auras
                 auto itr = characterAuraInfo.spellIDToAuraEntity.find(auraInfo.spellID);
                 if (itr != characterAuraInfo.spellIDToAuraEntity.end() && itr->second == entity)
@@ -2403,10 +2560,7 @@ namespace ECS::Systems
 
                 auto& objectInfo = world.Get<Components::ObjectInfo>(targetEntity);
                 auto& visibilityInfo = world.Get<Components::VisibilityInfo>(targetEntity);
-                ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitRemoveAuraPacket{
-                    .guid = objectInfo.guid,
-                    .auraInstanceID = entt::to_integral(entity)
-                });
+                ECS::Util::Network::SendToNearby(networkState, world, targetEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitRemoveAuraPacket{ .guid = objectInfo.guid, .auraInstanceID = entt::to_integral(entity) });
             }
 
             world.DestroyEntity(entity);
@@ -2466,12 +2620,7 @@ namespace ECS::Systems
             }
 
             auto& visibilityInfo = world.Get<Components::VisibilityInfo>(casterEntity);
-            ECS::Util::Network::SendToNearby(networkState, world, casterEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitCastSpellPacket{
-                .guid = spellInfo.caster,
-                .spellID = spellInfo.spellID,
-                .castTime = spellInfo.castTime,
-                .timeToCast = spellInfo.timeToCast
-            });
+            ECS::Util::Network::SendToNearby(networkState, world, casterEntity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitCastSpellPacket{ .guid = spellInfo.caster, .spellID = spellInfo.spellID, .castTime = spellInfo.castTime, .timeToCast = spellInfo.timeToCast });
 
             world.Emplace<Tags::IsActiveSpell>(entity);
         });
@@ -2557,7 +2706,7 @@ namespace ECS::Systems
             world.DestroyEntity(entity);
         });
     }
-    void UpdateWorld::HandleCombatEventUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::NetworkState& networkState)
+    void UpdateWorld::HandleCombatEventUpdate(World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         auto& combatEventState = world.GetSingleton<Singletons::CombatEventState>();
 
@@ -2594,8 +2743,7 @@ namespace ECS::Systems
             UnitPower& healthPower = Util::Unit::GetPower(unitPowersComponent, MetaGen::Shared::Unit::PowerTypeEnum::Health);
             bool isDead = (healthPower.current <= 0.0);
 
-            if (validSourceEntity && sourceEntity != targetEntity &&
-                (eventInfo.eventType == CombatEventType::Damage || eventInfo.eventType == CombatEventType::Heal))
+            if (validSourceEntity && sourceEntity != targetEntity && (eventInfo.eventType == CombatEventType::Damage || eventInfo.eventType == CombatEventType::Heal))
             {
                 if (const auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(sourceEntity))
                     Util::Combat::RefreshCreatureCombatParticipants(world, sourceEntity, creatureCombatInfo->leashRange);
@@ -2617,7 +2765,9 @@ namespace ECS::Systems
                     if (damageDone <= 0)
                         break;
 
-                    bool canAddToThreatTable = validSourceEntity && world.AllOf<Components::CreatureThreatTable>(targetEntity);
+                    const auto* targetFactionPolicy = world.TryGet<Components::CreatureFactionPolicy>(targetEntity);
+                    const bool allowsDefensiveRetaliation = !targetFactionPolicy || targetFactionPolicy->aggression != Gameplay::Faction::CreatureAggressionPolicy::Passive;
+                    bool canAddToThreatTable = validSourceEntity && allowsDefensiveRetaliation && world.AllOf<Components::CreatureThreatTable>(targetEntity);
                     if (canAddToThreatTable && sourceEntity != targetEntity)
                     {
                         auto& unitCombatInfo = world.Get<Components::UnitCombatInfo>(sourceEntity);
@@ -2626,18 +2776,19 @@ namespace ECS::Systems
                         Util::Combat::AddUnitToThreatTable(world, unitCombatInfo, targetEntity, sourceEntity, threatAmount);
                     }
 
+                    if (validSourceEntity && sourceEntity != targetEntity && gameCache.factionRuntimeData)
+                        RecruitFactionAssistance(world, *gameCache.factionRuntimeData, targetEntity, sourceEntity);
+
                     bool killedTarget = overKillDamage > 0 || damageDone == healthPower.current;
                     f64 newHealth = healthPower.current - damageDone;
                     Util::Unit::SetPower(world, targetEntity, unitPowersComponent, MetaGen::Shared::Unit::PowerTypeEnum::Health, healthPower.base, newHealth, healthPower.max);
 
                     builtMessage = Util::MessageBuilder::CombatLog::BuildDamageDealtMessage(combatEventBuffer, eventInfo.sourceGUID, eventInfo.targetGUID, damageDone, overKillDamage);
-                    
+
                     if (killedTarget)
                     {
                         Util::Movement::Stop(world, targetEntity);
-                        world.Emplace<Events::UnitDied>(targetEntity, Events::UnitDied{
-                            .killerEntity = validSourceEntity ? sourceEntity : entt::null
-                        });
+                        world.Emplace<Events::UnitDied>(targetEntity, Events::UnitDied{ .killerEntity = validSourceEntity ? sourceEntity : entt::null });
                     }
                     break;
                 }
@@ -2681,13 +2832,12 @@ namespace ECS::Systems
 
                     builtMessage = Util::MessageBuilder::CombatLog::BuildResurrectedMessage(combatEventBuffer, eventInfo.sourceGUID, eventInfo.targetGUID, missingHealth);
 
-                    world.Emplace<Events::UnitResurrected>(targetEntity, Events::UnitResurrected{
-                        .resurrectorEntity = validSourceEntity ? sourceEntity : entt::null
-                    });
+                    world.Emplace<Events::UnitResurrected>(targetEntity, Events::UnitResurrected{ .resurrectorEntity = validSourceEntity ? sourceEntity : entt::null });
                     break;
                 }
 
-                default: break;
+                default:
+                    break;
             }
 
             if (builtMessage)
@@ -2718,7 +2868,7 @@ namespace ECS::Systems
         // Handle World Transfer Requests
         {
             auto& worldTransferRequests = worldState.GetWorldTransferRequests();
-            
+
             WorldTransferRequest request;
             while (worldTransferRequests.try_dequeue(request))
             {
@@ -2751,12 +2901,9 @@ namespace ECS::Systems
 
                 Util::Cache::CharacterCreate(gameCache, request.characterID, request.characterName, characterEntity);
 
-                Util::Network::SendPacket(networkState, request.socketID, MetaGen::Shared::Packet::ServerWorldTransferPacket{
-                });
+                Util::Network::SendPacket(networkState, request.socketID, MetaGen::Shared::Packet::ServerWorldTransferPacket{});
 
-                Util::Network::SendPacket(networkState, request.socketID, MetaGen::Shared::Packet::ServerLoadMapPacket{
-                    .mapID = request.targetMapID
-                });
+                Util::Network::SendPacket(networkState, request.socketID, MetaGen::Shared::Packet::ServerLoadMapPacket{ .mapID = request.targetMapID });
 
                 if (request.useTargetPosition)
                 {
@@ -2779,7 +2926,7 @@ namespace ECS::Systems
                 world.packetArena.Trim(networkState.packetArenaConfig.warmBlocksPerSizeClass);
                 world.packetArenaTrimTimer = networkState.packetArenaConfig.trimIntervalSeconds;
             }
-            
+
             if (HandleMapInitialization(world, timeState, gameCache))
                 continue;
 
@@ -2789,7 +2936,7 @@ namespace ECS::Systems
 
             HandleNetworkMessages(world, zenith, timeState, gameCache, networkState);
 
-            UpdateCharacter::HandleUpdate(worldState, world, zenith, gameCache, networkState, deltaTime);
+            UpdateCharacter::HandleUpdate(worldState, world, zenith, timeState, gameCache, networkState, deltaTime);
             HandleCreatureUpdate(world, zenith, timeState, gameCache, networkState);
             HandleUnitUpdate(world, zenith, timeState, gameCache, networkState);
 
@@ -2803,7 +2950,7 @@ namespace ECS::Systems
             HandlePowerUpdate(world, zenith, timeState, networkState);
             HandleAuraUpdate(world, zenith, timeState, gameCache, networkState);
             HandleSpellUpdate(world, zenith, timeState, gameCache, networkState);
-            HandleCombatEventUpdate(world, zenith, timeState, networkState);
+            HandleCombatEventUpdate(world, zenith, timeState, gameCache, networkState);
             HandleCombatTimeoutUpdate(world, zenith, timeState);
         }
     }

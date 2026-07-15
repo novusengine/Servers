@@ -1,4 +1,5 @@
 #pragma once
+
 #include <Base/Types.h>
 #include <Base/Util/DebugHandler.h>
 
@@ -8,6 +9,11 @@
 #include <MetaGen/Shared/ProximityTrigger/ProximityTrigger.h>
 #include <MetaGen/Postgres/World/Tables/CreatureClassLevelStats.h>
 #include <MetaGen/Postgres/World/Tables/CreatureTemplates.h>
+#include <MetaGen/Postgres/World/Tables/FactionRelations.h>
+#include <MetaGen/Postgres/World/Tables/FactionStandings.h>
+#include <MetaGen/Postgres/World/Tables/FactionStartingReputations.h>
+#include <MetaGen/Postgres/World/Tables/Factions.h>
+#include <MetaGen/Postgres/World/Tables/UnitRaceFactions.h>
 
 #include <robinhood/robinhood.h>
 
@@ -22,12 +28,14 @@ namespace Database
 
     struct PermissionAssignment
     {
+    public:
         u32 permissionID = 0;
         i64 value = 0;
     };
 
     struct PermissionAssignmentSnapshot
     {
+    public:
         std::vector<PermissionAssignment> permissions;
         std::vector<u32> permissionGroupIDs;
         bool defaultGroupApplied = false;
@@ -35,6 +43,7 @@ namespace Database
 
     struct PermissionTables
     {
+    public:
         robin_hood::unordered_map<u32, std::string> permissionIDToName;
         robin_hood::unordered_map<std::string, u32> permissionNameToID;
         robin_hood::unordered_map<u32, u16> permissionIDToValueKind;
@@ -55,7 +64,10 @@ namespace Database
     struct ContainerItem
     {
     public:
-        bool IsEmpty() const { return !objectGUID.IsValid(); }
+        bool IsEmpty() const
+        {
+            return !objectGUID.IsValid();
+        }
         void Clear()
         {
             objectGUID = ObjectGUID::Empty;
@@ -80,7 +92,8 @@ namespace Database
         */
         u16 GetNextFreeSlot() const
         {
-            if (IsFull()) return INVALID_SLOT;
+            if (IsFull())
+                return INVALID_SLOT;
 
             for (u16 i = 0; i < _slots; ++i)
             {
@@ -187,7 +200,7 @@ namespace Database
 #endif
             if (srcSlotIndex >= numSrcSlots || destSlotIndex >= numDestSlots)
                 return false;
-            
+
             bool srcSlotEmpty = _items[srcSlotIndex].IsEmpty();
             bool destSlotEmpty = destContainer._items[destSlotIndex].IsEmpty();
             bool isSameContainer = this == &destContainer;
@@ -228,34 +241,55 @@ namespace Database
         * Gets the backing vector for all items
         * @return const std::vector& with all ContainerItem
         */
-        const std::vector<ContainerItem>& GetItems() const { return _items; }
+        const std::vector<ContainerItem>& GetItems() const
+        {
+            return _items;
+        }
 
         /**
         * Checks if the container is full
         * @return true if no slots are available
         */
-        bool IsFull() const { return _freeSlots == 0; }
+        bool IsFull() const
+        {
+            return _freeSlots == 0;
+        }
 
         /**
         * Checks if the container is empty
         * @return true if all slots are available
         */
-        bool IsEmpty() const { return _freeSlots == _slots; }
+        bool IsEmpty() const
+        {
+            return _freeSlots == _slots;
+        }
 
         /**
          * Gets the total number of slots in the container
          * @return Total slot count
          */
-        u16 GetTotalSlots() const { return _slots; }
+        u16 GetTotalSlots() const
+        {
+            return _slots;
+        }
 
         /**
         * Gets the number of free slots in the container
         * @return Number of available slots
         */
-        u16 GetFreeSlots() const { return _freeSlots; }
+        u16 GetFreeSlots() const
+        {
+            return _freeSlots;
+        }
 
-        bool IsUninitialized() const { return _isUninitialized; }
-        robin_hood::unordered_set<u16>& GetDirtySlots() { return _dirtySlots; }
+        bool IsUninitialized() const
+        {
+            return _isUninitialized;
+        }
+        robin_hood::unordered_set<u16>& GetDirtySlots()
+        {
+            return _dirtySlots;
+        }
         void SetSlotAsDirty(u16 slotIndex)
         {
             _dirtySlots.insert(slotIndex);
@@ -336,7 +370,17 @@ namespace Database
         robin_hood::unordered_map<u32, CreatureClassLevelStats> classLevelKeyToStats;
         robin_hood::unordered_map<u32, CreatureTemplate> templateIDToDefinition;
     };
-    
+
+    struct FactionTables
+    {
+    public:
+        std::vector<MetaGen::Postgres::World::FactionsRecord> definitions;
+        std::vector<MetaGen::Postgres::World::FactionRelationsRecord> relations;
+        std::vector<MetaGen::Postgres::World::FactionStandingsRecord> standings;
+        std::vector<MetaGen::Postgres::World::FactionStartingReputationsRecord> startingReputations;
+        std::vector<MetaGen::Postgres::World::UnitRaceFactionsRecord> unitRaceFactions;
+    };
+
     struct MapTables
     {
     public:

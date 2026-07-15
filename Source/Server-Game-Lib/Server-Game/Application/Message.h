@@ -12,12 +12,17 @@ public:
         DoString,
         ReloadScripts,
         PermissionCommand,
+        FactionClientDBExport,
         Exit
     };
 
 public:
-    MessageInbound() { }
-    MessageInbound(Type inType, std::string inData = "") : type(inType), data(inData) { }
+    MessageInbound()
+    {
+    }
+    MessageInbound(Type inType, std::string inData = "") : type(inType), data(inData)
+    {
+    }
 
     Type type = Type::Invalid;
     std::string data = "";
@@ -35,8 +40,12 @@ public:
     };
 
 public:
-    MessageOutbound() { }
-    MessageOutbound(Type inType, std::string inData = "") : type(inType), data(inData) { }
+    MessageOutbound()
+    {
+    }
+    MessageOutbound(Type inType, std::string inData = "") : type(inType), data(inData)
+    {
+    }
 
     Type type = Type::Invalid;
     std::string data = "";

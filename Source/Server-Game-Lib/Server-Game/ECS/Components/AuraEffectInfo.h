@@ -6,6 +6,8 @@ namespace ECS
     struct AuraEffect
     {
     public:
+        u32 effectID;
+        u8 priority;
         u8 type;
 
         i32 value1;

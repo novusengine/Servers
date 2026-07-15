@@ -1,4 +1,5 @@
 #pragma once
+#include "Server-Game/Gameplay/Faction/FactionRuntimeData.h"
 #include "Server-Common/Database/Definitions.h"
 #include "Server-Common/Database/DatabaseService.h"
 
@@ -6,6 +7,8 @@
 
 #include <json/json.hpp>
 #include <robinhood/robinhood.h>
+
+#include <memory>
 
 namespace ECS
 {
@@ -22,6 +25,8 @@ namespace ECS
             Database::ItemTables itemTables;
             Database::CharacterTables characterTables;
             Database::CreatureTables creatureTables;
+            Database::FactionTables factionTables;
+            std::shared_ptr<const Gameplay::Faction::FactionRuntimeData> factionRuntimeData;
             Database::PermissionTables permissionTables;
         };
     }

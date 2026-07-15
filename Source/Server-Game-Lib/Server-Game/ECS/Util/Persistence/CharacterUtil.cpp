@@ -1,6 +1,7 @@
 #include "CharacterUtil.h"
 
 #include "Server-Game/ECS/Components/CharacterInfo.h"
+#include "Server-Game/ECS/Components/CharacterReputation.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
 #include "Server-Game/ECS/Singletons/GameCache.h"
@@ -8,9 +9,13 @@
 
 #include <Server-Common/Database/DatabaseService.h>
 
+#include <Base/Util/DebugHandler.h>
 #include <Base/Util/StringUtils.h>
 
 #include <entt/entt.hpp>
+
+#include <algorithm>
+#include <vector>
 
 namespace ECS::Util::Persistence::Character
 {
@@ -31,7 +36,17 @@ namespace ECS::Util::Persistence::Character
         if (Util::Cache::CharacterExistsByName(gameCache, name))
             return Result::CharacterAlreadyExists;
 
-        auto result = gameCache.database->CreateCharacter(accountID, name, raceGenderClass);
+        constexpr u16 RACE_MASK = 0x7F;
+        const u16 raceID = raceGenderClass & RACE_MASK;
+        Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+        if (!gameCache.factionRuntimeData || !gameCache.factionRuntimeData->TryGetRaceFaction(raceID, factionIndex))
+        {
+            NC_LOG_ERROR("Cannot create character '{0}': unit race {1} has no server faction mapping", name, raceID);
+            return Result::GenericError;
+        }
+
+        const Gameplay::Faction::FactionID factionID = gameCache.factionRuntimeData->GetFactionID(factionIndex);
+        auto result = gameCache.database->CreateCharacter(accountID, name, raceGenderClass, factionID);
         if (!result)
             return DatabaseFailureResult(result.Failure());
         characterID = result.Value().id;
@@ -168,11 +183,107 @@ namespace ECS::Util::Persistence::Character
         return ECS::Result::Success;
     }
 
+    ECS::Result CharacterFlushReputations(Singletons::GameCache& gameCache, u64 characterID, Components::CharacterReputation& reputation, u32 maximumUpdates, Database::OperationFailure* databaseFailure)
+    {
+        if (databaseFailure)
+            *databaseFailure = Database::OperationFailure::None;
+
+        if ((reputation.dirtyByFaction.empty() && reputation.removedDirtyByFaction.empty()) || maximumUpdates == 0)
+            return Result::Success;
+
+        if (!gameCache.factionRuntimeData)
+        {
+            NC_LOG_ERROR("Cannot persist character {0} reputation: faction runtime data is unavailable", characterID);
+            return Result::GenericError;
+        }
+
+        struct PersistedFaction
+        {
+        public:
+            Gameplay::Faction::FactionIndex faction = Gameplay::Faction::INVALID_FACTION_INDEX;
+            bool removed = false;
+        };
+
+        std::vector<Database::CharacterReputationChange> changes;
+        std::vector<PersistedFaction> persistedFactions;
+        const size_t dirtyCount = reputation.dirtyByFaction.size() + reputation.removedDirtyByFaction.size();
+        changes.reserve(std::min<size_t>(maximumUpdates, dirtyCount));
+        persistedFactions.reserve(changes.capacity());
+
+        for (auto itr = reputation.dirtyByFaction.begin(); itr != reputation.dirtyByFaction.end() && changes.size() < maximumUpdates;)
+        {
+            const Gameplay::Faction::FactionIndex factionIndex = itr->first;
+            const auto stateItr = reputation.byFaction.find(factionIndex);
+            const Gameplay::Faction::FactionID factionID = gameCache.factionRuntimeData->GetFactionID(factionIndex);
+            if (stateItr == reputation.byFaction.end() || factionID == Gameplay::Faction::NONE_FACTION_ID)
+            {
+                NC_LOG_ERROR("Discarded invalid dirty reputation state for character {0}, faction index {1}", characterID, factionIndex);
+                itr = reputation.dirtyByFaction.erase(itr);
+                continue;
+            }
+
+            changes.push_back({
+                .factionID = factionID,
+                .value = stateItr->second.value,
+                .flags = stateItr->second.flags
+            });
+
+            persistedFactions.push_back({ .faction = factionIndex });
+            ++itr;
+        }
+
+        for (auto itr = reputation.removedDirtyByFaction.begin(); itr != reputation.removedDirtyByFaction.end() && changes.size() < maximumUpdates;)
+        {
+            const Gameplay::Faction::FactionIndex factionIndex = itr->first;
+            const Gameplay::Faction::FactionID factionID = gameCache.factionRuntimeData->GetFactionID(factionIndex);
+            if (factionID == Gameplay::Faction::NONE_FACTION_ID)
+            {
+                NC_LOG_ERROR("Discarded invalid removed reputation state for character {0}, faction index {1}", characterID, factionIndex);
+                itr = reputation.removedDirtyByFaction.erase(itr);
+                continue;
+            }
+
+            changes.push_back({ .factionID = factionID, .remove = true });
+            persistedFactions.push_back({ .faction = factionIndex, .removed = true });
+            ++itr;
+        }
+
+        if (changes.empty())
+            return Result::Success;
+
+        auto result = gameCache.database->ApplyCharacterReputationChanges(characterID, changes);
+        if (!result)
+            return DatabaseFailureResult(result.Failure(), databaseFailure);
+
+        if (result.Value() != changes.size())
+        {
+            NC_LOG_ERROR("Character {0} reputation batch persisted {1} of {2} changes", characterID, result.Value(), changes.size());
+            return Result::DatabaseError;
+        }
+
+        for (const PersistedFaction& persisted : persistedFactions)
+        {
+            if (persisted.removed)
+            {
+                reputation.removedDirtyByFaction.erase(persisted.faction);
+            }
+            else
+            {
+                reputation.dirtyByFaction.erase(persisted.faction);
+            }
+        }
+
+        reputation.persistenceRetryCount = 0;
+        reputation.nextPersistenceEpoch = 0;
+        return Result::Success;
+    }
+
     Result ItemAdd(Singletons::GameCache& gameCache, entt::registry& registry, entt::entity characterEntity, u64 characterID,
         u32 itemID, Database::Container& container, u64 containerID, u16 slotIndex, u64& itemInstanceID,
         Database::OperationFailure* databaseFailure)
     {
-        if (databaseFailure) *databaseFailure = Database::OperationFailure::None;
+        if (databaseFailure)
+            *databaseFailure = Database::OperationFailure::None;
         itemInstanceID = std::numeric_limits<u64>::max();
 
         GameDefine::Database::ItemTemplate* itemTemplate = nullptr;
@@ -187,13 +298,11 @@ namespace ECS::Util::Persistence::Character
         const auto& item = result.Value();
         itemInstanceID = item.id;
         Cache::ItemInstanceCreate(gameCache, itemInstanceID,
-        {
-            .id = item.id,
-            .ownerID = item.ownerId,
-            .itemID = item.itemId,
-            .count = item.count,
-            .durability = item.durability
-        });
+            { .id = item.id,
+                .ownerID = item.ownerId,
+                .itemID = item.itemId,
+                .count = item.count,
+                .durability = item.durability });
 
         ObjectGUID itemGUID = ObjectGUID::CreateItem(itemInstanceID);
         container.AddItemToSlot(itemGUID, slotIndex);
@@ -206,7 +315,8 @@ namespace ECS::Util::Persistence::Character
         u64 characterID, Database::Container& container, u64 containerID, u16 slotIndex,
         Database::OperationFailure* databaseFailure)
     {
-        if (databaseFailure) *databaseFailure = Database::OperationFailure::None;
+        if (databaseFailure)
+            *databaseFailure = Database::OperationFailure::None;
         const Database::ContainerItem& containerItem = container.GetItem(slotIndex);
         if (containerItem.IsEmpty())
             return Result::ItemNotFound;
@@ -232,7 +342,8 @@ namespace ECS::Util::Persistence::Character
         u64 srcContainerID, u16 srcSlotIndex, Database::Container& dstContainer, u64 dstContainerID,
         u16 dstSlotIndex, Database::OperationFailure* databaseFailure)
     {
-        if (databaseFailure) *databaseFailure = Database::OperationFailure::None;
+        if (databaseFailure)
+            *databaseFailure = Database::OperationFailure::None;
         if (srcSlotIndex >= srcContainer.GetTotalSlots() || dstSlotIndex >= dstContainer.GetTotalSlots())
             return Result::GenericError;
 

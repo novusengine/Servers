@@ -2,7 +2,7 @@
 return {
     bundle = "world",
     format = 3,
-    hash = "73f9f6c438618662fef32b5b414bee5d3b9f9daf8feb2bc54221f04afe75ade1",
+    hash = "6d577cbb997ac197d2a49a09638a86a500be929c56afe30a57e80a1a9a22f413",
     schemas = {
         public = true,
     },
@@ -118,6 +118,18 @@ return {
             constraints = {
             },
             fields = {
+                ["postgres.creature_templates.aggression_policy"] = {
+                    columnName = "aggression_policy",
+                    defaultValue = 1,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 28,
+                    persistentId = "postgres.creature_templates.aggression_policy",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
                 ["postgres.creature_templates.armor_mod"] = {
                     columnName = "armor_mod",
                     defaultValue = 1.0,
@@ -128,6 +140,30 @@ return {
                     postgresType = {
                         name = "real",
                         sql = "real",
+                    },
+                },
+                ["postgres.creature_templates.assistance_policy"] = {
+                    columnName = "assistance_policy",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 29,
+                    persistentId = "postgres.creature_templates.assistance_policy",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.creature_templates.assistance_range"] = {
+                    columnName = "assistance_range",
+                    defaultValue = 20,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 30,
+                    persistentId = "postgres.creature_templates.assistance_range",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
                     },
                 },
                 ["postgres.creature_templates.creature_type"] = {
@@ -222,8 +258,8 @@ return {
                     order = 15,
                     persistentId = "postgres.creature_templates.faction_id",
                     postgresType = {
-                        name = "smallint",
-                        sql = "smallint",
+                        name = "integer",
+                        sql = "integer",
                     },
                 },
                 ["postgres.creature_templates.flags"] = {
@@ -320,6 +356,30 @@ return {
                     postgresType = {
                         name = "text",
                         sql = "text",
+                    },
+                },
+                ["postgres.creature_templates.player_reaction_max_override"] = {
+                    columnName = "player_reaction_max_override",
+                    defaultValue = 255,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 27,
+                    persistentId = "postgres.creature_templates.player_reaction_max_override",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.creature_templates.player_reaction_min_override"] = {
+                    columnName = "player_reaction_min_override",
+                    defaultValue = 255,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 26,
+                    persistentId = "postgres.creature_templates.player_reaction_min_override",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
                     },
                 },
                 ["postgres.creature_templates.rank"] = {
@@ -673,6 +733,381 @@ return {
             },
             schema = "public",
             tableName = "currency",
+        },
+        ["postgres.faction_relations"] = {
+            constraints = {
+                ["postgres.faction_relations.faction_relations_source_faction_fk"] = {
+                    kind = "foreignKey",
+                    name = "faction_relations_source_faction_fk",
+                    persistentId = "postgres.faction_relations.faction_relations_source_faction_fk",
+                    signature = "foreignKey|faction_relations_source_faction_fk|postgres.faction_relations.source_faction_id:asc||nil:nil||postgres.factions|postgres.factions.id:asc|noAction|noAction",
+                },
+                ["postgres.faction_relations.faction_relations_source_target_key"] = {
+                    kind = "unique",
+                    name = "faction_relations_source_target_key",
+                    persistentId = "postgres.faction_relations.faction_relations_source_target_key",
+                    signature = "unique|faction_relations_source_target_key|postgres.faction_relations.source_faction_id:asc,postgres.faction_relations.target_faction_id:asc||nil:nil|||||",
+                },
+                ["postgres.faction_relations.faction_relations_target_faction_fk"] = {
+                    kind = "foreignKey",
+                    name = "faction_relations_target_faction_fk",
+                    persistentId = "postgres.faction_relations.faction_relations_target_faction_fk",
+                    signature = "foreignKey|faction_relations_target_faction_fk|postgres.faction_relations.target_faction_id:asc||nil:nil||postgres.factions|postgres.factions.id:asc|noAction|noAction",
+                },
+            },
+            fields = {
+                ["postgres.faction_relations.id"] = {
+                    columnName = "id",
+                    hasDefault = false,
+                    identity = "byDefault",
+                    nullable = false,
+                    order = 1,
+                    persistentId = "postgres.faction_relations.id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.faction_relations.reaction"] = {
+                    columnName = "reaction",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 4,
+                    persistentId = "postgres.faction_relations.reaction",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.faction_relations.source_faction_id"] = {
+                    columnName = "source_faction_id",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 2,
+                    persistentId = "postgres.faction_relations.source_faction_id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.faction_relations.target_faction_id"] = {
+                    columnName = "target_faction_id",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 3,
+                    persistentId = "postgres.faction_relations.target_faction_id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+            },
+            indexes = {
+            },
+            persistentId = "postgres.faction_relations",
+            primaryKey = {
+                fields = {
+                    [1] = {
+                        columnName = "id",
+                        direction = "asc",
+                        persistentId = "postgres.faction_relations.id",
+                    },
+                },
+                name = "faction_relations_pkey",
+                persistentId = "postgres.faction_relations.pk",
+                signature = "faction_relations_pkey|postgres.faction_relations.id:asc",
+            },
+            schema = "public",
+            tableName = "faction_relations",
+        },
+        ["postgres.faction_standings"] = {
+            constraints = {
+                ["postgres.faction_standings.faction_standings_unique_name"] = {
+                    kind = "unique",
+                    name = "faction_standings_unique_name",
+                    persistentId = "postgres.faction_standings.faction_standings_unique_name",
+                    signature = "unique|faction_standings_unique_name|postgres.faction_standings.name:asc||nil:nil|||||",
+                },
+                ["postgres.faction_standings.faction_standings_unique_sort_order"] = {
+                    kind = "unique",
+                    name = "faction_standings_unique_sort_order",
+                    persistentId = "postgres.faction_standings.faction_standings_unique_sort_order",
+                    signature = "unique|faction_standings_unique_sort_order|postgres.faction_standings.sort_order:asc||nil:nil|||||",
+                },
+            },
+            fields = {
+                ["postgres.faction_standings.id"] = {
+                    columnName = "id",
+                    hasDefault = false,
+                    identity = "byDefault",
+                    nullable = false,
+                    order = 1,
+                    persistentId = "postgres.faction_standings.id",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.faction_standings.minimum_value"] = {
+                    columnName = "minimum_value",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 3,
+                    persistentId = "postgres.faction_standings.minimum_value",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.faction_standings.name"] = {
+                    columnName = "name",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 2,
+                    persistentId = "postgres.faction_standings.name",
+                    postgresType = {
+                        name = "text",
+                        sql = "text",
+                    },
+                },
+                ["postgres.faction_standings.reaction"] = {
+                    columnName = "reaction",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 4,
+                    persistentId = "postgres.faction_standings.reaction",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.faction_standings.sort_order"] = {
+                    columnName = "sort_order",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 5,
+                    persistentId = "postgres.faction_standings.sort_order",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+            },
+            indexes = {
+            },
+            persistentId = "postgres.faction_standings",
+            primaryKey = {
+                fields = {
+                    [1] = {
+                        columnName = "id",
+                        direction = "asc",
+                        persistentId = "postgres.faction_standings.id",
+                    },
+                },
+                name = "faction_standings_pkey",
+                persistentId = "postgres.faction_standings.pk",
+                signature = "faction_standings_pkey|postgres.faction_standings.id:asc",
+            },
+            schema = "public",
+            tableName = "faction_standings",
+        },
+        ["postgres.faction_starting_reputations"] = {
+            constraints = {
+                ["postgres.faction_starting_reputations.faction_starting_reputations_player_faction_fk"] = {
+                    kind = "foreignKey",
+                    name = "faction_starting_reputations_player_faction_fk",
+                    persistentId = "postgres.faction_starting_reputations.faction_starting_reputations_player_faction_fk",
+                    signature = "foreignKey|faction_starting_reputations_player_faction_fk|postgres.faction_starting_reputations.player_faction_id:asc||nil:nil||postgres.factions|postgres.factions.id:asc|noAction|noAction",
+                },
+                ["postgres.faction_starting_reputations.faction_starting_reputations_player_target_key"] = {
+                    kind = "unique",
+                    name = "faction_starting_reputations_player_target_key",
+                    persistentId = "postgres.faction_starting_reputations.faction_starting_reputations_player_target_key",
+                    signature = "unique|faction_starting_reputations_player_target_key|postgres.faction_starting_reputations.player_faction_id:asc,postgres.faction_starting_reputations.target_faction_id:asc||nil:nil|||||",
+                },
+                ["postgres.faction_starting_reputations.faction_starting_reputations_target_faction_fk"] = {
+                    kind = "foreignKey",
+                    name = "faction_starting_reputations_target_faction_fk",
+                    persistentId = "postgres.faction_starting_reputations.faction_starting_reputations_target_faction_fk",
+                    signature = "foreignKey|faction_starting_reputations_target_faction_fk|postgres.faction_starting_reputations.target_faction_id:asc||nil:nil||postgres.factions|postgres.factions.id:asc|noAction|noAction",
+                },
+            },
+            fields = {
+                ["postgres.faction_starting_reputations.id"] = {
+                    columnName = "id",
+                    hasDefault = false,
+                    identity = "byDefault",
+                    nullable = false,
+                    order = 1,
+                    persistentId = "postgres.faction_starting_reputations.id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.faction_starting_reputations.player_faction_id"] = {
+                    columnName = "player_faction_id",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 2,
+                    persistentId = "postgres.faction_starting_reputations.player_faction_id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.faction_starting_reputations.target_faction_id"] = {
+                    columnName = "target_faction_id",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 3,
+                    persistentId = "postgres.faction_starting_reputations.target_faction_id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.faction_starting_reputations.value"] = {
+                    columnName = "value",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 4,
+                    persistentId = "postgres.faction_starting_reputations.value",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+            },
+            indexes = {
+            },
+            persistentId = "postgres.faction_starting_reputations",
+            primaryKey = {
+                fields = {
+                    [1] = {
+                        columnName = "id",
+                        direction = "asc",
+                        persistentId = "postgres.faction_starting_reputations.id",
+                    },
+                },
+                name = "faction_starting_reputations_pkey",
+                persistentId = "postgres.faction_starting_reputations.pk",
+                signature = "faction_starting_reputations_pkey|postgres.faction_starting_reputations.id:asc",
+            },
+            schema = "public",
+            tableName = "faction_starting_reputations",
+        },
+        ["postgres.factions"] = {
+            constraints = {
+                ["postgres.factions.factions_unique_name"] = {
+                    kind = "unique",
+                    name = "factions_unique_name",
+                    persistentId = "postgres.factions.factions_unique_name",
+                    signature = "unique|factions_unique_name|postgres.factions.name:asc||nil:nil|||||",
+                },
+            },
+            fields = {
+                ["postgres.factions.default_player_reaction_max"] = {
+                    columnName = "default_player_reaction_max",
+                    defaultValue = 3,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 6,
+                    persistentId = "postgres.factions.default_player_reaction_max",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.factions.default_player_reaction_min"] = {
+                    columnName = "default_player_reaction_min",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 5,
+                    persistentId = "postgres.factions.default_player_reaction_min",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.factions.default_reaction_to_others"] = {
+                    columnName = "default_reaction_to_others",
+                    defaultValue = 2,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 4,
+                    persistentId = "postgres.factions.default_reaction_to_others",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.factions.default_reputation_value"] = {
+                    columnName = "default_reputation_value",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 7,
+                    persistentId = "postgres.factions.default_reputation_value",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.factions.flags"] = {
+                    columnName = "flags",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 3,
+                    persistentId = "postgres.factions.flags",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.factions.id"] = {
+                    columnName = "id",
+                    hasDefault = false,
+                    identity = "byDefault",
+                    nullable = false,
+                    order = 1,
+                    persistentId = "postgres.factions.id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.factions.name"] = {
+                    columnName = "name",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 2,
+                    persistentId = "postgres.factions.name",
+                    postgresType = {
+                        name = "text",
+                        sql = "text",
+                    },
+                },
+            },
+            indexes = {
+            },
+            persistentId = "postgres.factions",
+            primaryKey = {
+                fields = {
+                    [1] = {
+                        columnName = "id",
+                        direction = "asc",
+                        persistentId = "postgres.factions.id",
+                    },
+                },
+                name = "factions_pkey",
+                persistentId = "postgres.factions.pk",
+                signature = "factions_pkey|postgres.factions.id:asc",
+            },
+            schema = "public",
+            tableName = "factions",
         },
         ["postgres.item_armor_templates"] = {
             constraints = {
@@ -2150,6 +2585,51 @@ return {
             },
             schema = "public",
             tableName = "spells",
+        },
+        ["postgres.unit_race_factions"] = {
+            constraints = {
+                ["postgres.unit_race_factions.unit_race_factions_faction_fk"] = {
+                    kind = "foreignKey",
+                    name = "unit_race_factions_faction_fk",
+                    persistentId = "postgres.unit_race_factions.unit_race_factions_faction_fk",
+                    signature = "foreignKey|unit_race_factions_faction_fk|postgres.unit_race_factions.faction_id:asc||nil:nil||postgres.factions|postgres.factions.id:asc|noAction|noAction",
+                },
+                ["postgres.unit_race_factions.unit_race_factions_race_key"] = {
+                    kind = "unique",
+                    name = "unit_race_factions_race_key",
+                    persistentId = "postgres.unit_race_factions.unit_race_factions_race_key",
+                    signature = "unique|unit_race_factions_race_key|postgres.unit_race_factions.race_id:asc||nil:nil|||||",
+                },
+            },
+            fields = {
+                ["postgres.unit_race_factions.faction_id"] = {
+                    columnName = "faction_id",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 2,
+                    persistentId = "postgres.unit_race_factions.faction_id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.unit_race_factions.race_id"] = {
+                    columnName = "race_id",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 1,
+                    persistentId = "postgres.unit_race_factions.race_id",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+            },
+            indexes = {
+            },
+            persistentId = "postgres.unit_race_factions",
+            schema = "public",
+            tableName = "unit_race_factions",
         },
     },
 }

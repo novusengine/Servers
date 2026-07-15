@@ -2,7 +2,7 @@
 return {
     bundle = "character",
     format = 3,
-    hash = "f590c458be6688f0a1ae5d90eacf1230ba69d13f08118f30becc163a679cffd4",
+    hash = "a6d476463afa351ff950eb7d0faa415641189738041bf2debedb391dd5d3de82",
     schemas = {
         public = true,
     },
@@ -317,6 +317,99 @@ return {
             schema = "public",
             tableName = "character_permissions",
         },
+        ["postgres.character_reputations"] = {
+            constraints = {
+                ["postgres.character_reputations.character_reputations_character_faction_key"] = {
+                    kind = "unique",
+                    name = "character_reputations_character_faction_key",
+                    persistentId = "postgres.character_reputations.character_reputations_character_faction_key",
+                    signature = "unique|character_reputations_character_faction_key|postgres.character_reputations.character_id:asc,postgres.character_reputations.faction_id:asc||nil:nil|||||",
+                },
+                ["postgres.character_reputations.character_reputations_character_fk"] = {
+                    kind = "foreignKey",
+                    name = "character_reputations_character_fk",
+                    persistentId = "postgres.character_reputations.character_reputations_character_fk",
+                    signature = "foreignKey|character_reputations_character_fk|postgres.character_reputations.character_id:asc||nil:nil||postgres.characters|postgres.characters.id:asc|noAction|cascade",
+                },
+            },
+            fields = {
+                ["postgres.character_reputations.character_id"] = {
+                    columnName = "character_id",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 2,
+                    persistentId = "postgres.character_reputations.character_id",
+                    postgresType = {
+                        name = "bigint",
+                        sql = "bigint",
+                    },
+                },
+                ["postgres.character_reputations.faction_id"] = {
+                    columnName = "faction_id",
+                    hasDefault = false,
+                    nullable = false,
+                    order = 3,
+                    persistentId = "postgres.character_reputations.faction_id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+                ["postgres.character_reputations.flags"] = {
+                    columnName = "flags",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 5,
+                    persistentId = "postgres.character_reputations.flags",
+                    postgresType = {
+                        name = "smallint",
+                        sql = "smallint",
+                    },
+                },
+                ["postgres.character_reputations.id"] = {
+                    columnName = "id",
+                    hasDefault = false,
+                    identity = "byDefault",
+                    nullable = false,
+                    order = 1,
+                    persistentId = "postgres.character_reputations.id",
+                    postgresType = {
+                        name = "bigint",
+                        sql = "bigint",
+                    },
+                },
+                ["postgres.character_reputations.value"] = {
+                    columnName = "value",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 4,
+                    persistentId = "postgres.character_reputations.value",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
+                    },
+                },
+            },
+            indexes = {
+            },
+            persistentId = "postgres.character_reputations",
+            primaryKey = {
+                fields = {
+                    [1] = {
+                        columnName = "id",
+                        direction = "asc",
+                        persistentId = "postgres.character_reputations.id",
+                    },
+                },
+                name = "character_reputations_pkey",
+                persistentId = "postgres.character_reputations.pk",
+                signature = "character_reputations_pkey|postgres.character_reputations.id:asc",
+            },
+            schema = "public",
+            tableName = "character_reputations",
+        },
         ["postgres.characters"] = {
             constraints = {
                 ["postgres.characters.characters_unique_name"] = {
@@ -355,6 +448,18 @@ return {
                     postgresType = {
                         name = "bigint",
                         sql = "bigint",
+                    },
+                },
+                ["postgres.characters.faction_id"] = {
+                    columnName = "faction_id",
+                    defaultValue = 0,
+                    hasDefault = true,
+                    nullable = false,
+                    order = 16,
+                    persistentId = "postgres.characters.faction_id",
+                    postgresType = {
+                        name = "integer",
+                        sql = "integer",
                     },
                 },
                 ["postgres.characters.flags"] = {

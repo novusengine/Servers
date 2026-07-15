@@ -35,8 +35,10 @@ AutoCVar_Int CVAR_TickRateLimit(CVarCategory::Client, "application.tickRateLimit
 AutoCVar_Int CVAR_TickRateLimitTarget(CVarCategory::Client, "application.tickRateLimitTarget", "target tickrate while limited", 30);
 AutoCVar_Int CVAR_CpuReportDetailLevel(CVarCategory::Client, "cpuReportDetailLevel", "Sets the detail level for CPU info printing on startup. (0 = No Output, 1 = CPU Name, 2 = CPU Name + Feature Support)", 1);
 
-Application::Application() : _messagesInbound(256), _messagesOutbound(256) { }
-Application::~Application() 
+Application::Application() : _messagesInbound(256), _messagesOutbound(256)
+{
+}
+Application::~Application()
 {
     delete _ecsScheduler;
     delete _taskScheduler;
@@ -220,7 +222,7 @@ bool Application::Tick(f32 deltaTime)
                 {
                     NC_LOG_ERROR("Failed to run Lua DoString");
                 }
-                
+
                 break;
             }
 
@@ -237,10 +239,17 @@ bool Application::Tick(f32 deltaTime)
                 break;
             }
 
+            case MessageInbound::Type::FactionClientDBExport:
+            {
+                ConsoleCommands::ExecuteExportFactions(message.data);
+                break;
+            }
+
             case MessageInbound::Type::Exit:
                 return false;
 
-            default: break;
+            default:
+                break;
         }
     }
 

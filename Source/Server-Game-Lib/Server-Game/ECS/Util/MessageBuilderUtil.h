@@ -20,6 +20,11 @@
 #include <limits>
 #include <memory>
 
+namespace Gameplay::Faction
+{
+    struct FactionRuntimeData;
+}
+
 namespace ECS
 {
     namespace Components
@@ -37,13 +42,13 @@ namespace ECS
         u32 AddHeader(std::shared_ptr<Bytebuffer>& buffer, ::Network::OpcodeType opcode, u16 size = 0);
         bool ValidatePacket(const std::shared_ptr<Bytebuffer>& buffer, u32 headerPos);
         bool CreatePacket(std::shared_ptr<Bytebuffer>& buffer, ::Network::OpcodeType opcode, std::function<bool()>&& func = nullptr);
-        
+
         namespace Unit
         {
             bool BuildUnitAdd(Bytebuffer& buffer, ObjectGUID guid, const std::string& name, GameDefine::UnitClass unitClass, const vec3& position, const vec3& scale, const vec2& pitchYaw);
-            bool BuildUnitBaseInfo(Bytebuffer& buffer, entt::registry& registry, entt::entity entity, ObjectGUID guid);
+            bool BuildUnitBaseInfo(Bytebuffer& buffer, entt::registry& registry, entt::entity entity, ObjectGUID guid, const ::Gameplay::Faction::FactionRuntimeData& factionRuntime);
             bool BuildUnitAdd(std::shared_ptr<Bytebuffer>& buffer, ObjectGUID guid, const std::string& name, GameDefine::UnitClass unitClass, const vec3& position, const vec3& scale, const vec2& pitchYaw);
-            bool BuildUnitBaseInfo(std::shared_ptr<Bytebuffer>& buffer, entt::registry& registry, entt::entity entity, ObjectGUID guid);
+            bool BuildUnitBaseInfo(std::shared_ptr<Bytebuffer>& buffer, entt::registry& registry, entt::entity entity, ObjectGUID guid, const ::Gameplay::Faction::FactionRuntimeData& factionRuntime);
         }
 
         namespace CombatLog

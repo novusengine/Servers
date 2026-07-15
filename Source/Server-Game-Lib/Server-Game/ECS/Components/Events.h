@@ -1,4 +1,5 @@
 #pragma once
+
 #include <Base/Types.h>
 
 #include <Gameplay/GameDefine.h>
@@ -11,6 +12,7 @@ namespace ECS::Events
 {
     struct MapNeedsInitialization
     {
+    public:
         u8 retryCount = 0;
         u64 retryAfterEpoch = 0;
     };
@@ -30,6 +32,7 @@ namespace ECS::Events
         vec3 targetPosition;
         f32 targetOrientation;
     };
+
     struct CreatureCreate
     {
     public:
@@ -47,6 +50,7 @@ namespace ECS::Events
         f32 wanderDistance = 0.0f;
         u16 movementType = 0;
     };
+
     struct CreatureNeedsInitialization
     {
     public:
@@ -65,16 +69,19 @@ namespace ECS::Events
         f32 wanderDistance = 0.0f;
         u16 movementType = 0;
     };
+
     struct CreatureNeedsDeinitialization
     {
     public:
         ObjectGUID guid;
     };
+
     struct CreatureAddScript
     {
     public:
         std::string scriptName;
     };
+
     struct CreatureRemoveScript {};
     struct CreatureNeedsThreatTableUpdate {};
 
@@ -83,17 +90,21 @@ namespace ECS::Events
     public:
         entt::entity target;
     };
+
     struct UnitDied
     {
     public:
         entt::entity killerEntity;
     };
+
     struct UnitResurrected
     {
     public:
         entt::entity resurrectorEntity;
     };
+
     struct UnitNeedsPowerUpdate {};
+    struct UnitNeedsFactionUpdate {};
 
     struct AuraRefreshed {};
     struct AuraExpired {};
@@ -108,6 +119,7 @@ namespace ECS::Events
         vec3 position;
         vec3 extents;
     };
+
     struct ProximityTriggerNeedsInitialization
     {
     public:
@@ -120,6 +132,7 @@ namespace ECS::Events
         vec3 position;
         vec3 extents;
     };
+
     struct ProximityTriggerNeedsDeinitialization
     {
     public:

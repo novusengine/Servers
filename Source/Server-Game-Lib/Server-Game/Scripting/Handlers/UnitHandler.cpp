@@ -1,5 +1,6 @@
 #include "UnitHandler.h"
 #include "Server-Game/Scripting/Game/Unit.h"
+#include "Server-Game/Gameplay/Faction/CreatureFactionPolicyDefines.h"
 
 #include <MetaGen/Shared/Unit/Unit.h>
 
@@ -34,6 +35,24 @@ namespace Scripting
                 zenith->AddTableField(pair.first.data(), pair.second);
             }
 
+            zenith->Pop();
+        }
+
+        {
+            using Gameplay::Faction::CreatureAggressionPolicy;
+            zenith->CreateTable("CreatureAggressionPolicy");
+            zenith->AddTableField("Passive", static_cast<u8>(CreatureAggressionPolicy::Passive));
+            zenith->AddTableField("Defensive", static_cast<u8>(CreatureAggressionPolicy::Defensive));
+            zenith->AddTableField("Aggressive", static_cast<u8>(CreatureAggressionPolicy::Aggressive));
+            zenith->Pop();
+        }
+
+        {
+            using Gameplay::Faction::CreatureAssistancePolicy;
+            zenith->CreateTable("CreatureAssistancePolicy");
+            zenith->AddTableField("None", static_cast<u8>(CreatureAssistancePolicy::None));
+            zenith->AddTableField("SameFaction", static_cast<u8>(CreatureAssistancePolicy::SameFaction));
+            zenith->AddTableField("Friendly", static_cast<u8>(CreatureAssistancePolicy::Friendly));
             zenith->Pop();
         }
     }

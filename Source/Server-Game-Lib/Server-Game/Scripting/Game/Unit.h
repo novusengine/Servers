@@ -27,6 +27,17 @@ namespace Scripting
 
             i32 IsAlive(Zenith* zenith, Unit* unit);
             i32 GetHealth(Zenith* zenith, Unit* unit);
+            i32 GetFactionID(Zenith* zenith, Unit* unit);
+            i32 SetFactionID(Zenith* zenith, Unit* unit);
+            i32 GetReaction(Zenith* zenith, Unit* unit);
+            i32 CanAttack(Zenith* zenith, Unit* unit);
+            i32 CanAssist(Zenith* zenith, Unit* unit);
+            i32 CanInteract(Zenith* zenith, Unit* unit);
+            i32 GetCreatureFactionPolicy(Zenith* zenith, Unit* unit);
+            i32 SetCreatureAggressionPolicy(Zenith* zenith, Unit* unit);
+            i32 SetCreatureAssistancePolicy(Zenith* zenith, Unit* unit);
+            i32 SetCreatureDetectionRange(Zenith* zenith, Unit* unit);
+            i32 SetCreatureAssistanceRange(Zenith* zenith, Unit* unit);
 
             i32 Kill(Zenith* zenith, Unit* unit);
             i32 Resurrect(Zenith* zenith, Unit* unit);
@@ -52,13 +63,23 @@ namespace Scripting
             i32 GetStat(Zenith* zenith, Unit* unit);
         }
 
-        static LuaRegister<Unit> unitMethods[] =
-        {
+        static LuaRegister<Unit> unitMethods[] = {
             { "GetID", UnitMethods::GetID },
             { "ToCharacter", UnitMethods::ToCharacter },
 
             { "IsAlive", UnitMethods::IsAlive },
             { "GetHealth", UnitMethods::GetHealth },
+            { "GetFactionID", UnitMethods::GetFactionID },
+            { "SetFactionID", UnitMethods::SetFactionID },
+            { "GetReaction", UnitMethods::GetReaction },
+            { "CanAttack", UnitMethods::CanAttack },
+            { "CanAssist", UnitMethods::CanAssist },
+            { "CanInteract", UnitMethods::CanInteract },
+            { "GetCreatureFactionPolicy", UnitMethods::GetCreatureFactionPolicy },
+            { "SetCreatureAggressionPolicy", UnitMethods::SetCreatureAggressionPolicy },
+            { "SetCreatureAssistancePolicy", UnitMethods::SetCreatureAssistancePolicy },
+            { "SetCreatureDetectionRange", UnitMethods::SetCreatureDetectionRange },
+            { "SetCreatureAssistanceRange", UnitMethods::SetCreatureAssistanceRange },
 
             { "Kill", UnitMethods::Kill },
             { "Resurrect", UnitMethods::Resurrect },

@@ -8,6 +8,7 @@
 #include "Detail/AccountUtils.h"
 #include "Detail/CharacterUtils.h"
 #include "Detail/CreatureUtils.h"
+#include "Detail/FactionUtils.h"
 #include "Detail/ItemUtils.h"
 #include "Detail/MapUtils.h"
 #include "Detail/ProximityTriggerUtils.h"
@@ -28,19 +29,87 @@
 #include <MetaGen/Postgres/World/Tables/SpellProcLink.h>
 #include <MetaGen/Postgres/World/Tables/Spells.h>
 
-#include <stdexcept>
 #include <limits>
+#include <stdexcept>
+
+#include <robinhood/robinhood.h>
 
 namespace Database
 {
     namespace
     {
-        UpdateOutcome Updated(bool value) { return value ? UpdateOutcome::Updated : UpdateOutcome::TargetNotFound; }
-        DeleteOutcome Deleted(bool value) { return value ? DeleteOutcome::Deleted : DeleteOutcome::AlreadyAbsent; }
-        bool ValidMapID(u32 value) { return value <= static_cast<u32>(std::numeric_limits<i32>::max()); }
+        UpdateOutcome Updated(bool value)
+        {
+            return value ? UpdateOutcome::Updated : UpdateOutcome::TargetNotFound;
+        }
+        DeleteOutcome Deleted(bool value)
+        {
+            return value ? DeleteOutcome::Deleted : DeleteOutcome::AlreadyAbsent;
+        }
+        bool ValidMapID(u32 value)
+        {
+            return value <= static_cast<u32>(std::numeric_limits<i32>::max());
+        }
+
+        void UpsertCharacterReputations(pqxx::transaction_base& transaction, u64 characterID, std::span<const CharacterReputationUpdate> updates)
+        {
+            if (updates.empty())
+                return;
+
+            std::string sql =
+                "INSERT INTO \"public\".\"character_reputations\" "
+                "(\"character_id\", \"faction_id\", \"value\", \"flags\") VALUES ";
+            pqxx::params parameters;
+            parameters.reserve(1 + updates.size() * 3);
+            parameters.append(characterID);
+
+            for (size_t i = 0; i < updates.size(); ++i)
+            {
+                if (i != 0)
+                    sql += ", ";
+
+                const size_t parameter = 2 + i * 3;
+                sql += "($1, $" + std::to_string(parameter) + ", $" + std::to_string(parameter + 1) +
+                       ", $" + std::to_string(parameter + 2) + ")";
+                parameters.append(updates[i].factionID);
+                parameters.append(updates[i].value);
+                parameters.append(updates[i].flags);
+            }
+
+            sql +=
+                " ON CONFLICT (\"character_id\", \"faction_id\") DO UPDATE SET "
+                "\"value\" = EXCLUDED.\"value\", \"flags\" = EXCLUDED.\"flags\"";
+            transaction.exec(sql, parameters);
+        }
+
+        template <typename Update>
+        std::vector<Update> CoalesceFactionUpdates(std::span<const Update> updates)
+        {
+            std::vector<Update> coalesced;
+            robin_hood::unordered_flat_map<u16, size_t> factionToIndex;
+            coalesced.reserve(updates.size());
+            factionToIndex.reserve(updates.size());
+            for (const Update& update : updates)
+            {
+                const auto [itr, inserted] = factionToIndex.emplace(update.factionID, coalesced.size());
+                if (inserted)
+                {
+                    coalesced.push_back(update);
+                }
+                else
+                {
+                    coalesced[itr->second] = update;
+                }
+            }
+
+            return coalesced;
+        }
     }
 
-    DatabaseService::DatabaseService() : _controller(std::make_unique<DBController>()) {}
+    DatabaseService::DatabaseService()
+        : _controller(std::make_unique<DBController>())
+    {
+    }
     DatabaseService::~DatabaseService() = default;
 
     void DatabaseService::InitializeBundle(DBType bundle, const DBEntry& configuration)
@@ -81,8 +150,14 @@ namespace Database
             throw std::runtime_error("Failed to configure prepared statements for database bundle");
     }
 
-    OperationResult<std::optional<MetaGen::Postgres::Auth::AccountsRecord>> DatabaseService::GetAccountByName(const std::string& name) { return Detail::Account::AccountGetInfoByName(*_controller, name); }
-    OperationResult<PermissionAssignmentSnapshot> DatabaseService::GetAccountPermissions(u64 accountID) { return Detail::Account::AccountGetPermissions(*_controller, accountID); }
+    OperationResult<std::optional<MetaGen::Postgres::Auth::AccountsRecord>> DatabaseService::GetAccountByName(const std::string& name)
+    {
+        return Detail::Account::AccountGetInfoByName(*_controller, name);
+    }
+    OperationResult<PermissionAssignmentSnapshot> DatabaseService::GetAccountPermissions(u64 accountID)
+    {
+        return Detail::Account::AccountGetPermissions(*_controller, accountID);
+    }
     OperationResult<bool> DatabaseService::SetAccountPermission(u64 accountID, u32 permissionID, i64 value)
     {
         return RunTransaction(*_controller, DBType::Auth, "set_account_permission", [&](auto& tx)
@@ -96,7 +171,8 @@ namespace Database
         return RunTransaction(*_controller, DBType::Auth, "delete_account_permission", [&](auto& tx)
         {
             return Deleted(Generated::Execute<MetaGen::Postgres::Auth::AccountPermissionsTable::Delete>(
-                tx, accountID, permissionID).affected_rows() != 0);
+                               tx, accountID, permissionID)
+                               .affected_rows() != 0);
         });
     }
     OperationResult<bool> DatabaseService::AddAccountPermissionGroup(u64 accountID, u32 permissionGroupID)
@@ -112,10 +188,14 @@ namespace Database
         return RunTransaction(*_controller, DBType::Auth, "delete_account_permission_group", [&](auto& tx)
         {
             return Deleted(Generated::Execute<MetaGen::Postgres::Auth::AccountPermissionGroupsTable::Delete>(
-                tx, accountID, permissionGroupID).affected_rows() != 0);
+                               tx, accountID, permissionGroupID)
+                               .affected_rows() != 0);
         });
     }
-    OperationResult<PermissionTables> DatabaseService::LoadPermissionTables() { return Detail::Account::LoadPermissionTables(*_controller); }
+    OperationResult<PermissionTables> DatabaseService::LoadPermissionTables()
+    {
+        return Detail::Account::LoadPermissionTables(*_controller);
+    }
     OperationResult<bool> DatabaseService::SynchronizePermissionTables()
     {
         return RunTransaction(*_controller, DBType::Auth, "synchronize_permission_tables", [&](auto& tx)
@@ -125,12 +205,24 @@ namespace Database
     }
     OperationResult<MetaGen::Postgres::Auth::AccountsRecord> DatabaseService::CreateAccount(const std::string& name, const std::string& email, u64 timestamp, unsigned char* blob, u32 size)
     {
-        return RunTransaction(*_controller, DBType::Auth, "create_account", [&](auto& tx) { return Detail::Account::AccountCreate(tx, name, email, timestamp, blob, size); });
+        return RunTransaction(*_controller, DBType::Auth, "create_account", [&](auto& tx)
+        {
+            return Detail::Account::AccountCreate(tx, name, email, timestamp, blob, size);
+        });
     }
 
-    OperationResult<std::optional<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharacterByID(u64 id) { return Detail::Character::CharacterGetInfoByID(*_controller, id); }
-    OperationResult<std::optional<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharacterByName(const std::string& name) { return Detail::Character::CharacterGetInfoByName(*_controller, name); }
-    OperationResult<std::vector<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharactersByAccount(u64 id) { return Detail::Character::CharacterGetInfosByAccount(*_controller, id); }
+    OperationResult<std::optional<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharacterByID(u64 id)
+    {
+        return Detail::Character::CharacterGetInfoByID(*_controller, id);
+    }
+    OperationResult<std::optional<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharacterByName(const std::string& name)
+    {
+        return Detail::Character::CharacterGetInfoByName(*_controller, name);
+    }
+    OperationResult<std::vector<MetaGen::Postgres::Character::CharactersRecord>> DatabaseService::GetCharactersByAccount(u64 id)
+    {
+        return Detail::Character::CharacterGetInfosByAccount(*_controller, id);
+    }
     OperationResult<PermissionAssignmentSnapshot> DatabaseService::GetCharacterPermissions(u64 id)
     {
         return RunRead(*_controller, DBType::Character, "get_character_permissions", [&](auto& tx)
@@ -139,11 +231,17 @@ namespace Database
             auto permissions = Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionsTable::ByCharacter>(tx, id);
             snapshot.permissions.reserve(permissions.size());
             for (const auto& permission : permissions)
+            {
                 snapshot.permissions.push_back({ permission.permissionId, permission.value });
+            }
+
             auto groups = Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionGroupsTable::ByCharacter>(tx, id);
             snapshot.permissionGroupIDs.reserve(groups.size());
             for (const auto& group : groups)
+            {
                 snapshot.permissionGroupIDs.push_back(group.permissionGroupId);
+            }
+
             return snapshot;
         });
     }
@@ -160,7 +258,8 @@ namespace Database
         return RunTransaction(*_controller, DBType::Character, "delete_character_permission", [&](auto& tx)
         {
             return Deleted(Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionsTable::Delete>(
-                tx, characterID, permissionID).affected_rows() != 0);
+                               tx, characterID, permissionID)
+                               .affected_rows() != 0);
         });
     }
     OperationResult<bool> DatabaseService::AddCharacterPermissionGroup(u64 characterID, u32 permissionGroupID)
@@ -176,11 +275,25 @@ namespace Database
         return RunTransaction(*_controller, DBType::Character, "delete_character_permission_group", [&](auto& tx)
         {
             return Deleted(Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionGroupsTable::Delete>(
-                tx, characterID, permissionGroupID).affected_rows() != 0);
+                               tx, characterID, permissionGroupID)
+                               .affected_rows() != 0);
         });
     }
-    OperationResult<std::vector<MetaGen::Postgres::Character::ItemInstancesRecord>> DatabaseService::GetCharacterItems(u64 id) { return Detail::Character::CharacterGetItems(*_controller, id); }
-    OperationResult<std::vector<MetaGen::Postgres::Character::CharacterItemsRecord>> DatabaseService::GetCharacterItemPlacements(u64 id) { return Detail::Character::CharacterGetItemPlacements(*_controller, id); }
+    OperationResult<std::vector<MetaGen::Postgres::Character::ItemInstancesRecord>> DatabaseService::GetCharacterItems(u64 id)
+    {
+        return Detail::Character::CharacterGetItems(*_controller, id);
+    }
+    OperationResult<std::vector<MetaGen::Postgres::Character::CharacterItemsRecord>> DatabaseService::GetCharacterItemPlacements(u64 id)
+    {
+        return Detail::Character::CharacterGetItemPlacements(*_controller, id);
+    }
+    OperationResult<std::vector<MetaGen::Postgres::Character::CharacterReputationsRecord>> DatabaseService::GetCharacterReputations(u64 id)
+    {
+        return RunRead(*_controller, DBType::Character, "get_character_reputations", [&](auto& tx)
+        {
+            return Generated::Execute<MetaGen::Postgres::Character::CharacterReputationsTable::ByCharacter>(tx, id);
+        });
+    }
     OperationResult<CharacterInitializationSnapshot> DatabaseService::GetCharacterInitialization(u64 id)
     {
         return RunRead(*_controller, DBType::Character, "get_character_initialization", [&](auto& tx)
@@ -189,50 +302,168 @@ namespace Database
             snapshot.character = Generated::Execute<MetaGen::Postgres::Character::CharactersTable::ByPrimaryKey>(tx, id);
             snapshot.items = Generated::Execute<MetaGen::Postgres::Character::ItemInstancesTable::ByOwner>(tx, id);
             snapshot.placements = Generated::Execute<MetaGen::Postgres::Character::CharacterItemsTable::ByCharacter>(tx, id);
+            snapshot.reputations = Generated::Execute<MetaGen::Postgres::Character::CharacterReputationsTable::ByCharacter>(tx, id);
 
             auto permissions = Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionsTable::ByCharacter>(tx, id);
             snapshot.permissions.permissions.reserve(permissions.size());
             for (const auto& permission : permissions)
+            {
                 snapshot.permissions.permissions.push_back({ permission.permissionId, permission.value });
+            }
 
             auto groups = Generated::Execute<MetaGen::Postgres::Character::CharacterPermissionGroupsTable::ByCharacter>(tx, id);
             snapshot.permissions.permissionGroupIDs.reserve(groups.size());
             for (const auto& group : groups)
+            {
                 snapshot.permissions.permissionGroupIDs.push_back(group.permissionGroupId);
+            }
+
             return snapshot;
         });
     }
-    OperationResult<MetaGen::Postgres::Character::CharactersRecord> DatabaseService::CreateCharacter(u64 accountID, const std::string& name, u16 packed)
+    OperationResult<MetaGen::Postgres::Character::CharactersRecord> DatabaseService::CreateCharacter(u64 accountID, const std::string& name, u16 raceGenderClass, u16 factionID)
     {
-        return RunTransaction(*_controller, DBType::Character, "create_character", [&](auto& tx) { return Detail::Character::CharacterCreate(tx, accountID, name, packed); });
+        return RunTransaction(*_controller, DBType::Character, "create_character", [&](auto& tx)
+        {
+            return Detail::Character::CharacterCreate(tx, accountID, name, raceGenderClass, factionID);
+        });
+    }
+    OperationResult<UpdateOutcome> DatabaseService::SetCharacterFaction(u64 characterID, u16 factionID)
+    {
+        return RunTransaction(*_controller, DBType::Character, "set_character_faction", [&](auto& tx)
+        {
+            return Updated(Generated::Execute<MetaGen::Postgres::Character::CharactersTable::SetFaction>(tx, factionID, characterID).affected_rows() != 0);
+        });
+    }
+    OperationResult<UpdateOutcome> DatabaseService::SetCharacterReputation(u64 characterID, u16 factionID, i32 value, u16 flags)
+    {
+        return RunTransaction(*_controller, DBType::Character, "set_character_reputation", [&](auto& tx)
+        {
+            return Updated(Generated::Execute<MetaGen::Postgres::Character::CharacterReputationsTable::Set>(tx, characterID, factionID, value, flags).affected_rows() != 0);
+        });
+    }
+    OperationResult<u32> DatabaseService::SetCharacterReputations(u64 characterID, std::span<const CharacterReputationUpdate> updates)
+    {
+        if (updates.size() > MAX_CHARACTER_REPUTATION_UPDATES_PER_BATCH)
+            return OperationFailure::Rejected;
+
+        if (updates.empty())
+            return u32{ 0 };
+
+        return RunTransaction(*_controller, DBType::Character, "set_character_reputations", [&](auto& tx)
+        {
+            const std::vector<CharacterReputationUpdate> coalesced = CoalesceFactionUpdates(updates);
+            UpsertCharacterReputations(tx, characterID, coalesced);
+            return static_cast<u32>(updates.size());
+        });
+    }
+    OperationResult<u32> DatabaseService::ApplyCharacterReputationChanges(u64 characterID, std::span<const CharacterReputationChange> changes)
+    {
+        if (changes.size() > MAX_CHARACTER_REPUTATION_UPDATES_PER_BATCH)
+            return OperationFailure::Rejected;
+
+        if (changes.empty())
+            return u32{ 0 };
+
+        return RunTransaction(*_controller, DBType::Character, "apply_character_reputation_changes", [&](auto& tx)
+        {
+            const std::vector<CharacterReputationChange> coalesced = CoalesceFactionUpdates(changes);
+            std::vector<CharacterReputationUpdate> updates;
+            std::vector<u16> removals;
+            updates.reserve(coalesced.size());
+            removals.reserve(coalesced.size());
+            for (const CharacterReputationChange& change : coalesced)
+            {
+                if (change.remove)
+                {
+                    removals.push_back(change.factionID);
+                }
+                else
+                {
+                    updates.push_back({
+                        .factionID = change.factionID,
+                        .value = change.value,
+                        .flags = change.flags
+                    });
+                }
+            }
+
+            if (!removals.empty())
+            {
+                std::string sql =
+                    "DELETE FROM \"public\".\"character_reputations\" "
+                    "WHERE \"character_id\" = $1 AND \"faction_id\" IN (";
+                pqxx::params parameters;
+                parameters.reserve(1 + removals.size());
+                parameters.append(characterID);
+                for (size_t i = 0; i < removals.size(); ++i)
+                {
+                    if (i != 0)
+                        sql += ", ";
+
+                    sql += "$" + std::to_string(i + 2);
+                    parameters.append(removals[i]);
+                }
+                sql += ")";
+                tx.exec(sql, parameters);
+            }
+
+            UpsertCharacterReputations(tx, characterID, updates);
+            return static_cast<u32>(changes.size());
+        });
+    }
+    OperationResult<DeleteOutcome> DatabaseService::DeleteCharacterReputation(u64 characterID, u16 factionID)
+    {
+        return RunTransaction(*_controller, DBType::Character, "delete_character_reputation", [&](auto& tx)
+        {
+            return Deleted(Generated::Execute<MetaGen::Postgres::Character::CharacterReputationsTable::Delete>(tx, characterID, factionID).affected_rows() != 0);
+        });
     }
     OperationResult<DeleteOutcome> DatabaseService::DeleteCharacter(u64 id)
     {
-        return RunTransaction(*_controller, DBType::Character, "delete_character", [&](auto& tx) { return Deleted(Detail::Character::CharacterDelete(tx, id)); });
+        return RunTransaction(*_controller, DBType::Character, "delete_character", [&](auto& tx)
+        {
+            return Deleted(Detail::Character::CharacterDelete(tx, id));
+        });
     }
     OperationResult<UpdateOutcome> DatabaseService::SetCharacterRaceGenderClass(u64 id, u16 value)
     {
-        return RunTransaction(*_controller, DBType::Character, "set_character_race_gender_class", [&](auto& tx) { return Updated(Detail::Character::CharacterSetRaceGenderClass(tx, id, value)); });
+        return RunTransaction(*_controller, DBType::Character, "set_character_race_gender_class", [&](auto& tx)
+        {
+            return Updated(Detail::Character::CharacterSetRaceGenderClass(tx, id, value));
+        });
     }
     OperationResult<UpdateOutcome> DatabaseService::SetCharacterLevel(u64 id, u16 value)
     {
-        return RunTransaction(*_controller, DBType::Character, "set_character_level", [&](auto& tx) { return Updated(Detail::Character::CharacterSetLevel(tx, id, value)); });
+        return RunTransaction(*_controller, DBType::Character, "set_character_level", [&](auto& tx)
+        {
+            return Updated(Detail::Character::CharacterSetLevel(tx, id, value));
+        });
     }
     OperationResult<UpdateOutcome> DatabaseService::SetCharacterMap(u64 id, u32 value)
     {
-        if (!ValidMapID(value)) return OperationFailure::Rejected;
-        return RunTransaction(*_controller, DBType::Character, "set_character_map", [&](auto& tx) { return Updated(Detail::Character::CharacterSetMapID(tx, id, value)); });
+        if (!ValidMapID(value))
+            return OperationFailure::Rejected;
+        return RunTransaction(*_controller, DBType::Character, "set_character_map", [&](auto& tx)
+        {
+            return Updated(Detail::Character::CharacterSetMapID(tx, id, value));
+        });
     }
     OperationResult<UpdateOutcome> DatabaseService::SetCharacterPosition(u64 id, const vec3& position, f32 orientation)
     {
-        return RunTransaction(*_controller, DBType::Character, "set_character_position", [&](auto& tx) { return Updated(Detail::Character::CharacterSetPositionOrientation(tx, id, position, orientation)); });
+        return RunTransaction(*_controller, DBType::Character, "set_character_position", [&](auto& tx)
+        {
+            return Updated(Detail::Character::CharacterSetPositionOrientation(tx, id, position, orientation));
+        });
     }
     OperationResult<UpdateOutcome> DatabaseService::SetCharacterMapAndPosition(u64 id, u32 mapID, const vec3& position, f32 orientation)
     {
-        if (!ValidMapID(mapID)) return OperationFailure::Rejected;
+        if (!ValidMapID(mapID))
+            return OperationFailure::Rejected;
         return RunTransaction(*_controller, DBType::Character, "set_character_map_position", [&](auto& tx)
         {
-            if (!Detail::Character::CharacterSetMapID(tx, id, mapID)) return UpdateOutcome::TargetNotFound;
+            if (!Detail::Character::CharacterSetMapID(tx, id, mapID))
+                return UpdateOutcome::TargetNotFound;
             return Updated(Detail::Character::CharacterSetPositionOrientation(tx, id, position, orientation));
         });
     }
@@ -249,7 +480,8 @@ namespace Database
     {
         return RunTransaction(*_controller, DBType::Character, "delete_character_item", [&](auto& tx)
         {
-            if (!Detail::Character::CharacterDeleteItem(tx, characterID, itemID)) return DeleteOutcome::AlreadyAbsent;
+            if (!Detail::Character::CharacterDeleteItem(tx, characterID, itemID))
+                return DeleteOutcome::AlreadyAbsent;
             return Deleted(Detail::Item::ItemInstanceDestroy(tx, itemID));
         });
     }
@@ -259,24 +491,29 @@ namespace Database
         return RunTransaction(*_controller, DBType::Character, "swap_character_items", [&](auto& tx)
         {
             if (!Detail::Character::CharacterLockItemsForSwap(tx, characterID, sourceItemID, destinationItemID,
-                hasDestination, sourceContainerID, destinationContainerID, sourceSlot, destinationSlot))
+                    hasDestination, sourceContainerID, destinationContainerID, sourceSlot, destinationSlot))
                 return UpdateOutcome::TargetNotFound;
-            if (!Detail::Character::CharacterDeleteItem(tx, characterID, sourceItemID)) return UpdateOutcome::TargetNotFound;
-            if (hasDestination && !Detail::Character::CharacterDeleteItem(tx, characterID, destinationItemID)) return UpdateOutcome::TargetNotFound;
+            if (!Detail::Character::CharacterDeleteItem(tx, characterID, sourceItemID))
+                return UpdateOutcome::TargetNotFound;
+            if (hasDestination && !Detail::Character::CharacterDeleteItem(tx, characterID, destinationItemID))
+                return UpdateOutcome::TargetNotFound;
             Detail::Character::CharacterAddItem(tx, characterID, sourceItemID, destinationContainerID, destinationSlot);
-            if (hasDestination) Detail::Character::CharacterAddItem(tx, characterID, destinationItemID, sourceContainerID, sourceSlot);
+            if (hasDestination)
+                Detail::Character::CharacterAddItem(tx, characterID, destinationItemID, sourceContainerID, sourceSlot);
             return UpdateOutcome::Updated;
         });
     }
 
     OperationResult<std::vector<MetaGen::Postgres::World::CreaturesRecord>> DatabaseService::GetCreaturesByMap(u32 id)
     {
-        if (!ValidMapID(id)) return OperationFailure::Rejected;
+        if (!ValidMapID(id))
+            return OperationFailure::Rejected;
         return Detail::Creature::CreatureGetInfoByMap(*_controller, id);
     }
     OperationResult<MetaGen::Postgres::World::CreaturesRecord> DatabaseService::CreateCreature(const CreatureCreateRequest& r)
     {
-        if (!ValidMapID(r.mapID)) return OperationFailure::Rejected;
+        if (!ValidMapID(r.mapID))
+            return OperationFailure::Rejected;
         return RunTransaction(*_controller, DBType::World, "create_creature", [&](auto& tx)
         {
             return Detail::Creature::CreatureCreate(tx, r.templateID, r.displayID, r.mapID, r.position, r.orientation,
@@ -285,35 +522,57 @@ namespace Database
     }
     OperationResult<DeleteOutcome> DatabaseService::DeleteCreature(u64 id)
     {
-        return RunTransaction(*_controller, DBType::World, "delete_creature", [&](auto& tx) { return Deleted(Detail::Creature::CreatureDelete(tx, id)); });
+        return RunTransaction(*_controller, DBType::World, "delete_creature", [&](auto& tx)
+        {
+            return Deleted(Detail::Creature::CreatureDelete(tx, id));
+        });
     }
     OperationResult<std::vector<MetaGen::Postgres::World::ProximityTriggersRecord>> DatabaseService::GetProximityTriggersByMap(u32 id)
     {
-        if (!ValidMapID(id)) return OperationFailure::Rejected;
+        if (!ValidMapID(id))
+            return OperationFailure::Rejected;
         return Detail::ProximityTrigger::ProximityTriggerGetInfoByMap(*_controller, id);
     }
     OperationResult<MetaGen::Postgres::World::ProximityTriggersRecord> DatabaseService::CreateProximityTrigger(const ProximityTriggerCreateRequest& r)
     {
-        if (!ValidMapID(r.mapID)) return OperationFailure::Rejected;
-        return RunTransaction(*_controller, DBType::World, "create_proximity_trigger", [&](auto& tx) { return Detail::ProximityTrigger::ProximityTriggerCreate(tx, r.name, r.flags, r.mapID, r.position, r.extents); });
+        if (!ValidMapID(r.mapID))
+            return OperationFailure::Rejected;
+        return RunTransaction(*_controller, DBType::World, "create_proximity_trigger", [&](auto& tx)
+        {
+            return Detail::ProximityTrigger::ProximityTriggerCreate(tx, r.name, r.flags, r.mapID, r.position, r.extents);
+        });
     }
     OperationResult<DeleteOutcome> DatabaseService::DeleteProximityTrigger(u32 id)
     {
-        return RunTransaction(*_controller, DBType::World, "delete_proximity_trigger", [&](auto& tx) { return Deleted(Detail::ProximityTrigger::ProximityTriggerDelete(tx, id)); });
+        return RunTransaction(*_controller, DBType::World, "delete_proximity_trigger", [&](auto& tx)
+        {
+            return Deleted(Detail::ProximityTrigger::ProximityTriggerDelete(tx, id));
+        });
     }
     OperationResult<MetaGen::Postgres::World::MapLocationsRecord> DatabaseService::CreateMapLocation(const std::string& name, u32 mapID, const vec3& position, f32 orientation)
     {
-        if (!ValidMapID(mapID)) return OperationFailure::Rejected;
-        return RunTransaction(*_controller, DBType::World, "create_map_location", [&](auto& tx) { return Detail::Map::MapLocationCreate(tx, name, mapID, position, orientation); });
+        if (!ValidMapID(mapID))
+            return OperationFailure::Rejected;
+        return RunTransaction(*_controller, DBType::World, "create_map_location", [&](auto& tx)
+        {
+            return Detail::Map::MapLocationCreate(tx, name, mapID, position, orientation);
+        });
     }
     OperationResult<DeleteOutcome> DatabaseService::DeleteMapLocation(u32 id)
     {
-        return RunTransaction(*_controller, DBType::World, "delete_map_location", [&](auto& tx) { return Deleted(Detail::Map::MapLocationDelete(tx, id)); });
+        return RunTransaction(*_controller, DBType::World, "delete_map_location", [&](auto& tx)
+        {
+            return Deleted(Detail::Map::MapLocationDelete(tx, id));
+        });
     }
 
-#define DB_SET_METHOD(Method, Type, Descriptor, Name, ...) \
-    OperationResult<UpdateOutcome> DatabaseService::Method(const Type& value) { \
-        return RunTransaction(*_controller, DBType::World, Name, [&](auto& tx) { return Updated(Generated::Execute<Descriptor>(tx, __VA_ARGS__).affected_rows() != 0); }); }
+#define DB_SET_METHOD(Method, Type, Descriptor, Name, ...)                                        \
+    OperationResult<UpdateOutcome> DatabaseService::Method(const Type& value)                     \
+    {                                                                                             \
+        return RunTransaction(*_controller, DBType::World, Name, [&](auto& tx) {                  \
+            return Updated(Generated::Execute<Descriptor>(tx, __VA_ARGS__).affected_rows() != 0); \
+        });                                                                                       \
+    }
 
     DB_SET_METHOD(SetItemTemplate, GameDefine::Database::ItemTemplate, MetaGen::Postgres::World::ItemTemplatesTable::Set, "set_item_template", value.id, value.displayID, (u16)value.bind, (u16)value.rarity, (u16)value.category, (u16)value.type, value.virtualLevel, value.requiredLevel, value.durability, value.iconID, value.name, value.description, value.armor, value.statTemplateID, value.armorTemplateID, value.weaponTemplateID, value.shieldTemplateID)
     DB_SET_METHOD(SetItemStatTemplate, GameDefine::Database::ItemStatTemplate, MetaGen::Postgres::World::ItemStatTemplatesTable::Set, "set_item_stat_template", value.id, (u16)value.statTypes[0], (u16)value.statTypes[1], (u16)value.statTypes[2], (u16)value.statTypes[3], (u16)value.statTypes[4], (u16)value.statTypes[5], (u16)value.statTypes[6], (u16)value.statTypes[7], value.statValues[0], value.statValues[1], value.statValues[2], value.statValues[3], value.statValues[4], value.statValues[5], value.statValues[6], value.statValues[7])
@@ -326,21 +585,29 @@ namespace Database
 
     OperationResult<UpdateOutcome> DatabaseService::SetMap(const GameDefine::Database::Map& value)
     {
-        if (!ValidMapID(value.id)) return OperationFailure::Rejected;
+        if (!ValidMapID(value.id))
+            return OperationFailure::Rejected;
         return RunTransaction(*_controller, DBType::World, "set_map", [&](auto& tx)
         {
             return Updated(Generated::Execute<MetaGen::Postgres::World::MapsTable::Set>(tx, value.id, value.flags,
-                value.internalName, value.name, value.type, value.maxPlayers).affected_rows() != 0);
+                               value.internalName, value.name, value.type, value.maxPlayers)
+                               .affected_rows() != 0);
         });
     }
 
     OperationResult<UpdateOutcome> DatabaseService::SetSpellProcData(u32 id, const MetaGen::Shared::ClientDB::SpellProcDataRecord& v)
     {
-        return RunTransaction(*_controller, DBType::World, "set_spell_proc_data", [&](auto& tx) { return Updated(Generated::Execute<MetaGen::Postgres::World::SpellProcDataTable::Set>(tx, id, (i32)v.phaseMask, (i64)v.typeMask, (i64)v.hitMask, (i64)v.flags, v.procsPerMinute, v.chanceToProc, (i32)v.internalCooldownMS, v.charges).affected_rows() != 0); });
+        return RunTransaction(*_controller, DBType::World, "set_spell_proc_data", [&](auto& tx)
+        {
+            return Updated(Generated::Execute<MetaGen::Postgres::World::SpellProcDataTable::Set>(tx, id, (i32)v.phaseMask, (i64)v.typeMask, (i64)v.hitMask, (i64)v.flags, v.procsPerMinute, v.chanceToProc, (i32)v.internalCooldownMS, v.charges).affected_rows() != 0);
+        });
     }
     OperationResult<UpdateOutcome> DatabaseService::SetSpellProcLink(u32 id, const MetaGen::Shared::ClientDB::SpellProcLinkRecord& v)
     {
-        return RunTransaction(*_controller, DBType::World, "set_spell_proc_link", [&](auto& tx) { return Updated(Generated::Execute<MetaGen::Postgres::World::SpellProcLinkTable::Set>(tx, id, v.spellID, (i64)v.effectMask, v.procDataID).affected_rows() != 0); });
+        return RunTransaction(*_controller, DBType::World, "set_spell_proc_link", [&](auto& tx)
+        {
+            return Updated(Generated::Execute<MetaGen::Postgres::World::SpellProcLinkTable::Set>(tx, id, v.spellID, (i64)v.effectMask, v.procDataID).affected_rows() != 0);
+        });
     }
 
     OperationResult<WorldCacheSnapshot> DatabaseService::LoadWorldCache()
@@ -348,8 +615,11 @@ namespace Database
         return RunRead(*_controller, DBType::World, "load_world_cache", [&](auto& tx)
         {
             WorldCacheSnapshot s;
-            Detail::Map::Loading::LoadMapTables(tx, s.maps); Detail::Spell::Loading::LoadSpellTables(tx, s.spells);
-            Detail::Item::Loading::LoadItemTables(tx, s.items); Detail::Creature::Loading::LoadCreatureTables(tx, s.creatures);
+            Detail::Map::Loading::LoadMapTables(tx, s.maps);
+            Detail::Spell::Loading::LoadSpellTables(tx, s.spells);
+            Detail::Item::Loading::LoadItemTables(tx, s.items);
+            Detail::Creature::Loading::LoadCreatureTables(tx, s.creatures);
+            Detail::Faction::Loading::LoadFactionTables(tx, s.factions);
             return s;
         });
     }

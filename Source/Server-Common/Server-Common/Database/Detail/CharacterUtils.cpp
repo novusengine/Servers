@@ -38,11 +38,11 @@ namespace Database::Detail::Character
         });
     }
 
-    MetaGen::Postgres::Character::CharactersRecord CharacterCreate(pqxx::work& transaction, u64 accountID, const std::string& name, u16 raceGenderClass)
+    MetaGen::Postgres::Character::CharactersRecord CharacterCreate(pqxx::work& transaction, u64 accountID, const std::string& name, u16 raceGenderClass, u16 factionID)
     {
         return Generated::Execute<MetaGen::Postgres::Character::CharactersTable::Insert>(transaction,
             accountID, name, u32{ 0 }, u32{ 0 }, u64{ 0 }, u32{ 0 }, raceGenderClass,
-            u16{ 1 }, u64{ 0 }, u16{ 0 }, f32{ 0.0f }, f32{ 0.0f }, f32{ 0.0f }, f32{ 0.0f });
+            u16{ 1 }, u64{ 0 }, u16{ 0 }, f32{ 0.0f }, f32{ 0.0f }, f32{ 0.0f }, f32{ 0.0f }, factionID);
     }
 
     bool CharacterDelete(pqxx::work& transaction, u64 characterID)
@@ -84,9 +84,7 @@ namespace Database::Detail::Character
         return true;
     }
 
-    bool CharacterLockItemsForSwap(pqxx::work& transaction, u64 characterID, u64 sourceItemInstanceID,
-        u64 destinationItemInstanceID, bool hasDestination, u64 sourceContainerID, u64 destinationContainerID,
-        u16 sourceSlot, u16 destinationSlot)
+    bool CharacterLockItemsForSwap(pqxx::work& transaction, u64 characterID, u64 sourceItemInstanceID, u64 destinationItemInstanceID, bool hasDestination, u64 sourceContainerID, u64 destinationContainerID, u16 sourceSlot, u16 destinationSlot)
     {
         const auto result = transaction.exec(
             "SELECT ci.item_instance_id, ci.container, ci.slot "
@@ -108,20 +106,26 @@ namespace Database::Detail::Character
             const u64 containerID = row[1].as<u64>();
             const u16 slot = row[2].as<u16>();
             if (itemInstanceID == sourceItemInstanceID)
+            {
                 foundSource = containerID == sourceContainerID && slot == sourceSlot;
+            }
             else if (hasDestination && itemInstanceID == destinationItemInstanceID)
+            {
                 foundDestination = containerID == destinationContainerID && slot == destinationSlot;
+            }
         }
+
         return foundSource && foundDestination;
     }
 
     bool CharacterDeleteItem(pqxx::work& transaction, u64 characterID, u64 itemInstanceID)
     {
         return transaction.exec(
-            "DELETE FROM public.character_items ci USING public.item_instances ii "
-            "WHERE ci.character_id = $1 AND ci.item_instance_id = $2 "
-            "AND ii.id = ci.item_instance_id AND ii.owner_id = $1",
-            Generated::MakeParameters(characterID, itemInstanceID)).affected_rows() != 0;
+                              "DELETE FROM public.character_items ci USING public.item_instances ii "
+                              "WHERE ci.character_id = $1 AND ci.item_instance_id = $2 "
+                              "AND ii.id = ci.item_instance_id AND ii.owner_id = $1",
+                              Generated::MakeParameters(characterID, itemInstanceID))
+                   .affected_rows() != 0;
     }
 
     OperationResult<std::vector<MetaGen::Postgres::Character::ItemInstancesRecord>> CharacterGetItems(DBController& dbController, u64 characterID)

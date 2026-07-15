@@ -14,6 +14,7 @@ ConsoleCommandHandler::ConsoleCommandHandler()
     RegisterCommand("reloadscripts"_h, &ConsoleCommands::CommandReloadScripts);
     RegisterCommand("addaccount"_h, &ConsoleCommands::CommandAddAccount);
     RegisterCommand("permission"_h, &ConsoleCommands::CommandPermission);
+    RegisterCommand("exportfactions"_h, &ConsoleCommands::CommandExportFactions);
 
     RegisterCommand("exit"_h, &ConsoleCommands::CommandExit);
     RegisterCommand("quit"_h, &ConsoleCommands::CommandExit);

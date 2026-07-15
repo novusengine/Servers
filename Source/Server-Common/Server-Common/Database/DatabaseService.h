@@ -8,6 +8,7 @@
 #include <MetaGen/Shared/ClientDB/ClientDB.h>
 #include <MetaGen/Postgres/Auth/Tables/Accounts.h>
 #include <MetaGen/Postgres/Character/Tables/CharacterItems.h>
+#include <MetaGen/Postgres/Character/Tables/CharacterReputations.h>
 #include <MetaGen/Postgres/Character/Tables/Characters.h>
 #include <MetaGen/Postgres/Character/Tables/ItemInstances.h>
 #include <MetaGen/Postgres/World/Tables/Creatures.h>
@@ -16,6 +17,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -23,11 +25,22 @@ namespace Database
 {
     class DBController;
 
-    enum class DeleteOutcome : u8 { Deleted, AlreadyAbsent };
-    enum class UpdateOutcome : u8 { Updated, TargetNotFound };
+    static constexpr u32 MAX_CHARACTER_REPUTATION_UPDATES_PER_BATCH = 64;
+
+    enum class DeleteOutcome : u8
+    {
+        Deleted,
+        AlreadyAbsent
+    };
+    enum class UpdateOutcome : u8
+    {
+        Updated,
+        TargetNotFound
+    };
 
     struct CreatureCreateRequest
     {
+    public:
         u32 templateID = 0;
         u32 displayID = 0;
         u32 mapID = 0;
@@ -42,6 +55,7 @@ namespace Database
 
     struct ProximityTriggerCreateRequest
     {
+    public:
         std::string name;
         u16 flags = 0;
         u32 mapID = 0;
@@ -49,19 +63,40 @@ namespace Database
         vec3 extents = {};
     };
 
+    struct CharacterReputationUpdate
+    {
+    public:
+        u16 factionID = 0;
+        i32 value = 0;
+        u16 flags = 0;
+    };
+
+    struct CharacterReputationChange
+    {
+    public:
+        u16 factionID = 0;
+        i32 value = 0;
+        u16 flags = 0;
+        bool remove = false;
+    };
+
     struct WorldCacheSnapshot
     {
+    public:
         MapTables maps;
         SpellTables spells;
         ItemTables items;
         CreatureTables creatures;
+        FactionTables factions;
     };
 
     struct CharacterInitializationSnapshot
     {
+    public:
         std::optional<MetaGen::Postgres::Character::CharactersRecord> character;
         std::vector<MetaGen::Postgres::Character::ItemInstancesRecord> items;
         std::vector<MetaGen::Postgres::Character::CharacterItemsRecord> placements;
+        std::vector<MetaGen::Postgres::Character::CharacterReputationsRecord> reputations;
         PermissionAssignmentSnapshot permissions;
     };
 
@@ -97,13 +132,19 @@ namespace Database
         OperationResult<std::vector<MetaGen::Postgres::Character::ItemInstancesRecord>> GetCharacterItems(u64 characterID);
         OperationResult<std::vector<MetaGen::Postgres::Character::CharacterItemsRecord>> GetCharacterItemPlacements(u64 characterID);
         OperationResult<CharacterInitializationSnapshot> GetCharacterInitialization(u64 characterID);
-        OperationResult<MetaGen::Postgres::Character::CharactersRecord> CreateCharacter(u64 accountID, const std::string& name, u16 raceGenderClass);
+        OperationResult<std::vector<MetaGen::Postgres::Character::CharacterReputationsRecord>> GetCharacterReputations(u64 characterID);
+        OperationResult<MetaGen::Postgres::Character::CharactersRecord> CreateCharacter(u64 accountID, const std::string& name, u16 raceGenderClass, u16 factionID = 0);
         OperationResult<DeleteOutcome> DeleteCharacter(u64 characterID);
         OperationResult<UpdateOutcome> SetCharacterRaceGenderClass(u64 characterID, u16 raceGenderClass);
         OperationResult<UpdateOutcome> SetCharacterLevel(u64 characterID, u16 level);
         OperationResult<UpdateOutcome> SetCharacterMap(u64 characterID, u32 mapID);
         OperationResult<UpdateOutcome> SetCharacterPosition(u64 characterID, const vec3& position, f32 orientation);
         OperationResult<UpdateOutcome> SetCharacterMapAndPosition(u64 characterID, u32 mapID, const vec3& position, f32 orientation);
+        OperationResult<UpdateOutcome> SetCharacterFaction(u64 characterID, u16 factionID);
+        OperationResult<UpdateOutcome> SetCharacterReputation(u64 characterID, u16 factionID, i32 value, u16 flags);
+        OperationResult<u32> SetCharacterReputations(u64 characterID, std::span<const CharacterReputationUpdate> updates);
+        OperationResult<u32> ApplyCharacterReputationChanges(u64 characterID, std::span<const CharacterReputationChange> changes);
+        OperationResult<DeleteOutcome> DeleteCharacterReputation(u64 characterID, u16 factionID);
         OperationResult<MetaGen::Postgres::Character::ItemInstancesRecord> AddCharacterItem(u64 characterID, u32 itemID,
             u64 containerID, u16 slot, u16 count, u16 durability);
         OperationResult<DeleteOutcome> DeleteCharacterItem(u64 characterID, u64 itemInstanceID);

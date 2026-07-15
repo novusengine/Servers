@@ -14,7 +14,7 @@ return D.Definitions
         Column("level", Type.U16, P.SmallInt, D0(1)), Column("experience_points", Type.U64, P.BigInt, D0(0)),
         Column("map_id", Type.U32, P.Integer, D0(0)), Column("position_x", Type.F32, P.Real, D0(0.0)),
         Column("position_y", Type.F32, P.Real, D0(0.0)), Column("position_z", Type.F32, P.Real, D0(0.0)),
-        Column("position_o", Type.F32, P.Real, D0(0.0))
+        Column("position_o", Type.F32, P.Real, D0(0.0)), Column("faction_id", Type.U16, P.Integer, D0(0))
     }, { constraints = {
             Unique("characters", "characters_unique_name", { "name" }),
             P.RawCheck("characters_name_length", "char_length(name) >= 2", { persistentId = "postgres.characters.name_length" })
@@ -29,7 +29,26 @@ return D.Definitions
             P.Update("SetRaceGenderClass", { "id" }, { "raceGenderClass" }, { persistentId = "postgres.characters.set_race_gender_class" }),
             P.Update("SetLevel", { "id" }, { "level" }, { persistentId = "postgres.characters.set_level" }),
             P.Update("SetMap", { "id" }, { "mapId" }, { persistentId = "postgres.characters.set_map" }),
-            P.Update("SetPosition", { "id" }, { "positionX", "positionY", "positionZ", "positionO" }, { persistentId = "postgres.characters.set_position" })
+            P.Update("SetPosition", { "id" }, { "positionX", "positionY", "positionZ", "positionO" }, { persistentId = "postgres.characters.set_position" }),
+            P.Update("SetFaction", { "id" }, { "factionId" }, { persistentId = "postgres.characters.set_faction" })
+        } }),
+
+    Table("character", "character_reputations", {
+        Column("id", Type.U64, P.BigInt, I), Column("character_id", Type.U64, P.BigInt),
+        Column("faction_id", Type.U16, P.Integer), Column("value", Type.I32, P.Integer, D0(0)),
+        Column("flags", Type.U16, P.SmallInt, D0(0))
+    }, { constraints = {
+            Unique("character_reputations", "character_reputations_character_faction_key", { "character_id", "faction_id" }),
+            ForeignKey("character_reputations", "character_reputations_character_fk", { "character_id" }, "characters", { "id" }, "cascade")
+        }, operations = {
+            P.Upsert("Set", { "characterId", "factionId", "value", "flags" }, { "characterId", "factionId" },
+                { "value", "flags" }, { persistentId = "postgres.character_reputations.set" }),
+            P.Delete("Delete", { "characterId", "factionId" }, { persistentId = "postgres.character_reputations.delete" }),
+            P.Delete("DeleteByCharacter", { "characterId" },
+                { persistentId = "postgres.character_reputations.delete_by_character", cardinality = "zeroOrMore" })
+        }, queries = {
+            P.Query("ByCharacter", { "characterId" },
+                { persistentId = "postgres.character_reputations.by_character", orderBy = { P.Asc("factionId") } })
         } }),
 
     Table("character", "character_currency", {

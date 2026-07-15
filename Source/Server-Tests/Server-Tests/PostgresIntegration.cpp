@@ -5,6 +5,7 @@
 #include <Server-Common/Database/SchemaTraits.h>
 #include <Server-Common/Database/Detail/CharacterUtils.h>
 #include <Server-Common/Database/Detail/CreatureUtils.h>
+#include <Server-Common/Database/Detail/FactionUtils.h>
 #include <Server-Common/Database/Detail/ItemUtils.h>
 #include <Server-Common/Database/Detail/MapUtils.h>
 #include <Server-Common/Database/Detail/SpellUtils.h>
@@ -31,62 +32,80 @@ namespace
 {
     struct TestWorldCacheSnapshot
     {
+    public:
         Database::MapTables maps;
         Database::SpellTables spells;
         Database::ItemTables items;
         Database::CreatureTables creatures;
+        Database::FactionTables factions;
     };
 
     struct TestIntRecord
     {
+    public:
         int value = 0;
     };
 
     struct ExactlyOneTestDescriptor
     {
+    public:
         using Parameters = std::tuple<>;
         using Record = TestIntRecord;
+
+        static Record Decode(const pqxx::row& row)
+        {
+            return { row[0].as<int>() };
+        }
+
+    public:
         static constexpr std::string_view PREPARED_NAME = "test_exactly_one";
         static constexpr auto CARDINALITY = MetaGen::Postgres::QueryCardinality::ExactlyOne;
-        static Record Decode(const pqxx::row& row) { return { row[0].as<int>() }; }
     };
 
     struct ExactlyOneEmptyTestDescriptor : ExactlyOneTestDescriptor
     {
+    public:
         static constexpr std::string_view PREPARED_NAME = "test_exactly_one_empty";
     };
 
     struct ExactlyOneMultipleTestDescriptor : ExactlyOneTestDescriptor
     {
+    public:
         static constexpr std::string_view PREPARED_NAME = "test_exactly_one_multiple";
     };
 
     struct ZeroOrOneTestDescriptor : ExactlyOneTestDescriptor
     {
+    public:
         static constexpr std::string_view PREPARED_NAME = "test_zero_or_one";
         static constexpr auto CARDINALITY = MetaGen::Postgres::QueryCardinality::ZeroOrOne;
     };
 
     struct ZeroOrOneEmptyTestDescriptor : ZeroOrOneTestDescriptor
     {
+    public:
         static constexpr std::string_view PREPARED_NAME = "test_zero_or_one_empty";
     };
 
     struct ZeroOrOneMultipleTestDescriptor : ZeroOrOneEmptyTestDescriptor
     {
+    public:
         static constexpr std::string_view PREPARED_NAME = "test_zero_or_one_multiple";
     };
 
     struct ZeroOrMoreTestDescriptor : ExactlyOneTestDescriptor
     {
+    public:
         static constexpr std::string_view PREPARED_NAME = "test_zero_or_more";
         static constexpr auto CARDINALITY = MetaGen::Postgres::QueryCardinality::ZeroOrMore;
     };
 
     struct MutationTestDescriptor
     {
-        using Parameters = std::tuple<int>;
+    public:
         static constexpr std::string_view PREPARED_NAME = "test_mutation";
+
+        using Parameters = std::tuple<int>;
     };
 
     void EnsureTestLogger()
@@ -112,7 +131,8 @@ namespace
     class TemporaryDatabase
     {
     public:
-        TemporaryDatabase() : maintenance(ConnectionString())
+        TemporaryDatabase()
+            : maintenance(ConnectionString())
         {
             static std::atomic_uint64_t serial = 0;
             const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -128,7 +148,9 @@ namespace
                 pqxx::nontransaction transaction(maintenance);
                 transaction.exec("DROP DATABASE IF EXISTS " + transaction.quote_name(name) + " WITH (FORCE)");
             }
-            catch (...) {}
+            catch (...)
+            {
+            }
         }
 
         std::unique_ptr<pqxx::connection> Connect() const
@@ -136,7 +158,10 @@ namespace
             return std::make_unique<pqxx::connection>(ConnectionString() + " dbname=" + name);
         }
 
-        const std::string& Name() const { return name; }
+        const std::string& Name() const
+        {
+            return name;
+        }
 
         void Drop()
         {
@@ -229,7 +254,10 @@ TEST_CASE("PostgreSQL migration failure rolls back DDL and ledger", "[.integrati
     auto connection = database.Connect();
 
     CHECK_THROWS(Database::MigrationRunner::Run(Database::DBType::Auth, *connection, Database::MigrationMode::Migrate,
-        [](pqxx::work&, std::size_t) { throw std::runtime_error("injected migration failure"); }));
+        [](pqxx::work&, std::size_t)
+    {
+        throw std::runtime_error("injected migration failure");
+    }));
 
     pqxx::read_transaction transaction(*connection);
     CHECK(transaction.query_value<bool>("SELECT to_regclass('public.accounts') IS NULL"));
@@ -275,13 +303,25 @@ TEST_CASE("Concurrent PostgreSQL startup serializes one baseline", "[.integratio
 
     std::thread firstThread([&]
     {
-        try { Database::MigrationRunner::Run(Database::DBType::Auth, *first, Database::MigrationMode::Migrate); }
-        catch (...) { firstError = std::current_exception(); }
+        try
+        {
+            Database::MigrationRunner::Run(Database::DBType::Auth, *first, Database::MigrationMode::Migrate);
+        }
+        catch (...)
+        {
+            firstError = std::current_exception();
+        }
     });
     std::thread secondThread([&]
     {
-        try { Database::MigrationRunner::Run(Database::DBType::Auth, *second, Database::MigrationMode::Migrate); }
-        catch (...) { secondError = std::current_exception(); }
+        try
+        {
+            Database::MigrationRunner::Run(Database::DBType::Auth, *second, Database::MigrationMode::Migrate);
+        }
+        catch (...)
+        {
+            secondError = std::current_exception();
+        }
     });
     firstThread.join();
     secondThread.join();
@@ -305,8 +345,8 @@ TEST_CASE("Generated bytea insert and decode round trip", "[.integration][Databa
 
     pqxx::work transaction(*connection);
     auto inserted = Database::Generated::Execute<MetaGen::Postgres::Auth::AccountsTable::Insert>(transaction,
-        u64{0}, std::string{"integration"}, std::string{"integration@example.invalid"}, u64{1}, u64{0},
-        std::optional<Bytebuffer>{std::move(bytes)});
+        u64{ 0 }, std::string{ "integration" }, std::string{ "integration@example.invalid" }, u64{ 1 }, u64{ 0 },
+        std::optional<Bytebuffer>{ std::move(bytes) });
     auto loaded = Database::Generated::Execute<MetaGen::Postgres::Auth::AccountsTable::ByPrimaryKey>(transaction, inserted.id);
     REQUIRE(loaded);
     REQUIRE(loaded->blob);
@@ -316,7 +356,7 @@ TEST_CASE("Generated bytea insert and decode round trip", "[.integration][Databa
     CHECK(decoded == 0xC0DEF00D);
 
     auto insertedNull = Database::Generated::Execute<MetaGen::Postgres::Auth::AccountsTable::Insert>(transaction,
-        u64{0}, std::string{"integration-null"}, std::string{"integration-null@example.invalid"}, u64{1}, u64{0},
+        u64{ 0 }, std::string{ "integration-null" }, std::string{ "integration-null@example.invalid" }, u64{ 1 }, u64{ 0 },
         std::optional<Bytebuffer>{});
     auto loadedNull = Database::Generated::Execute<MetaGen::Postgres::Auth::AccountsTable::ByPrimaryKey>(transaction, insertedNull.id);
     REQUIRE(loadedNull);
@@ -347,6 +387,94 @@ TEST_CASE("Database service owns connection and transaction details", "[.integra
     CHECK(read.Value()->id == create.Value().id);
     REQUIRE(read.Value()->blob);
     CHECK(read.Value()->blob->writtenData == blob.size());
+}
+
+TEST_CASE("Faction content and character reputation round trip through PostgreSQL",
+    "[.integration][Database][Faction]")
+{
+    TemporaryDatabase database;
+    auto entry = ControllerEntry(database.Name());
+    if (!entry)
+        FAIL("Set NOVUS_TEST_POSTGRES_HOST/USER/PASSWORD to run DatabaseService integration cases");
+
+    Database::DatabaseService service;
+    REQUIRE_NOTHROW(service.InitializeBundle(Database::DBType::World, *entry));
+    REQUIRE_NOTHROW(service.InitializeBundle(Database::DBType::Character, *entry));
+
+    auto connection = database.Connect();
+    {
+        pqxx::work seed(*connection);
+        seed.exec(R"sql(INSERT INTO public.factions
+            (id, name, flags, default_reaction_to_others, default_player_reaction_min,
+             default_player_reaction_max, default_reputation_value)
+            VALUES (1, 'Players', 1, 2, 0, 3, 0), (2, 'Town', 1, 2, 1, 3, 25))sql");
+        seed.exec("INSERT INTO public.faction_relations (source_faction_id, target_faction_id, reaction) VALUES (1, 2, 3)");
+        seed.exec("INSERT INTO public.faction_standings (id, name, minimum_value, reaction, sort_order) "
+                  "VALUES (1, 'Hostile', -1000, 0, 1), (2, 'Neutral', 0, 2, 2)");
+        seed.exec("INSERT INTO public.faction_starting_reputations (player_faction_id, target_faction_id, value) VALUES (1, 2, 100)");
+        seed.exec("INSERT INTO public.unit_race_factions (race_id, faction_id) VALUES (7, 1)");
+        seed.commit();
+    }
+
+    auto world = service.LoadWorldCache();
+    REQUIRE(world);
+    REQUIRE(world.Value().factions.definitions.size() == 2);
+    REQUIRE(world.Value().factions.relations.size() == 1);
+    REQUIRE(world.Value().factions.standings.size() == 2);
+    REQUIRE(world.Value().factions.startingReputations.size() == 1);
+    REQUIRE(world.Value().factions.unitRaceFactions.size() == 1);
+    CHECK(world.Value().factions.relations.front().sourceFactionId == 1);
+    CHECK(world.Value().factions.relations.front().targetFactionId == 2);
+    CHECK(world.Value().factions.standings.front().minimumValue == -1000);
+    CHECK(world.Value().factions.unitRaceFactions.front().raceId == 7);
+
+    auto character = service.CreateCharacter(1, "FactionTest", 7, 1);
+    REQUIRE(character);
+    CHECK(character.Value().factionId == 1);
+
+    auto factionUpdate = service.SetCharacterFaction(character.Value().id, 2);
+    REQUIRE(factionUpdate);
+    CHECK(factionUpdate.Value() == Database::UpdateOutcome::Updated);
+
+    const std::array reputationUpdates{
+        Database::CharacterReputationUpdate{ .factionID = 2, .value = 50, .flags = 1 },
+        Database::CharacterReputationUpdate{ .factionID = 2, .value = 125, .flags = 5 }
+    };
+    auto reputationBatch = service.SetCharacterReputations(character.Value().id, reputationUpdates);
+    REQUIRE(reputationBatch);
+    CHECK(reputationBatch.Value() == reputationUpdates.size());
+
+    auto initialization = service.GetCharacterInitialization(character.Value().id);
+    REQUIRE(initialization);
+    REQUIRE(initialization.Value().character);
+    CHECK(initialization.Value().character->factionId == 2);
+    REQUIRE(initialization.Value().reputations.size() == 1);
+    CHECK(initialization.Value().reputations.front().factionId == 2);
+    CHECK(initialization.Value().reputations.front().value == 125);
+    CHECK(initialization.Value().reputations.front().flags == 5);
+
+    const std::array reputationChanges{
+        Database::CharacterReputationChange{ .factionID = 2, .value = 200, .flags = 1 },
+        Database::CharacterReputationChange{ .factionID = 2, .remove = true }
+    };
+    auto appliedChanges = service.ApplyCharacterReputationChanges(character.Value().id, reputationChanges);
+    REQUIRE(appliedChanges);
+    CHECK(appliedChanges.Value() == reputationChanges.size());
+    auto reputationsAfterDelete = service.GetCharacterReputations(character.Value().id);
+    REQUIRE(reputationsAfterDelete);
+    CHECK(reputationsAfterDelete.Value().empty());
+
+    auto deleteReputation = service.DeleteCharacterReputation(character.Value().id, 2);
+    REQUIRE(deleteReputation);
+    CHECK(deleteReputation.Value() == Database::DeleteOutcome::AlreadyAbsent);
+
+    REQUIRE(service.SetCharacterReputation(character.Value().id, 2, -25, 1));
+    auto deleteCharacter = service.DeleteCharacter(character.Value().id);
+    REQUIRE(deleteCharacter);
+    CHECK(deleteCharacter.Value() == Database::DeleteOutcome::Deleted);
+
+    pqxx::read_transaction read(*connection);
+    CHECK(read.query_value<std::size_t>("SELECT count(*) FROM public.character_reputations") == 0);
 }
 
 TEST_CASE("Database service rejects cross-character and incomplete inventory mutations",
@@ -402,10 +530,13 @@ TEST_CASE("Database service rejects cross-character and incomplete inventory mut
     {
         auto result = service.AddCharacterItem(concurrentCharacter.Value().id, itemID, 0, 5, 1, 10);
         if (result)
+        {
             ++insertSuccesses;
-        else if (result.Failure() == Database::OperationFailure::Rejected
-            || result.Failure() == Database::OperationFailure::Conflict)
+        }
+        else if (result.Failure() == Database::OperationFailure::Rejected || result.Failure() == Database::OperationFailure::Conflict)
+        {
             ++insertRejections;
+        }
     };
     std::thread firstInsert(insertSameSlot, 300);
     std::thread secondInsert(insertSameSlot, 301);
@@ -501,9 +632,7 @@ TEST_CASE("Database service high-arity setters preserve parameter order",
     CHECK(statResult.Value() == Database::UpdateOutcome::Updated);
 
     GameDefine::Database::SpellEffect effect{
-        .id = 701, .spellID = 702, .effectPriority = 7, .effectType = 2,
-        .effectValue1 = 11, .effectValue2 = 12, .effectValue3 = 13,
-        .effectMiscValue1 = 21, .effectMiscValue2 = 22, .effectMiscValue3 = 23
+        .id = 701, .spellID = 702, .effectPriority = 7, .effectType = 2, .effectValue1 = 11, .effectValue2 = 12, .effectValue3 = 13, .effectMiscValue1 = 21, .effectMiscValue2 = 22, .effectMiscValue3 = 23
     };
     auto effectResult = service.SetSpellEffect(effect);
     REQUIRE(effectResult);
@@ -512,8 +641,8 @@ TEST_CASE("Database service high-arity setters preserve parameter order",
     auto connection = database.Connect();
     pqxx::read_transaction read(*connection);
     const auto statRows = read.exec("SELECT stat_type_1, stat_type_2, stat_type_3, stat_type_4, stat_type_5, stat_type_6, stat_type_7, stat_type_8, "
-        "stat_value_1, stat_value_2, stat_value_3, stat_value_4, stat_value_5, stat_value_6, stat_value_7, stat_value_8 "
-        "FROM public.item_stat_templates WHERE id = 700");
+                                    "stat_value_1, stat_value_2, stat_value_3, stat_value_4, stat_value_5, stat_value_6, stat_value_7, stat_value_8 "
+                                    "FROM public.item_stat_templates WHERE id = 700");
     REQUIRE(statRows.size() == 1);
     const auto statRow = statRows.front();
     for (u32 index = 0; index < 8; ++index)
@@ -522,7 +651,7 @@ TEST_CASE("Database service high-arity setters preserve parameter order",
         CHECK(statRow[index + 8].as<i32>() == -100 - static_cast<i32>(index));
     }
     const auto effectRows = read.exec("SELECT spell_id, effect_priority, effect_type, effect_value_1, effect_value_2, effect_value_3, "
-        "effect_misc_value_1, effect_misc_value_2, effect_misc_value_3 FROM public.spell_effects WHERE id = 701");
+                                      "effect_misc_value_1, effect_misc_value_2, effect_misc_value_3 FROM public.spell_effects WHERE id = 701");
     REQUIRE(effectRows.size() == 1);
     const auto effectRow = effectRows.front();
     CHECK(effectRow[0].as<u32>() == 702);
@@ -545,14 +674,14 @@ TEST_CASE("Generated runtime enforces descriptor cardinality", "[.integration][D
         setup.exec("CREATE TEMP TABLE generated_mutation_probe (value integer NOT NULL)");
         setup.commit();
     }
-    connection->prepare(std::string{ExactlyOneTestDescriptor::PREPARED_NAME}, "SELECT 7");
-    connection->prepare(std::string{ExactlyOneEmptyTestDescriptor::PREPARED_NAME}, "SELECT 7 WHERE false");
-    connection->prepare(std::string{ExactlyOneMultipleTestDescriptor::PREPARED_NAME}, "SELECT value FROM (VALUES (1), (2)) AS rows(value)");
-    connection->prepare(std::string{ZeroOrOneTestDescriptor::PREPARED_NAME}, "SELECT 7");
-    connection->prepare(std::string{ZeroOrOneEmptyTestDescriptor::PREPARED_NAME}, "SELECT 7 WHERE false");
-    connection->prepare(std::string{ZeroOrOneMultipleTestDescriptor::PREPARED_NAME}, "SELECT value FROM (VALUES (1), (2)) AS rows(value)");
-    connection->prepare(std::string{ZeroOrMoreTestDescriptor::PREPARED_NAME}, "SELECT value FROM (VALUES (3), (1), (2)) AS rows(value) ORDER BY value");
-    connection->prepare(std::string{MutationTestDescriptor::PREPARED_NAME}, "INSERT INTO generated_mutation_probe (value) VALUES ($1)");
+    connection->prepare(std::string{ ExactlyOneTestDescriptor::PREPARED_NAME }, "SELECT 7");
+    connection->prepare(std::string{ ExactlyOneEmptyTestDescriptor::PREPARED_NAME }, "SELECT 7 WHERE false");
+    connection->prepare(std::string{ ExactlyOneMultipleTestDescriptor::PREPARED_NAME }, "SELECT value FROM (VALUES (1), (2)) AS rows(value)");
+    connection->prepare(std::string{ ZeroOrOneTestDescriptor::PREPARED_NAME }, "SELECT 7");
+    connection->prepare(std::string{ ZeroOrOneEmptyTestDescriptor::PREPARED_NAME }, "SELECT 7 WHERE false");
+    connection->prepare(std::string{ ZeroOrOneMultipleTestDescriptor::PREPARED_NAME }, "SELECT value FROM (VALUES (1), (2)) AS rows(value)");
+    connection->prepare(std::string{ ZeroOrMoreTestDescriptor::PREPARED_NAME }, "SELECT value FROM (VALUES (3), (1), (2)) AS rows(value) ORDER BY value");
+    connection->prepare(std::string{ MutationTestDescriptor::PREPARED_NAME }, "INSERT INTO generated_mutation_probe (value) VALUES ($1)");
 
     pqxx::work transaction(*connection);
     const auto exactlyOne = Database::Generated::Execute<ExactlyOneTestDescriptor>(transaction);
@@ -627,7 +756,7 @@ TEST_CASE("Pool prepares every physical and reconnected connection", "[.integrat
     REQUIRE(reconnected);
     CHECK(preparationCount == 3);
     auto transaction = reconnected->NewReadTransaction(Database::DBType::Auth);
-    CHECK(transaction.query_value<int>(pqxx::prepped{"server_test_ping"}) == 1);
+    CHECK(transaction.query_value<int>(pqxx::prepped{ "server_test_ping" }) == 1);
 
     Database::DBController retryController;
     REQUIRE(retryController.SetDBEntry(Database::DBType::Auth, *entry));
@@ -692,13 +821,13 @@ TEST_CASE("Reliable transaction retries the entire transaction", "[.integration]
     std::size_t attempts = 0;
     auto result = Database::RunTransaction(controller, Database::DBType::World, "test_transaction_retry",
         [&](pqxx::work& transaction)
-        {
-            ++attempts;
-            transaction.exec("INSERT INTO retry_probe (value) VALUES (1)");
-            if (attempts == 1)
-                throw pqxx::serialization_failure("injected serialization failure", "INSERT INTO retry_probe", "40001");
-            return attempts;
-        });
+    {
+        ++attempts;
+        transaction.exec("INSERT INTO retry_probe (value) VALUES (1)");
+        if (attempts == 1)
+            throw pqxx::serialization_failure("injected serialization failure", "INSERT INTO retry_probe", "40001");
+        return attempts;
+    });
 
     REQUIRE(result);
     CHECK(result.Value() == 2);
@@ -721,11 +850,11 @@ TEST_CASE("Reliable read retries without exposing connection handling", "[.integ
     std::size_t attempts = 0;
     auto result = Database::RunRead(controller, Database::DBType::Auth, "test_read_retry",
         [&](pqxx::read_transaction& transaction)
-        {
-            if (++attempts == 1)
-                throw pqxx::broken_connection("injected connection failure");
-            return transaction.query_value<int>("SELECT 42");
-        });
+    {
+        if (++attempts == 1)
+            throw pqxx::broken_connection("injected connection failure");
+        return transaction.query_value<int>("SELECT 42");
+    });
 
     REQUIRE(result);
     CHECK(result.Value() == 42);
@@ -762,15 +891,15 @@ TEST_CASE("Reliable execution reconnects after PostgreSQL terminates a backend",
     std::size_t readAttempts = 0;
     auto readResult = Database::RunRead(controller, Database::DBType::Auth, "test_real_read_reconnect",
         [&](pqxx::read_transaction& transaction)
+    {
+        if (++readAttempts == 1)
         {
-            if (++readAttempts == 1)
-            {
-                const int backendPID = transaction.query_value<int>("SELECT pg_backend_pid()");
-                pqxx::nontransaction killer(*killerConnection);
-                REQUIRE(killer.query_value<bool>("SELECT pg_terminate_backend(" + std::to_string(backendPID) + ")"));
-            }
-            return transaction.query_value<int>(pqxx::prepped{"real_reconnect_ping"});
-        });
+            const int backendPID = transaction.query_value<int>("SELECT pg_backend_pid()");
+            pqxx::nontransaction killer(*killerConnection);
+            REQUIRE(killer.query_value<bool>("SELECT pg_terminate_backend(" + std::to_string(backendPID) + ")"));
+        }
+        return transaction.query_value<int>(pqxx::prepped{ "real_reconnect_ping" });
+    });
 
     REQUIRE(readResult);
     CHECK(readResult.Value() == 42);
@@ -780,18 +909,18 @@ TEST_CASE("Reliable execution reconnects after PostgreSQL terminates a backend",
     std::size_t transactionAttempts = 0;
     auto transactionResult = Database::RunTransaction(controller, Database::DBType::Auth, "test_real_transaction_reconnect",
         [&](pqxx::work& transaction)
+    {
+        ++transactionAttempts;
+        transaction.exec("INSERT INTO reconnect_probe (value) VALUES (1)");
+        if (transactionAttempts == 1)
         {
-            ++transactionAttempts;
-            transaction.exec("INSERT INTO reconnect_probe (value) VALUES (1)");
-            if (transactionAttempts == 1)
-            {
-                const int backendPID = transaction.query_value<int>("SELECT pg_backend_pid()");
-                pqxx::nontransaction killer(*killerConnection);
-                REQUIRE(killer.query_value<bool>("SELECT pg_terminate_backend(" + std::to_string(backendPID) + ")"));
-                transaction.exec("SELECT 1");
-            }
-            return true;
-        });
+            const int backendPID = transaction.query_value<int>("SELECT pg_backend_pid()");
+            pqxx::nontransaction killer(*killerConnection);
+            REQUIRE(killer.query_value<bool>("SELECT pg_terminate_backend(" + std::to_string(backendPID) + ")"));
+            transaction.exec("SELECT 1");
+        }
+        return true;
+    });
 
     REQUIRE(transactionResult);
     CHECK(transactionAttempts == 2);
@@ -816,10 +945,10 @@ TEST_CASE("Reliable execution classifies rejected and indeterminate outcomes", "
     std::size_t rejectedAttempts = 0;
     auto rejected = Database::RunRead(controller, Database::DBType::Auth, "test_rejected_read",
         [&](pqxx::read_transaction& transaction)
-        {
-            ++rejectedAttempts;
-            return transaction.query_value<int>("SELECT missing_test_column");
-        });
+    {
+        ++rejectedAttempts;
+        return transaction.query_value<int>("SELECT missing_test_column");
+    });
     CHECK_FALSE(rejected);
     CHECK(rejected.Failure() == Database::OperationFailure::Rejected);
     CHECK(rejectedAttempts == 1);
@@ -827,11 +956,11 @@ TEST_CASE("Reliable execution classifies rejected and indeterminate outcomes", "
     std::size_t conflictAttempts = 0;
     auto conflict = Database::RunTransaction(controller, Database::DBType::Auth, "test_conflict_transaction",
         [&](pqxx::work&)
-        {
-            ++conflictAttempts;
-            throw pqxx::serialization_failure("injected persistent serialization conflict", "test conflict", "40001");
-            return false;
-        });
+    {
+        ++conflictAttempts;
+        throw pqxx::serialization_failure("injected persistent serialization conflict", "test conflict", "40001");
+        return false;
+    });
     CHECK_FALSE(conflict);
     CHECK(conflict.Failure() == Database::OperationFailure::Conflict);
     CHECK(conflictAttempts == 3);
@@ -839,11 +968,11 @@ TEST_CASE("Reliable execution classifies rejected and indeterminate outcomes", "
     std::size_t unavailableAttempts = 0;
     auto unavailable = Database::RunRead(controller, Database::DBType::Auth, "test_unavailable_read",
         [&](pqxx::read_transaction&)
-        {
-            ++unavailableAttempts;
-            throw pqxx::broken_connection("injected persistent connection failure");
-            return false;
-        });
+    {
+        ++unavailableAttempts;
+        throw pqxx::broken_connection("injected persistent connection failure");
+        return false;
+    });
     CHECK_FALSE(unavailable);
     CHECK(unavailable.Failure() == Database::OperationFailure::Unavailable);
     CHECK(unavailableAttempts == 3);
@@ -851,11 +980,11 @@ TEST_CASE("Reliable execution classifies rejected and indeterminate outcomes", "
     std::size_t failedAttempts = 0;
     auto failed = Database::RunRead(controller, Database::DBType::Auth, "test_failed_read",
         [&](pqxx::read_transaction&)
-        {
-            ++failedAttempts;
-            throw std::runtime_error("injected application failure");
-            return false;
-        });
+    {
+        ++failedAttempts;
+        throw std::runtime_error("injected application failure");
+        return false;
+    });
     CHECK_FALSE(failed);
     CHECK(failed.Failure() == Database::OperationFailure::Failed);
     CHECK(failedAttempts == 1);
@@ -863,11 +992,11 @@ TEST_CASE("Reliable execution classifies rejected and indeterminate outcomes", "
     std::size_t attempts = 0;
     auto indeterminate = Database::RunTransaction(controller, Database::DBType::Auth, "test_indeterminate_transaction",
         [&](pqxx::work&)
-        {
-            ++attempts;
-            throw pqxx::in_doubt_error("injected indeterminate outcome");
-            return false;
-        });
+    {
+        ++attempts;
+        throw pqxx::in_doubt_error("injected indeterminate outcome");
+        return false;
+    });
     CHECK_FALSE(indeterminate);
     CHECK(indeterminate.Failure() == Database::OperationFailure::Indeterminate);
     CHECK(attempts == 1);
@@ -877,15 +1006,15 @@ TEST_CASE("Reliable execution classifies rejected and indeterminate outcomes", "
     auto commitIndeterminate = Database::RunTransactionWithCommit(controller, Database::DBType::Auth,
         "test_commit_indeterminate",
         [&](pqxx::work&)
-        {
-            ++commitBoundaryAttempts;
-            return true;
-        },
+    {
+        ++commitBoundaryAttempts;
+        return true;
+    },
         [&](pqxx::work&)
-        {
-            ++commitCalls;
-            throw pqxx::in_doubt_error("injected lost COMMIT response");
-        });
+    {
+        ++commitCalls;
+        throw pqxx::in_doubt_error("injected lost COMMIT response");
+    });
     CHECK_FALSE(commitIndeterminate);
     CHECK(commitIndeterminate.Failure() == Database::OperationFailure::Indeterminate);
     CHECK(commitBoundaryAttempts == 1);
@@ -936,19 +1065,20 @@ TEST_CASE("Startup cache loaders stage and retry complete bundle snapshots", "[.
     std::size_t worldAttempts = 0;
     auto worldResult = Database::RunRead(controller, Database::DBType::World, "test_load_world_cache",
         [&](pqxx::read_transaction& transaction)
+    {
+        TestWorldCacheSnapshot snapshot;
+        Database::Detail::Map::Loading::LoadMapTables(transaction, snapshot.maps);
+        Database::Detail::Spell::Loading::LoadSpellTables(transaction, snapshot.spells);
+        Database::Detail::Item::Loading::LoadItemTables(transaction, snapshot.items);
+        Database::Detail::Creature::Loading::LoadCreatureTables(transaction, snapshot.creatures);
+        Database::Detail::Faction::Loading::LoadFactionTables(transaction, snapshot.factions);
+        if (++worldAttempts == 1)
         {
-            TestWorldCacheSnapshot snapshot;
-            Database::Detail::Map::Loading::LoadMapTables(transaction, snapshot.maps);
-            Database::Detail::Spell::Loading::LoadSpellTables(transaction, snapshot.spells);
-            Database::Detail::Item::Loading::LoadItemTables(transaction, snapshot.items);
-            Database::Detail::Creature::Loading::LoadCreatureTables(transaction, snapshot.creatures);
-            if (++worldAttempts == 1)
-            {
-                snapshot.maps.idToDefinition[0xFFFFFFFFu] = {};
-                throw pqxx::serialization_failure("injected startup snapshot retry", "startup cache load", "40001");
-            }
-            return snapshot;
-        });
+            snapshot.maps.idToDefinition[0xFFFFFFFFu] = {};
+            throw pqxx::serialization_failure("injected startup snapshot retry", "startup cache load", "40001");
+        }
+        return snapshot;
+    });
 
     REQUIRE(worldResult);
     CHECK(worldAttempts == 2);
@@ -960,5 +1090,4 @@ TEST_CASE("Startup cache loaders stage and retry complete bundle snapshots", "[.
     REQUIRE(worldResult.Value().spells.spellIDToProcInfo.at(513).links.size() == 2);
     CHECK(worldResult.Value().spells.spellIDToProcInfo.at(513).links[0].procData.id == 512);
     CHECK(worldResult.Value().spells.spellIDToProcInfo.at(513).links[1].procData.id == 513);
-
 }

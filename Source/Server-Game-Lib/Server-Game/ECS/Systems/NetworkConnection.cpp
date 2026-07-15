@@ -6,14 +6,18 @@
 #include "Server-Game/ECS/Components/AccountInfo.h"
 #include "Server-Game/ECS/Components/AuthenticationInfo.h"
 #include "Server-Game/ECS/Components/CharacterInfo.h"
+#include "Server-Game/ECS/Components/CharacterReputation.h"
 #include "Server-Game/ECS/Components/CharacterListInfo.h"
 #include "Server-Game/ECS/Components/CharacterSpellCastInfo.h"
 #include "Server-Game/ECS/Components/CreatureAIInfo.h"
 #include "Server-Game/ECS/Components/CreatureCombatInfo.h"
+#include "Server-Game/ECS/Components/CreatureFactionPolicy.h"
 #include "Server-Game/ECS/Components/CreatureInfo.h"
 #include "Server-Game/ECS/Components/CreatureLifecycleInfo.h"
+#include "Server-Game/ECS/Components/CreatureThreatTable.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
 #include "Server-Game/ECS/Components/Events.h"
+#include "Server-Game/ECS/Components/FactionModifiers.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PermissionInfo.h"
@@ -25,6 +29,8 @@
 #include "Server-Game/ECS/Components/TargetInfo.h"
 #include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
+#include "Server-Game/ECS/Components/UnitFaction.h"
+#include "Server-Game/ECS/Components/UnitCombatInfo.h"
 #include "Server-Game/ECS/Components/UnitStatsComponent.h"
 #include "Server-Game/ECS/Components/UnitVisualItems.h"
 #include "Server-Game/ECS/Components/VisibilityInfo.h"
@@ -39,6 +45,7 @@
 #include "Server-Game/ECS/Util/CollisionUtil.h"
 #include "Server-Game/ECS/Util/CombatEventUtil.h"
 #include "Server-Game/ECS/Util/ContainerUtil.h"
+#include "Server-Game/ECS/Util/FactionUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/ECS/Util/MovementUtil.h"
 #include "Server-Game/ECS/Util/PermissionUtil.h"
@@ -65,6 +72,7 @@
 #include <MetaGen/PacketList.h>
 #include <MetaGen/Shared/ClientDB/ClientDB.h>
 #include <MetaGen/Shared/Packet/Packet.h>
+#include <MetaGen/Shared/Spell/Spell.h>
 #include <MetaGen/Shared/Unit/Unit.h>
 
 #include <Network/Server.h>
@@ -83,68 +91,257 @@ namespace ECS::Systems
 {
     namespace
     {
-        void ReportAdministrativeDatabaseFailure(entt::registry* registry, World& world, Network::SocketID socketID,
-            std::string_view operation, Database::OperationFailure failure)
+        void ReportAdministrativeDatabaseFailure(entt::registry* registry, World& world, Network::SocketID socketID, std::string_view operation, Database::OperationFailure failure)
         {
             auto& networkState = registry->ctx().get<Singletons::NetworkState>();
-            std::string response = "Administrative operation '" + std::string(operation) + "' failed (" +
-                std::string(Database::OperationFailureName(failure)) + ")";
+            std::string response = "Administrative operation '" + std::string(operation) + "' failed (" + std::string(Database::OperationFailureName(failure)) + ")";
+
             if (failure == Database::OperationFailure::Indeterminate)
                 response += "; the database outcome is unknown and requires manual reconciliation";
+
             Util::Unit::SendChatMessage(world, networkState, socketID, response);
         }
 
-        bool GetCheatCommandPermission(MetaGen::Shared::Cheat::CheatCommandEnum command,
-            MetaGen::Server::Permission::Permission& permission)
+        bool SpellRequiresAttackPermission(Singletons::GameCache& gameCache, u32 spellID)
+        {
+            Database::SpellEffectInfo* effects = nullptr;
+            if (!Util::Cache::GetSpellEffectsBySpellID(gameCache, spellID, effects))
+                return false;
+
+            using EffectType = MetaGen::Shared::Spell::SpellEffectTypeEnum;
+            return std::any_of(effects->effects.begin(), effects->effects.end(), [](const auto& effect)
+            {
+                const EffectType type = static_cast<EffectType>(effect.effectType);
+                return type == EffectType::WeaponDamage || type == EffectType::AuraPeriodicDamage;
+            });
+        }
+
+        bool GetCheatCommandPermission(MetaGen::Shared::Cheat::CheatCommandEnum command, MetaGen::Server::Permission::Permission& permission)
         {
             using CheatCommand = MetaGen::Shared::Cheat::CheatCommandEnum;
             using Permission = MetaGen::Server::Permission::Permission;
             switch (command)
             {
-                case CheatCommand::Damage: permission = Permission::CommandDamage; return true;
-                case CheatCommand::Heal: permission = Permission::CommandHeal; return true;
-                case CheatCommand::Kill: permission = Permission::CommandKill; return true;
-                case CheatCommand::Resurrect: permission = Permission::CommandResurrect; return true;
-                case CheatCommand::UnitMorph: permission = Permission::CommandUnitMorph; return true;
-                case CheatCommand::UnitDemorph: permission = Permission::CommandUnitDemorph; return true;
-                case CheatCommand::Teleport: permission = Permission::CommandTeleport; return true;
-                case CheatCommand::CharacterAdd: permission = Permission::CommandCharacterAdd; return true;
-                case CheatCommand::CharacterRemove: permission = Permission::CommandCharacterRemove; return true;
-                case CheatCommand::UnitSetRace: permission = Permission::CommandUnitSetRace; return true;
-                case CheatCommand::UnitSetGender: permission = Permission::CommandUnitSetGender; return true;
-                case CheatCommand::UnitSetClass: permission = Permission::CommandUnitSetClass; return true;
-                case CheatCommand::UnitSetLevel: permission = Permission::CommandUnitSetLevel; return true;
-                case CheatCommand::ItemSetTemplate: permission = Permission::CommandItemSetTemplate; return true;
-                case CheatCommand::ItemSetStatTemplate: permission = Permission::CommandItemSetStatTemplate; return true;
-                case CheatCommand::ItemSetArmorTemplate: permission = Permission::CommandItemSetArmorTemplate; return true;
-                case CheatCommand::ItemSetWeaponTemplate: permission = Permission::CommandItemSetWeaponTemplate; return true;
-                case CheatCommand::ItemSetShieldTemplate: permission = Permission::CommandItemSetShieldTemplate; return true;
-                case CheatCommand::ItemAdd: permission = Permission::CommandItemAdd; return true;
-                case CheatCommand::ItemRemove: permission = Permission::CommandItemRemove; return true;
-                case CheatCommand::CreatureAdd: permission = Permission::CommandCreatureAdd; return true;
-                case CheatCommand::CreatureRemove: permission = Permission::CommandCreatureRemove; return true;
-                case CheatCommand::CreatureInfo: permission = Permission::CommandCreatureInfo; return true;
-                case CheatCommand::MapAdd: permission = Permission::CommandMapAdd; return true;
-                case CheatCommand::GotoAdd: permission = Permission::CommandGotoAdd; return true;
-                case CheatCommand::GotoAddHere: permission = Permission::CommandGotoAddHere; return true;
-                case CheatCommand::GotoRemove: permission = Permission::CommandGotoRemove; return true;
-                case CheatCommand::GotoMap: permission = Permission::CommandGotoMap; return true;
-                case CheatCommand::GotoLocation: permission = Permission::CommandGotoLocation; return true;
-                case CheatCommand::GotoXYZ: permission = Permission::CommandGotoXYZ; return true;
-                case CheatCommand::TriggerAdd: permission = Permission::CommandTriggerAdd; return true;
-                case CheatCommand::TriggerRemove: permission = Permission::CommandTriggerRemove; return true;
-                case CheatCommand::SpellSet: permission = Permission::CommandSpellSet; return true;
-                case CheatCommand::SpellEffectSet: permission = Permission::CommandSpellEffectSet; return true;
-                case CheatCommand::SpellProcDataSet: permission = Permission::CommandSpellProcDataSet; return true;
-                case CheatCommand::SpellProcLinkSet: permission = Permission::CommandSpellProcLinkSet; return true;
-                case CheatCommand::CreatureAddScript: permission = Permission::CommandCreatureAddScript; return true;
-                case CheatCommand::CreatureRemoveScript: permission = Permission::CommandCreatureRemoveScript; return true;
-                case CheatCommand::CreatureMove: permission = Permission::CommandCreatureMove; return true;
-                case CheatCommand::CreatureFollow: permission = Permission::CommandCreatureFollow; return true;
-                case CheatCommand::CreatureWander: permission = Permission::CommandCreatureWander; return true;
-                case CheatCommand::CreatureStop: permission = Permission::CommandCreatureStop; return true;
-                default: return false;
+                case CheatCommand::Damage:
+                    permission = Permission::CommandDamage;
+                    return true;
+                case CheatCommand::Heal:
+                    permission = Permission::CommandHeal;
+                    return true;
+                case CheatCommand::Kill:
+                    permission = Permission::CommandKill;
+                    return true;
+                case CheatCommand::Resurrect:
+                    permission = Permission::CommandResurrect;
+                    return true;
+                case CheatCommand::UnitMorph:
+                    permission = Permission::CommandUnitMorph;
+                    return true;
+                case CheatCommand::UnitDemorph:
+                    permission = Permission::CommandUnitDemorph;
+                    return true;
+                case CheatCommand::Teleport:
+                    permission = Permission::CommandTeleport;
+                    return true;
+                case CheatCommand::CharacterAdd:
+                    permission = Permission::CommandCharacterAdd;
+                    return true;
+                case CheatCommand::CharacterRemove:
+                    permission = Permission::CommandCharacterRemove;
+                    return true;
+                case CheatCommand::UnitSetRace:
+                    permission = Permission::CommandUnitSetRace;
+                    return true;
+                case CheatCommand::UnitSetGender:
+                    permission = Permission::CommandUnitSetGender;
+                    return true;
+                case CheatCommand::UnitSetClass:
+                    permission = Permission::CommandUnitSetClass;
+                    return true;
+                case CheatCommand::UnitSetLevel:
+                    permission = Permission::CommandUnitSetLevel;
+                    return true;
+                case CheatCommand::ItemSetTemplate:
+                    permission = Permission::CommandItemSetTemplate;
+                    return true;
+                case CheatCommand::ItemSetStatTemplate:
+                    permission = Permission::CommandItemSetStatTemplate;
+                    return true;
+                case CheatCommand::ItemSetArmorTemplate:
+                    permission = Permission::CommandItemSetArmorTemplate;
+                    return true;
+                case CheatCommand::ItemSetWeaponTemplate:
+                    permission = Permission::CommandItemSetWeaponTemplate;
+                    return true;
+                case CheatCommand::ItemSetShieldTemplate:
+                    permission = Permission::CommandItemSetShieldTemplate;
+                    return true;
+                case CheatCommand::ItemAdd:
+                    permission = Permission::CommandItemAdd;
+                    return true;
+                case CheatCommand::ItemRemove:
+                    permission = Permission::CommandItemRemove;
+                    return true;
+                case CheatCommand::CreatureAdd:
+                    permission = Permission::CommandCreatureAdd;
+                    return true;
+                case CheatCommand::CreatureRemove:
+                    permission = Permission::CommandCreatureRemove;
+                    return true;
+                case CheatCommand::CreatureInfo:
+                    permission = Permission::CommandCreatureInfo;
+                    return true;
+                case CheatCommand::MapAdd:
+                    permission = Permission::CommandMapAdd;
+                    return true;
+                case CheatCommand::GotoAdd:
+                    permission = Permission::CommandGotoAdd;
+                    return true;
+                case CheatCommand::GotoAddHere:
+                    permission = Permission::CommandGotoAddHere;
+                    return true;
+                case CheatCommand::GotoRemove:
+                    permission = Permission::CommandGotoRemove;
+                    return true;
+                case CheatCommand::GotoMap:
+                    permission = Permission::CommandGotoMap;
+                    return true;
+                case CheatCommand::GotoLocation:
+                    permission = Permission::CommandGotoLocation;
+                    return true;
+                case CheatCommand::GotoXYZ:
+                    permission = Permission::CommandGotoXYZ;
+                    return true;
+                case CheatCommand::TriggerAdd:
+                    permission = Permission::CommandTriggerAdd;
+                    return true;
+                case CheatCommand::TriggerRemove:
+                    permission = Permission::CommandTriggerRemove;
+                    return true;
+                case CheatCommand::SpellSet:
+                    permission = Permission::CommandSpellSet;
+                    return true;
+                case CheatCommand::SpellEffectSet:
+                    permission = Permission::CommandSpellEffectSet;
+                    return true;
+                case CheatCommand::SpellProcDataSet:
+                    permission = Permission::CommandSpellProcDataSet;
+                    return true;
+                case CheatCommand::SpellProcLinkSet:
+                    permission = Permission::CommandSpellProcLinkSet;
+                    return true;
+                case CheatCommand::CreatureAddScript:
+                    permission = Permission::CommandCreatureAddScript;
+                    return true;
+                case CheatCommand::CreatureRemoveScript:
+                    permission = Permission::CommandCreatureRemoveScript;
+                    return true;
+                case CheatCommand::CreatureMove:
+                    permission = Permission::CommandCreatureMove;
+                    return true;
+                case CheatCommand::CreatureFollow:
+                    permission = Permission::CommandCreatureFollow;
+                    return true;
+                case CheatCommand::CreatureWander:
+                    permission = Permission::CommandCreatureWander;
+                    return true;
+                case CheatCommand::CreatureStop:
+                    permission = Permission::CommandCreatureStop;
+                    return true;
+                case CheatCommand::FactionReaction:
+                    permission = Permission::CommandFactionReaction;
+                    return true;
+                case CheatCommand::FactionReputationInfo:
+                    permission = Permission::CommandFactionReputationView;
+                    return true;
+                case CheatCommand::FactionReputationSet:
+                case CheatCommand::FactionReputationModify:
+                case CheatCommand::FactionReputationRemove:
+                case CheatCommand::FactionReputationSetFlags:
+                case CheatCommand::FactionReputationLock:
+                    permission = Permission::CommandFactionReputationModify;
+                    return true;
+                case CheatCommand::UnitSetFaction:
+                    permission = Permission::CommandUnitSetFaction;
+                    return true;
+
+                default:
+                    return false;
             }
+        }
+
+        std::string_view ReactionName(Gameplay::Faction::Reaction reaction)
+        {
+            using Gameplay::Faction::Reaction;
+            switch (reaction)
+            {
+                case Reaction::Hostile:
+                    return "Hostile";
+                case Reaction::Unfriendly:
+                    return "Unfriendly";
+                case Reaction::Neutral:
+                    return "Neutral";
+                case Reaction::Friendly:
+                    return "Friendly";
+                default:
+                    return "Invalid";
+            }
+        }
+
+        bool TryGetAdministrativeReputationTarget(World& world, Singletons::NetworkState& networkState, Network::SocketID socketID, ObjectGUID characterGUID, entt::entity& characterEntity, Components::CharacterReputation*& reputation, Components::UnitFaction*& characterFaction)
+        {
+            characterEntity = world.GetEntity(characterGUID);
+            reputation = world.TryGet<Components::CharacterReputation>(characterEntity);
+            characterFaction = world.TryGet<Components::UnitFaction>(characterEntity);
+            if (characterEntity != entt::null && characterGUID.GetType() == ObjectGUID::Type::Player && reputation && characterFaction)
+                return true;
+
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Reputation administration requires a live player GUID in the current world.");
+            return false;
+        }
+
+        bool TryGetAdministrativeReputationFaction(World& world, Singletons::NetworkState& networkState, Network::SocketID socketID, const Gameplay::Faction::FactionRuntimeData& runtime, Gameplay::Faction::FactionID factionID, Gameplay::Faction::FactionIndex& factionIndex)
+        {
+            if (factionID != Gameplay::Faction::NONE_FACTION_ID && runtime.TryGetFactionIndex(factionID, factionIndex) && Gameplay::Faction::HasFlag(runtime.GetDefinition(factionIndex).flags, Gameplay::Faction::DefinitionFlags::AllowsReputation))
+                return true;
+
+            Util::Unit::SendChatMessage(world, networkState, socketID, std::format("Faction {} is unknown or does not allow reputation.", factionID));
+            return false;
+        }
+
+        void SendAdministrativeReputationEntry(World& world, Singletons::NetworkState& networkState, Network::SocketID socketID, entt::entity characterEntity, const Gameplay::Faction::FactionRuntimeData& runtime, const Components::UnitFaction& characterFaction, const Components::CharacterReputation& reputation, Gameplay::Faction::FactionIndex factionIndex)
+        {
+            const auto& definition = runtime.GetDefinition(factionIndex);
+            const auto* state = Util::Faction::FindReputation(reputation, factionIndex);
+            const bool dirty = reputation.dirtyByFaction.contains(factionIndex);
+            const bool removedDirty = reputation.removedDirtyByFaction.contains(factionIndex);
+            const bool pendingNetwork = reputation.pendingNetworkByFaction.contains(factionIndex);
+            if (!state)
+            {
+                const i32 fallback = runtime.GetStartingReputation(characterFaction.assignedFaction, factionIndex);
+                const auto& standing = runtime.GetStanding(fallback);
+                const auto& effectiveStanding = Util::Faction::GetEffectiveStanding(world, characterEntity, runtime, definition.id);
+                Util::Unit::SendChatMessage(world, networkState, socketID,
+                    std::format("- {} ({}): absent, fallback {} ({}), effective standing {}, pending delete {}, pending network {}",
+                        definition.id, definition.name, fallback, standing.name, effectiveStanding.name,
+                        removedDirty, pendingNetwork));
+                return;
+            }
+
+            const auto& standing = runtime.GetStanding(state->value);
+            const auto& effectiveStanding = Util::Faction::GetEffectiveStanding(world, characterEntity, runtime, definition.id);
+            const u16 flags = state->flags;
+            using Gameplay::Faction::ReputationFlags;
+            Util::Unit::SendChatMessage(world, networkState, socketID,
+                std::format("- {} ({}): value {} ({}), effective standing {}, flags {} "
+                            "[Visible {}, Tracked {}, AtWar {}, Inactive {}, Locked {}], dirty {}, pending network {}",
+                    definition.id, definition.name, state->value, standing.name, effectiveStanding.name, flags,
+                    (flags & static_cast<u16>(ReputationFlags::Visible)) != 0,
+                    (flags & static_cast<u16>(ReputationFlags::Tracked)) != 0,
+                    (flags & static_cast<u16>(ReputationFlags::AtWar)) != 0,
+                    (flags & static_cast<u16>(ReputationFlags::Inactive)) != 0,
+                    (flags & static_cast<u16>(ReputationFlags::Locked)) != 0,
+                    dirty, pendingNetwork));
         }
 
         AutoCVar_Int CVAR_NetworkMaxConnections(CVarCategory::Server, "network.maxConnections", "Maximum concurrent server connections. Read during server startup.", 20000);
@@ -185,8 +382,7 @@ namespace ECS::Systems
         {
             const size_t globalMaxReservedBytes = GetConfiguredBytes(CVAR_NetworkPacketArenaGlobalBudgetMiB, 1024ull * 1024ull);
             const size_t maxReservedBytes = GetConfiguredBytes(CVAR_NetworkPacketArenaPerArenaBudgetMiB, 1024ull * 1024ull);
-            return
-            {
+            return {
                 .globalMaxReservedBytes = globalMaxReservedBytes,
                 .maxReservedBytes = maxReservedBytes,
                 .blockSize = std::min(GetConfiguredBytes(CVAR_NetworkPacketArenaBlockMiB, 1024ull * 1024ull), std::min(globalMaxReservedBytes, maxReservedBytes)),
@@ -202,8 +398,7 @@ namespace ECS::Systems
             const i32 configuredCriticalReserveEvents = CVAR_NetworkCriticalQueueReserveEvents.Get();
             const size_t globalMaxReservedBytes = GetConfiguredBytes(CVAR_NetworkPacketArenaGlobalBudgetMiB, 1024ull * 1024ull);
             const size_t inboundMaxReservedBytes = GetConfiguredBytes(CVAR_NetworkInboundPacketArenaBudgetMiB, 1024ull * 1024ull);
-            return
-            {
+            return {
                 .maxConnections = maxConnections,
                 .maxOutboundQueueBytes = GetConfiguredBytes(CVAR_NetworkOutboundQueueMiB, 1024ull * 1024ull),
                 .maxOutboundQueueEvents = maxOutboundQueueEvents,
@@ -300,6 +495,7 @@ namespace ECS::Systems
     {
         struct Result
         {
+        public:
             u8 NameIsInvalid : 1 = 0;
             u8 CharacterAlreadyExists : 1 = 0;
             u8 DatabaseTransactionFailed : 1 = 0;
@@ -327,11 +523,7 @@ namespace ECS::Systems
         u8 resultAsValue = *reinterpret_cast<u8*>(&result);
         if (resultAsValue != 0)
         {
-            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{
-                .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterAdd),
-                .result = resultAsValue,
-                .response = "Unknown"
-                });
+            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{ .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterAdd), .result = resultAsValue, .response = "Unknown" });
             return true;
         }
 
@@ -339,8 +531,7 @@ namespace ECS::Systems
         u64 characterID;
         ECS::Result creationResult = Util::Persistence::Character::CharacterCreate(gameCache, accountID, charName, 1, characterID);
 
-        Result cheatCommandResult =
-        {
+        Result cheatCommandResult = {
             .NameIsInvalid = 0,
             .CharacterAlreadyExists = creationResult == ECS::Result::CharacterAlreadyExists,
             .DatabaseTransactionFailed = creationResult == ECS::Result::DatabaseError || creationResult == ECS::Result::DatabaseNotConnected,
@@ -349,17 +540,15 @@ namespace ECS::Systems
 
         u8 cheatCommandResultVal = *reinterpret_cast<u8*>(&cheatCommandResult);
 
-        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{
-            .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterAdd),
-            .result = cheatCommandResultVal,
-            .response = "Unknown"
-            });
+        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{ .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterAdd), .result = cheatCommandResultVal, .response = "Unknown" });
         return true;
     }
+
     bool HandleOnCheatCharacterRemove(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
     {
         struct Result
         {
+        public:
             u8 CharacterDoesNotExist : 1 = 0;
             u8 DatabaseTransactionFailed : 1 = 0;
             u8 InsufficientPermission : 1 = 0;
@@ -380,11 +569,7 @@ namespace ECS::Systems
             result.CharacterDoesNotExist = 1;
             u8 resultAsValue = *reinterpret_cast<u8*>(&result);
 
-            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{
-                .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterRemove),
-                .result = resultAsValue,
-                .response = "Unknown"
-                });
+            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{ .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterRemove), .result = resultAsValue, .response = "Unknown" });
             return true;
         }
 
@@ -410,11 +595,7 @@ namespace ECS::Systems
         if (result.CharacterDoesNotExist || result.DatabaseTransactionFailed)
         {
             u8 resultAsValue = *reinterpret_cast<u8*>(&result);
-            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{
-                .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterRemove),
-                .result = resultAsValue,
-                .response = "Unknown"
-                });
+            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{ .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterRemove), .result = resultAsValue, .response = "Unknown" });
             return true;
         }
 
@@ -436,11 +617,7 @@ namespace ECS::Systems
 
         u8 cheatCommandResultVal = *reinterpret_cast<u8*>(&result);
 
-        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{
-            .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterRemove),
-            .result = cheatCommandResultVal,
-            .response = "Unknown"
-            });
+        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerCheatCommandResultPacket{ .command = static_cast<u8>(MetaGen::Shared::Cheat::CheatCommandEnum::CharacterRemove), .result = cheatCommandResultVal, .response = "Unknown" });
 
         return true;
     }
@@ -518,7 +695,35 @@ namespace ECS::Systems
         if (!Util::Cache::GetCreatureTemplateByID(gameCache, creatureInfo.templateID, creatureTemplate))
             return true;
 
-        std::string response = std::format("Creature Info:\n- GUID : {}\n- TemplateID : {}\n- Name : {}\n- Display ID : {}\n- Level : {}\n- Unit Class : {}\n- Movement : (Type : {}, Radius : {}, Walk Speed : {}, Run Speed : {})\n- Leash : (Range : {}, Evading : {})\n- Lifecycle : (State : {}, Timer : {:.1f}, Respawn : {}-{} sec)\n- Melee : (Damage : {}, Attack Time : {:.0f} ms, School : {})\n- Mods : (Health : {}, Armor : {}, Resource : {}, Damage : {})\n- AI Script Name : ",
+        const auto* faction = world.TryGet<Components::UnitFaction>(creatureEntity);
+        const auto* factionPolicy = world.TryGet<Components::CreatureFactionPolicy>(creatureEntity);
+        const auto* factionModifiers = world.TryGet<Components::FactionModifiers>(creatureEntity);
+        const auto* threatTable = world.TryGet<Components::CreatureThreatTable>(creatureEntity);
+        const auto* targetInfo = world.TryGet<Components::TargetInfo>(creatureEntity);
+        const ObjectGUID targetGUID = targetInfo && world.ValidEntity(targetInfo->target)
+                                          ? world.Get<Components::ObjectInfo>(targetInfo->target).guid
+                                          : ObjectGUID::Empty;
+
+        std::string factionText = "unavailable";
+        if (faction && gameCache.factionRuntimeData)
+        {
+            const auto& assigned = gameCache.factionRuntimeData->GetDefinition(faction->assignedFaction);
+            const auto& effective = gameCache.factionRuntimeData->GetDefinition(faction->effectiveFaction);
+            const auto bounds = Gameplay::Faction::ReactionBounds::Unpack(faction->effectivePlayerReactionBounds);
+            factionText = std::format("Assigned : {} ({}), Effective : {} ({}), Bounds : {}..{}, Flags : {}, Modifiers : {}",
+                assigned.id, assigned.name, effective.id, effective.name, ReactionName(bounds.minimum),
+                ReactionName(bounds.maximum), faction->flags,
+                factionModifiers ? factionModifiers->contributors.size() : 0);
+        }
+
+        const std::string policyText = factionPolicy
+                                           ? std::format("Aggression : {}, Assistance : {}, Detection Range : {}, Assistance Range : {}",
+                                                 Gameplay::Faction::CreatureAggressionPolicyName(factionPolicy->aggression),
+                                                 Gameplay::Faction::CreatureAssistancePolicyName(factionPolicy->assistance),
+                                                 factionPolicy->detectionRange, factionPolicy->assistanceRange)
+                                           : "unavailable";
+
+        std::string response = std::format("Creature Info:\n- GUID : {}\n- TemplateID : {}\n- Name : {}\n- Display ID : {}\n- Level : {}\n- Unit Class : {}\n- Movement : (Type : {}, Radius : {}, Walk Speed : {}, Run Speed : {})\n- Combat : (In Combat : {}, Target : {}, Threat Entries : {}, Evading : {})\n- Faction : ({})\n- Faction Policy : ({})\n- Leash : (Range : {})\n- Lifecycle : (State : {}, Timer : {:.1f}, Respawn : {}-{} sec)\n- Melee : (Damage : {}, Attack Time : {:.0f} ms, School : {})\n- Mods : (Health : {}, Armor : {}, Resource : {}, Damage : {})\n- AI Script Name : ",
             creatureGUID.ToString(),
             creatureInfo.templateID,
             creatureInfo.name,
@@ -529,8 +734,13 @@ namespace ECS::Systems
             creatureInfo.wanderDistance,
             creatureInfo.walkSpeed,
             creatureInfo.runSpeed,
-            creatureCombatInfo.leashRange,
+            world.AllOf<Tags::IsInCombat>(creatureEntity),
+            targetGUID.ToString(),
+            threatTable ? threatTable->threatList.size() : 0,
             creatureCombatInfo.isEvading,
+            factionText,
+            policyText,
+            creatureCombatInfo.leashRange,
             static_cast<u16>(creatureLifecycleInfo.state),
             creatureLifecycleInfo.timeRemaining,
             creatureLifecycleInfo.spawnTimeInSecMin,
@@ -696,7 +906,7 @@ namespace ECS::Systems
 
         auto& unitFields = world.Get<Components::UnitFields>(entity);
         Util::Unit::UpdateDisplayGender(*world.registry, entity, unitFields, unitGender);
-        
+
         return true;
     }
     bool HandleOnCheatUnitSetClass(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
@@ -735,6 +945,60 @@ namespace ECS::Systems
         if (Util::Persistence::Character::CharacterSetLevel(gameCache, *world.registry, characterID, level) != ECS::Result::Success)
             return false;
 
+        return true;
+    }
+
+    bool HandleOnCheatUnitSetFaction(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        Gameplay::Faction::FactionID factionID = Gameplay::Faction::NONE_FACTION_ID;
+        if (!message.buffer->GetU16(factionID))
+            return false;
+
+        auto& gameCache = registry->ctx().get<Singletons::GameCache>();
+        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        if (!gameCache.factionRuntimeData)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Faction runtime data is unavailable.");
+            return true;
+        }
+
+        Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+        auto* unitFaction = world.TryGet<Components::UnitFaction>(entity);
+        auto* objectInfo = world.TryGet<Components::ObjectInfo>(entity);
+        if (!unitFaction || !objectInfo || objectInfo->guid.GetType() != ObjectGUID::Type::Player)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Faction assignment requires a live player character.");
+            return true;
+        }
+
+        if (!gameCache.factionRuntimeData->TryGetFactionIndex(factionID, factionIndex))
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, std::format("Faction {} is unknown.", factionID));
+            return true;
+        }
+
+        auto result = gameCache.database->SetCharacterFaction(objectInfo->guid.GetCounter(), factionID);
+        if (!result)
+        {
+            ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_character_faction", result.Failure());
+            return true;
+        }
+        if (result.Value() != Database::UpdateOutcome::Updated)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Faction assignment failed because the character row was not found.");
+            return true;
+        }
+
+        if (!Util::Faction::SetAssignedFaction(world, entity, *gameCache.factionRuntimeData, factionID))
+        {
+            NC_LOG_ERROR("Failed to apply validated faction ID {0} to character {1} after persisting it", factionID, objectInfo->guid.GetCounter());
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Faction was persisted but could not be applied in memory; relog and inspect the server log.");
+            return true;
+        }
+
+        const auto& assigned = gameCache.factionRuntimeData->GetDefinition(unitFaction->assignedFaction);
+        const auto& effective = gameCache.factionRuntimeData->GetDefinition(unitFaction->effectiveFaction);
+        Util::Unit::SendChatMessage(world, networkState, socketID, std::format("Assigned faction set to {} ({}); effective faction is {} ({}).", assigned.id, assigned.name, effective.id, effective.name));
         return true;
     }
 
@@ -780,18 +1044,13 @@ namespace ECS::Systems
         u64 itemInstanceID;
         Database::OperationFailure databaseFailure = Database::OperationFailure::None;
         if (Util::Persistence::Character::ItemAdd(gameCache, *world.registry, entity, characterID, itemID, container,
-            containerID, slotIndex, itemInstanceID, &databaseFailure) == ECS::Result::Success)
+                containerID, slotIndex, itemInstanceID, &databaseFailure) == ECS::Result::Success)
         {
             Database::ItemInstance* itemInstance = nullptr;
             if (Util::Cache::GetItemInstanceByID(gameCache, itemInstanceID, itemInstance))
             {
                 ObjectGUID itemInstanceGUID = ObjectGUID::CreateItem(itemInstanceID);
-                Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerItemAddPacket{
-                    .guid = itemInstanceGUID,
-                    .itemID = itemInstance->itemID,
-                    .count = itemInstance->count,
-                    .durability = itemInstance->durability
-                });
+                Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerItemAddPacket{ .guid = itemInstanceGUID, .itemID = itemInstance->itemID, .count = itemInstance->count, .durability = itemInstance->durability });
             }
         }
         else if (databaseFailure != Database::OperationFailure::None)
@@ -854,9 +1113,13 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetItemTemplate(itemTemplate);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_item_template", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
+        {
             gameCache.itemTables.templateIDToTemplateDefinition[itemTemplate.id] = itemTemplate;
+        }
 
         return true;
     }
@@ -871,9 +1134,13 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetItemStatTemplate(itemStatTemplate);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_item_stat_template", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
+        {
             gameCache.itemTables.statTemplateIDToTemplateDefinition[itemStatTemplate.id] = itemStatTemplate;
+        }
 
         return true;
     }
@@ -888,9 +1155,13 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetItemArmorTemplate(itemArmorTemplate);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_item_armor_template", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
+        {
             gameCache.itemTables.armorTemplateIDToTemplateDefinition[itemArmorTemplate.id] = itemArmorTemplate;
+        }
 
         return true;
     }
@@ -905,9 +1176,13 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetItemWeaponTemplate(itemWeaponTemplate);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_item_weapon_template", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
+        {
             gameCache.itemTables.weaponTemplateIDToTemplateDefinition[itemWeaponTemplate.id] = itemWeaponTemplate;
+        }
 
         return true;
     }
@@ -922,9 +1197,13 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetItemShieldTemplate(itemShieldTemplate);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_item_shield_template", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
+        {
             gameCache.itemTables.shieldTemplateIDToTemplateDefinition[itemShieldTemplate.id] = itemShieldTemplate;
+        }
 
         return true;
     }
@@ -940,9 +1219,13 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetMap(map);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_map", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
+        {
             gameCache.mapTables.idToDefinition[map.id] = map;
+        }
 
         return true;
     }
@@ -1168,8 +1451,7 @@ namespace ECS::Systems
 
         entt::entity triggerEntity = world.CreateEntity();
 
-        Events::ProximityTriggerCreate event =
-        {
+        Events::ProximityTriggerCreate event = {
             .name = name,
             .flags = static_cast<MetaGen::Shared::ProximityTrigger::ProximityTriggerFlagEnum>(flags),
 
@@ -1213,9 +1495,13 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetSpell(spell);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_spell", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
+        {
             gameCache.spellTables.idToDefinition[spell.id] = spell;
+        }
 
         return true;
     }
@@ -1237,9 +1523,13 @@ namespace ECS::Systems
         {
             auto cache = gameCache.database->LoadSpellCache();
             if (cache)
+            {
                 gameCache.spellTables = std::move(cache).Value();
+            }
             else
+            {
                 ReportAdministrativeDatabaseFailure(registry, world, socketID, "reload_spell_cache", cache.Failure());
+            }
         }
 
         return true;
@@ -1260,14 +1550,20 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetSpellProcData(spellProcDataID, spellProcData);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_spell_proc_data", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
         {
             auto cache = gameCache.database->LoadSpellCache();
             if (cache)
+            {
                 gameCache.spellTables = std::move(cache).Value();
+            }
             else
+            {
                 ReportAdministrativeDatabaseFailure(registry, world, socketID, "reload_spell_cache", cache.Failure());
+            }
         }
 
         return true;
@@ -1288,14 +1584,20 @@ namespace ECS::Systems
 
         auto result = gameCache.database->SetSpellProcLink(spellProcLinkID, spellProcLink);
         if (!result)
+        {
             ReportAdministrativeDatabaseFailure(registry, world, socketID, "set_spell_proc_link", result.Failure());
+        }
         else if (result.Value() == Database::UpdateOutcome::Updated)
         {
             auto cache = gameCache.database->LoadSpellCache();
             if (cache)
+            {
                 gameCache.spellTables = std::move(cache).Value();
+            }
             else
+            {
                 ReportAdministrativeDatabaseFailure(registry, world, socketID, "reload_spell_cache", cache.Failure());
+            }
         }
 
         return true;
@@ -1395,6 +1697,306 @@ namespace ECS::Systems
         return true;
     }
 
+    bool HandleOnCheatFactionReaction(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        ObjectGUID observerGUID;
+        ObjectGUID targetGUID;
+        if (!message.buffer->Deserialize(observerGUID) || !message.buffer->Deserialize(targetGUID))
+            return false;
+
+        auto& ctx = registry->ctx();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
+        if (!gameCache.factionRuntimeData)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Faction runtime data is unavailable.");
+            return true;
+        }
+
+        const entt::entity observer = world.GetEntity(observerGUID);
+        const entt::entity target = world.GetEntity(targetGUID);
+        const auto* observerFaction = world.TryGet<Components::UnitFaction>(observer);
+        const auto* targetFaction = world.TryGet<Components::UnitFaction>(target);
+        if (observer == entt::null || target == entt::null || !observerFaction || !targetFaction)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Faction reaction requires two live unit GUIDs in the current world.");
+            return true;
+        }
+
+        const auto& runtime = *gameCache.factionRuntimeData;
+        const auto& observerAssigned = runtime.GetDefinition(observerFaction->assignedFaction);
+        const auto& observerEffective = runtime.GetDefinition(observerFaction->effectiveFaction);
+        const auto& targetAssigned = runtime.GetDefinition(targetFaction->assignedFaction);
+        const auto& targetEffective = runtime.GetDefinition(targetFaction->effectiveFaction);
+        const auto observerBounds = Gameplay::Faction::ReactionBounds::Unpack(observerFaction->effectivePlayerReactionBounds);
+        const auto targetBounds = Gameplay::Faction::ReactionBounds::Unpack(targetFaction->effectivePlayerReactionBounds);
+        const auto baseForward = runtime.GetRelation(observerFaction->effectiveFaction, targetFaction->effectiveFaction);
+        const auto baseReverse = runtime.GetRelation(targetFaction->effectiveFaction, observerFaction->effectiveFaction);
+        const auto forward = Util::Faction::GetReaction(world, observer, target, runtime);
+        const auto reverse = Util::Faction::GetReaction(world, target, observer, runtime);
+
+        std::string reputationText = "none";
+        if (const auto* reputation = world.TryGet<Components::CharacterReputation>(observer))
+        {
+            if (const auto* state = Util::Faction::FindReputation(*reputation, targetFaction->effectiveFaction))
+            {
+                const auto& standing = runtime.GetStanding(state->value);
+                reputationText = std::format("{} ({}), flags {}", state->value, standing.name, state->flags);
+            }
+        }
+
+        const auto* observerModifiers = world.TryGet<Components::FactionModifiers>(observer);
+        const auto* targetModifiers = world.TryGet<Components::FactionModifiers>(target);
+        const size_t observerContributorCount = observerModifiers ? observerModifiers->contributors.size() : 0;
+        const size_t targetContributorCount = targetModifiers ? targetModifiers->contributors.size() : 0;
+        std::string presentationText = "n/a";
+        std::string interactionText = "n/a";
+        if (world.TryGet<Components::CharacterReputation>(observer))
+        {
+            presentationText = std::string(ReactionName(Util::Faction::GetPresentationReaction(world, observer, target, runtime)));
+            interactionText = Util::Faction::CanInteract(world, observer, target, runtime) ? "true" : "false";
+        }
+
+        const std::string response = std::format(
+            "Faction reaction:\n"
+            "- Observer: {} assigned {} ({}) effective {} ({}) bounds {}..{} modifiers {}\n"
+            "- Target: {} assigned {} ({}) effective {} ({}) bounds {}..{} modifiers {}\n"
+            "- Base relation observer -> target: {}\n"
+            "- Base relation target -> observer: {}\n"
+            "- Observer persistent reputation for target faction: {}\n"
+            "- Resolved observer -> target: {}\n"
+            "- Resolved target -> observer: {}\n"
+            "- Presentation: {}\n"
+            "- CanAttack: {}\n"
+            "- CanAssist: {}\n"
+            "- CanInteract: {}",
+            observerGUID.ToString(), observerAssigned.id, observerAssigned.name, observerEffective.id,
+            observerEffective.name, ReactionName(observerBounds.minimum), ReactionName(observerBounds.maximum),
+            observerContributorCount, targetGUID.ToString(), targetAssigned.id, targetAssigned.name,
+            targetEffective.id, targetEffective.name, ReactionName(targetBounds.minimum),
+            ReactionName(targetBounds.maximum), targetContributorCount, ReactionName(baseForward),
+            ReactionName(baseReverse), reputationText, ReactionName(forward), ReactionName(reverse),
+            presentationText, Util::Faction::CanAttack(world, observer, target, runtime),
+            Util::Faction::CanAssist(world, observer, target, runtime), interactionText);
+        Util::Unit::SendChatMessage(world, networkState, socketID, response);
+        return true;
+    }
+
+    bool HandleOnCheatFactionReputationInfo(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        ObjectGUID characterGUID;
+        Gameplay::Faction::FactionID factionID = Gameplay::Faction::NONE_FACTION_ID;
+        if (!message.buffer->Deserialize(characterGUID) || !message.buffer->GetU16(factionID))
+            return false;
+
+        auto& gameCache = registry->ctx().get<Singletons::GameCache>();
+        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        if (!gameCache.factionRuntimeData)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Faction runtime data is unavailable.");
+            return true;
+        }
+
+        entt::entity characterEntity = entt::null;
+        Components::CharacterReputation* reputation = nullptr;
+        Components::UnitFaction* characterFaction = nullptr;
+        if (!TryGetAdministrativeReputationTarget(world, networkState, socketID, characterGUID, characterEntity, reputation, characterFaction))
+        {
+            return true;
+        }
+
+        const auto& runtime = *gameCache.factionRuntimeData;
+        if (factionID != Gameplay::Faction::NONE_FACTION_ID)
+        {
+            Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+            if (TryGetAdministrativeReputationFaction(world, networkState, socketID, runtime, factionID, factionIndex))
+            {
+                SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, runtime, *characterFaction, *reputation, factionIndex);
+            }
+
+            return true;
+        }
+
+        const auto& assigned = runtime.GetDefinition(characterFaction->assignedFaction);
+        Util::Unit::SendChatMessage(world, networkState, socketID,
+            std::format("Reputation for {}: {} active entries, {} pending upserts, {} pending deletes; "
+                        "assigned faction {} ({})",
+                characterGUID.ToString(), reputation->byFaction.size(), reputation->dirtyByFaction.size(),
+                reputation->removedDirtyByFaction.size(), assigned.id, assigned.name));
+
+        std::vector<Gameplay::Faction::FactionIndex> factions;
+        factions.reserve(reputation->byFaction.size() + reputation->removedDirtyByFaction.size());
+        for (const auto& [faction, state] : reputation->byFaction)
+        {
+            factions.push_back(faction);
+        }
+
+        for (const auto& [faction, source] : reputation->removedDirtyByFaction)
+        {
+            factions.push_back(faction);
+        }
+
+        std::sort(factions.begin(), factions.end(), [&](auto left, auto right)
+        {
+            return runtime.GetFactionID(left) < runtime.GetFactionID(right);
+        });
+
+        for (Gameplay::Faction::FactionIndex faction : factions)
+        {
+            SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, runtime, *characterFaction, *reputation, faction);
+        }
+
+        return true;
+    }
+
+    bool HandleOnCheatFactionReputationSet(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        ObjectGUID characterGUID;
+        Gameplay::Faction::FactionID factionID = Gameplay::Faction::NONE_FACTION_ID;
+        i32 value = 0;
+        if (!message.buffer->Deserialize(characterGUID) || !message.buffer->GetU16(factionID) || !message.buffer->GetI32(value))
+            return false;
+
+        auto& gameCache = registry->ctx().get<Singletons::GameCache>();
+        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        entt::entity characterEntity = entt::null;
+        Components::CharacterReputation* reputation = nullptr;
+        Components::UnitFaction* characterFaction = nullptr;
+        Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+        if (!gameCache.factionRuntimeData || !TryGetAdministrativeReputationTarget(world, networkState, socketID, characterGUID, characterEntity, reputation, characterFaction) || !TryGetAdministrativeReputationFaction(world, networkState, socketID, *gameCache.factionRuntimeData, factionID, factionIndex))
+            return true;
+
+        const bool changed = Util::Faction::SetReputation(world, characterEntity, *gameCache.factionRuntimeData, factionID, value, { .type = Gameplay::Faction::ReputationSourceType::Administrative });
+        Util::Unit::SendChatMessage(world, networkState, socketID, changed ? "Administrative reputation value updated." : "Administrative reputation set made no change.");
+        SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, *gameCache.factionRuntimeData, *characterFaction, *reputation, factionIndex);
+        return true;
+    }
+
+    bool HandleOnCheatFactionReputationModify(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        ObjectGUID characterGUID;
+        Gameplay::Faction::FactionID factionID = Gameplay::Faction::NONE_FACTION_ID;
+        i32 delta = 0;
+        if (!message.buffer->Deserialize(characterGUID) || !message.buffer->GetU16(factionID) || !message.buffer->GetI32(delta))
+            return false;
+
+        auto& gameCache = registry->ctx().get<Singletons::GameCache>();
+        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        entt::entity characterEntity = entt::null;
+        Components::CharacterReputation* reputation = nullptr;
+        Components::UnitFaction* characterFaction = nullptr;
+        Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+        if (!gameCache.factionRuntimeData || !TryGetAdministrativeReputationTarget(world, networkState, socketID, characterGUID, characterEntity, reputation, characterFaction) || !TryGetAdministrativeReputationFaction(world, networkState, socketID, *gameCache.factionRuntimeData, factionID, factionIndex))
+            return true;
+
+        const bool changed = Util::Faction::ModifyReputation(world, characterEntity, *gameCache.factionRuntimeData, factionID, delta, { .type = Gameplay::Faction::ReputationSourceType::Administrative });
+        Util::Unit::SendChatMessage(world, networkState, socketID, changed ? "Administrative reputation value modified." : "Administrative reputation modification made no change.");
+        SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, *gameCache.factionRuntimeData, *characterFaction, *reputation, factionIndex);
+        return true;
+    }
+
+    bool HandleOnCheatFactionReputationRemove(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        ObjectGUID characterGUID;
+        Gameplay::Faction::FactionID factionID = Gameplay::Faction::NONE_FACTION_ID;
+        if (!message.buffer->Deserialize(characterGUID) || !message.buffer->GetU16(factionID))
+            return false;
+
+        auto& gameCache = registry->ctx().get<Singletons::GameCache>();
+        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        entt::entity characterEntity = entt::null;
+        Components::CharacterReputation* reputation = nullptr;
+        Components::UnitFaction* characterFaction = nullptr;
+        Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+        if (!gameCache.factionRuntimeData || !TryGetAdministrativeReputationTarget(world, networkState, socketID, characterGUID, characterEntity, reputation, characterFaction) || !TryGetAdministrativeReputationFaction(world, networkState, socketID, *gameCache.factionRuntimeData, factionID, factionIndex))
+            return true;
+
+        const bool changed = Util::Faction::RemoveReputation(world, characterEntity, *gameCache.factionRuntimeData, factionID, { .type = Gameplay::Faction::ReputationSourceType::Administrative });
+        Util::Unit::SendChatMessage(world, networkState, socketID, changed ? "Administrative reputation entry removed." : "Administrative reputation remove made no change.");
+        SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, *gameCache.factionRuntimeData, *characterFaction, *reputation, factionIndex);
+        return true;
+    }
+
+    bool HandleOnCheatFactionReputationSetFlags(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        ObjectGUID characterGUID;
+        Gameplay::Faction::FactionID factionID = Gameplay::Faction::NONE_FACTION_ID;
+        u16 flags = 0;
+        if (!message.buffer->Deserialize(characterGUID) || !message.buffer->GetU16(factionID) || !message.buffer->GetU16(flags))
+            return false;
+
+        auto& gameCache = registry->ctx().get<Singletons::GameCache>();
+        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        entt::entity characterEntity = entt::null;
+        Components::CharacterReputation* reputation = nullptr;
+        Components::UnitFaction* characterFaction = nullptr;
+        Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+        if (!gameCache.factionRuntimeData || !TryGetAdministrativeReputationTarget(world, networkState, socketID, characterGUID, characterEntity, reputation, characterFaction) || !TryGetAdministrativeReputationFaction(world, networkState, socketID, *gameCache.factionRuntimeData, factionID, factionIndex))
+            return true;
+
+        if ((flags & ~Gameplay::Faction::REPUTATION_FLAG_MASK) != 0)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, std::format("Reputation flags {} contain unknown bits.", flags));
+            SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, *gameCache.factionRuntimeData, *characterFaction, *reputation, factionIndex);
+            return true;
+        }
+
+        const auto& definition = gameCache.factionRuntimeData->GetDefinition(factionIndex);
+        if ((flags & static_cast<u16>(Gameplay::Faction::ReputationFlags::AtWar)) != 0 && !Gameplay::Faction::HasFlag(definition.flags, Gameplay::Faction::DefinitionFlags::CanSetAtWar))
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, std::format("Faction {} ({}) cannot be set at war.", definition.id, definition.name));
+            SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, *gameCache.factionRuntimeData, *characterFaction, *reputation, factionIndex);
+            return true;
+        }
+
+        const bool changed = Util::Faction::SetReputationFlags(world, characterEntity, *gameCache.factionRuntimeData, factionID, flags, { .type = Gameplay::Faction::ReputationSourceType::Administrative });
+        Util::Unit::SendChatMessage(world, networkState, socketID, changed ? "Administrative reputation flags updated." : "Administrative reputation flag set made no change.");
+        SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, *gameCache.factionRuntimeData, *characterFaction, *reputation, factionIndex);
+        return true;
+    }
+
+    bool HandleOnCheatFactionReputationLock(entt::registry* registry, World& world, Network::SocketID socketID, entt::entity entity, Network::Message& message)
+    {
+        ObjectGUID characterGUID;
+        Gameplay::Faction::FactionID factionID = Gameplay::Faction::NONE_FACTION_ID;
+        u8 locked = 0;
+        if (!message.buffer->Deserialize(characterGUID) || !message.buffer->GetU16(factionID) || !message.buffer->GetU8(locked))
+            return false;
+
+        auto& gameCache = registry->ctx().get<Singletons::GameCache>();
+        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        entt::entity characterEntity = entt::null;
+        Components::CharacterReputation* reputation = nullptr;
+        Components::UnitFaction* characterFaction = nullptr;
+        Gameplay::Faction::FactionIndex factionIndex = Gameplay::Faction::INVALID_FACTION_INDEX;
+        if (locked > 1)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Faction reputation lock expects 0 (unlock) or 1 (lock).");
+            return true;
+        }
+
+        if (!gameCache.factionRuntimeData || !TryGetAdministrativeReputationTarget(world, networkState, socketID, characterGUID, characterEntity, reputation, characterFaction) || !TryGetAdministrativeReputationFaction(world, networkState, socketID, *gameCache.factionRuntimeData, factionID, factionIndex))
+            return true;
+
+        const auto* state = Util::Faction::FindReputation(*reputation, factionIndex);
+        if (!state)
+        {
+            Util::Unit::SendChatMessage(world, networkState, socketID, "Cannot lock an absent reputation entry; discover or set it first.");
+            SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, *gameCache.factionRuntimeData, *characterFaction, *reputation, factionIndex);
+            return true;
+        }
+
+        const u16 lockFlag = static_cast<u16>(Gameplay::Faction::ReputationFlags::Locked);
+        const u16 flags = locked != 0 ? state->flags | lockFlag : state->flags & ~lockFlag;
+        const bool changed = Util::Faction::SetReputationFlags(world, characterEntity, *gameCache.factionRuntimeData, factionID, flags, { .type = Gameplay::Faction::ReputationSourceType::Administrative });
+        Util::Unit::SendChatMessage(world, networkState, socketID,
+            changed ? (locked != 0 ? "Administrative reputation entry locked."
+                                   : "Administrative reputation entry unlocked.")
+                    : "Administrative reputation lock made no change.");
+        SendAdministrativeReputationEntry(world, networkState, socketID, characterEntity, *gameCache.factionRuntimeData, *characterFaction, *reputation, factionIndex);
+        return true;
+    }
+
     bool HandleOnSendCheatCommand(World* world, entt::entity entity, Network::SocketID socketID, Network::Message& message)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -1402,7 +2004,7 @@ namespace ECS::Systems
 
         auto& networkState = ctx.get<Singletons::NetworkState>();
         auto& worldState = ctx.get<Singletons::WorldState>();
-        
+
         auto command = MetaGen::Shared::Cheat::CheatCommandEnum::None;
         if (!message.buffer->Get(command))
             return false;
@@ -1412,7 +2014,7 @@ namespace ECS::Systems
             return true;
         const auto* permissionInfo = world->TryGet<Components::CharacterPermissionInfo>(entity);
         if (!permissionInfo || !Util::Permission::HasPermission(ctx.get<Singletons::GameCache>(),
-            permissionInfo->effectivePermissions, requiredPermission))
+                                   permissionInfo->effectivePermissions, requiredPermission))
         {
             Util::Unit::SendChatMessage(*world, networkState, socketID,
                 "You do not have permission to use this administrative command.");
@@ -1480,6 +2082,10 @@ namespace ECS::Systems
             case MetaGen::Shared::Cheat::CheatCommandEnum::UnitSetLevel:
             {
                 return HandleOnCheatUnitSetLevel(registry, *world, socketID, entity, message);
+            }
+            case MetaGen::Shared::Cheat::CheatCommandEnum::UnitSetFaction:
+            {
+                return HandleOnCheatUnitSetFaction(registry, *world, socketID, entity, message);
             }
 
             case MetaGen::Shared::Cheat::CheatCommandEnum::ItemAdd:
@@ -1587,8 +2193,37 @@ namespace ECS::Systems
             {
                 return HandleOnCheatCreatureStop(registry, *world, socketID, entity, message);
             }
+            case MetaGen::Shared::Cheat::CheatCommandEnum::FactionReaction:
+            {
+                return HandleOnCheatFactionReaction(registry, *world, socketID, entity, message);
+            }
+            case MetaGen::Shared::Cheat::CheatCommandEnum::FactionReputationInfo:
+            {
+                return HandleOnCheatFactionReputationInfo(registry, *world, socketID, entity, message);
+            }
+            case MetaGen::Shared::Cheat::CheatCommandEnum::FactionReputationSet:
+            {
+                return HandleOnCheatFactionReputationSet(registry, *world, socketID, entity, message);
+            }
+            case MetaGen::Shared::Cheat::CheatCommandEnum::FactionReputationModify:
+            {
+                return HandleOnCheatFactionReputationModify(registry, *world, socketID, entity, message);
+            }
+            case MetaGen::Shared::Cheat::CheatCommandEnum::FactionReputationRemove:
+            {
+                return HandleOnCheatFactionReputationRemove(registry, *world, socketID, entity, message);
+            }
+            case MetaGen::Shared::Cheat::CheatCommandEnum::FactionReputationSetFlags:
+            {
+                return HandleOnCheatFactionReputationSetFlags(registry, *world, socketID, entity, message);
+            }
+            case MetaGen::Shared::Cheat::CheatCommandEnum::FactionReputationLock:
+            {
+                return HandleOnCheatFactionReputationLock(registry, *world, socketID, entity, message);
+            }
 
-            default: break;
+            default:
+                break;
         }
 
         return true;
@@ -1604,8 +2239,7 @@ namespace ECS::Systems
 
         auto& networkState = ctx.get<Singletons::NetworkState>();
 
-        AccountLoginRequest accountLoginRequest =
-        {
+        AccountLoginRequest accountLoginRequest = {
             .socketID = socketID,
             .name = packet.accountName
         };
@@ -1666,8 +2300,7 @@ namespace ECS::Systems
 
         authInfo.state = AuthenticationState::Completed;
 
-        CharacterListRequest characterListRequest =
-        {
+        CharacterListRequest characterListRequest = {
             .socketID = socketID,
             .socketEntity = entity
         };
@@ -1691,15 +2324,14 @@ namespace ECS::Systems
         }
 
         auto& characterListInfo = registry->get<Components::CharacterListInfo>(entity);
-        
+
         u32 numCharacters = static_cast<u32>(characterListInfo.list.size());
         if (packet.characterIndex >= numCharacters)
             return false;
 
         auto& characterEntry = characterListInfo.list[packet.characterIndex];
 
-        CharacterLoginRequest characterLoginRequest =
-        {
+        CharacterLoginRequest characterLoginRequest = {
             .socketID = socketID,
             .name = characterEntry.name
         };
@@ -1766,9 +2398,7 @@ namespace ECS::Systems
         netInfo.ping = packet.ping;
         netInfo.lastPingTime = currentTime;
 
-        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerUpdateStatsPacket{
-            .serverTickTime = serverDiff
-        });
+        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerUpdateStatsPacket{ .serverTickTime = serverDiff });
 
         return true;
     }
@@ -1776,19 +2406,36 @@ namespace ECS::Systems
     bool HandleOnClientUnitTargetUpdate(World* world, entt::entity entity, Network::SocketID socketID, MetaGen::Shared::Packet::ClientUnitTargetUpdatePacket& packet)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
-        auto& networkState = registry->ctx().get<Singletons::NetworkState>();
+        auto& ctx = registry->ctx();
+        auto& gameCache = ctx.get<Singletons::GameCache>();
+        auto& networkState = ctx.get<Singletons::NetworkState>();
 
         auto& objectInfo = world->Get<Components::ObjectInfo>(entity);
         auto& visibilityInfo = world->Get<Components::VisibilityInfo>(entity);
         auto& targetInfo = world->Get<Components::TargetInfo>(entity);
 
-        entt::entity targetEntity = world->GetEntity(packet.targetGUID);
-        targetInfo.target = world->ValidEntity(targetEntity) ? targetEntity : entt::null;
+        entt::entity targetEntity = entt::null;
+        if (packet.targetGUID.IsValid())
+        {
+            const bool targetIsSelf = packet.targetGUID == objectInfo.guid;
+            const bool targetIsVisible = targetIsSelf ||
+                                         (packet.targetGUID.GetType() == ObjectGUID::Type::Player && visibilityInfo.visiblePlayers.contains(packet.targetGUID)) ||
+                                         (packet.targetGUID.GetType() == ObjectGUID::Type::Creature && visibilityInfo.visibleCreatures.contains(packet.targetGUID));
+            targetEntity = world->GetEntity(packet.targetGUID);
+            if (!targetIsVisible || !world->ValidEntity(targetEntity) || !world->AllOf<Components::UnitFaction>(targetEntity))
+                return true;
+        }
 
-        ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, false, MetaGen::Shared::Packet::ServerUnitTargetUpdatePacket{
-            .guid = objectInfo.guid,
-            .targetGUID = packet.targetGUID
-        });
+        targetInfo.target = targetEntity;
+        if (targetEntity != entt::null && gameCache.factionRuntimeData)
+        {
+            const auto& targetFaction = world->Get<Components::UnitFaction>(targetEntity);
+            const Gameplay::Faction::FactionID factionID = gameCache.factionRuntimeData->GetFactionID(targetFaction.effectiveFaction);
+            Util::Faction::DiscoverReputation(*world, entity, *gameCache.factionRuntimeData, factionID,
+                Gameplay::Faction::DiscoverySource::Target);
+        }
+
+        ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, false, MetaGen::Shared::Packet::ServerUnitTargetUpdatePacket{ .guid = objectInfo.guid, .targetGUID = packet.targetGUID });
 
         return true;
     }
@@ -1807,13 +2454,7 @@ namespace ECS::Systems
         world->playerVisData.Update(objectInfo.guid, packet.position.x, packet.position.z);
 
         auto& visibilityInfo = world->Get<Components::VisibilityInfo>(entity);
-        ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, false, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitMovePacket::PACKET_ID, objectInfo.guid), MetaGen::Shared::Packet::ServerUnitMovePacket{
-            .guid = objectInfo.guid,
-            .movementFlags = packet.movementFlags,
-            .position = packet.position,
-            .pitchYaw = packet.pitchYaw,
-            .verticalVelocity = packet.verticalVelocity
-        });
+        ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, false, ECS::Util::Network::CreateReplicationSendOptions(MetaGen::Shared::Packet::ServerUnitMovePacket::PACKET_ID, objectInfo.guid), MetaGen::Shared::Packet::ServerUnitMovePacket{ .guid = objectInfo.guid, .movementFlags = packet.movementFlags, .position = packet.position, .pitchYaw = packet.pitchYaw, .verticalVelocity = packet.verticalVelocity });
 
         return true;
     }
@@ -1916,14 +2557,9 @@ namespace ECS::Systems
 
         Database::OperationFailure databaseFailure = Database::OperationFailure::None;
         if (Util::Persistence::Character::ItemSwap(gameCache, characterID, *srcContainer, srcContainerID,
-            packet.srcSlot, *dstContainer, dstContainerID, packet.dstSlot, &databaseFailure) == ECS::Result::Success)
+                packet.srcSlot, *dstContainer, dstContainerID, packet.dstSlot, &databaseFailure) == ECS::Result::Success)
         {
-            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::SharedContainerSwapSlotsPacket{
-                .srcContainer = packet.srcContainer,
-                .dstContainer = packet.dstContainer,
-                .srcSlot = packet.srcSlot,
-                .dstSlot = packet.dstSlot
-            });
+            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::SharedContainerSwapSlotsPacket{ .srcContainer = packet.srcContainer, .dstContainer = packet.dstContainer, .srcSlot = packet.srcSlot, .dstSlot = packet.dstSlot });
 
             if (srcContainerID == 0)
             {
@@ -1941,11 +2577,7 @@ namespace ECS::Systems
                             itemID = itemInstance->itemID;
                     }
 
-                    ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitEquippedItemUpdatePacket{
-                        .guid = objectInfo.guid,
-                        .slot = static_cast<u8>(packet.srcSlot),
-                        .itemID = itemID
-                    });
+                    ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitEquippedItemUpdatePacket{ .guid = objectInfo.guid, .slot = static_cast<u8>(packet.srcSlot), .itemID = itemID });
 
                     visualItems.equippedItemIDs[packet.srcSlot] = itemID;
                     visualItems.dirtyItemIDs.insert(packet.srcSlot);
@@ -1970,11 +2602,7 @@ namespace ECS::Systems
                             itemID = itemInstance->itemID;
                     }
 
-                    ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitEquippedItemUpdatePacket{
-                        .guid = objectInfo.guid,
-                        .slot = static_cast<u8>(packet.dstSlot),
-                        .itemID = itemID
-                    });
+                    ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, MetaGen::Shared::Packet::ServerUnitEquippedItemUpdatePacket{ .guid = objectInfo.guid, .slot = static_cast<u8>(packet.dstSlot), .itemID = itemID });
 
                     visualItems.equippedItemIDs[packet.dstSlot] = itemID;
                     visualItems.dirtyItemIDs.insert(packet.dstSlot);
@@ -2031,10 +2659,7 @@ namespace ECS::Systems
 
         auto& objectInfo = world->Get<Components::ObjectInfo>(entity);
         auto& visibilityInfo = world->Get<Components::VisibilityInfo>(entity);
-        ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, MetaGen::Shared::Packet::ServerSendChatMessagePacket{
-            .guid = objectInfo.guid,
-            .message = packet.message
-        });
+        ECS::Util::Network::SendToNearby(networkState, *world, entity, visibilityInfo, true, MetaGen::Shared::Packet::ServerSendChatMessagePacket{ .guid = objectInfo.guid, .message = packet.message });
 
         return true;
     }
@@ -2062,14 +2687,20 @@ namespace ECS::Systems
 
         if (result != 0x0)
         {
-            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerSpellCastResultPacket{
-                .result = result,
-            });
+            Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerSpellCastResultPacket{ .result = result });
 
             return true;
         }
 
         auto& targetInfo = world->Get<Components::TargetInfo>(entity);
+        if (SpellRequiresAttackPermission(gameCache, packet.spellID) && (!gameCache.factionRuntimeData || !world->ValidEntity(targetInfo.target) || !Util::Faction::CanAttack(*world, entity, targetInfo.target, *gameCache.factionRuntimeData)))
+        {
+            Util::Network::SendPacket(networkState, socketID,
+                MetaGen::Shared::Packet::ServerSpellCastResultPacket{
+                    .result = 0x3 });
+            return true;
+        }
+
         auto& characterSpellCastInfo = world->Get<Components::CharacterSpellCastInfo>(entity);
 
         entt::entity spellEntity = entt::null;
@@ -2111,13 +2742,11 @@ namespace ECS::Systems
         spellInfo.castTime = spell->castTime;
         spellInfo.timeToCast = spellInfo.castTime;
 
-        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerSpellCastResultPacket{
-            .result = result,
-        });
+        Util::Network::SendPacket(networkState, socketID, MetaGen::Shared::Packet::ServerSpellCastResultPacket{ .result = result });
 
         return true;
     }
-    
+
     bool HandleOnClientPathGenerate(World* world, entt::entity entity, Network::SocketID socketID, MetaGen::Shared::Packet::ClientPathGeneratePacket& packet)
     {
         entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
@@ -2145,9 +2774,9 @@ namespace ECS::Systems
 
             Bytebuffer& buffer = writer.GetBuffer();
             if (!ECS::Util::MessageBuilder::CreatePacket(buffer, MetaGen::Shared::Packet::ServerPathVisualizationPacket::PACKET_ID, [&, straightPathCount]() -> bool
-            {
+                    {
                 return buffer.PutU32(straightPathCount) && buffer.PutBytes(straightPath, straightPathCount * sizeof(vec3));
-            }))
+                }))
             {
                 return true;
             }
@@ -2192,7 +2821,7 @@ namespace ECS::Systems
 
             // Bind to IP/Port
             std::string ipAddress = "0.0.0.0";
-            
+
             if (networkState.server->Start())
             {
                 NC_LOG_INFO("Network : Listening on ({0}, {1})", ipAddress, port);
@@ -2316,7 +2945,7 @@ namespace ECS::Systems
                         {
                             if (!networkState.messageRouter->HasValidHandlerForHeader(messageHeader))
                                 continue;
-                        
+
                             if (networkState.messageRouter->CallHandler(nullptr, accountEntity, messageEvent.socketID, messageHeader, messageEvent.message))
                                 continue;
                         }

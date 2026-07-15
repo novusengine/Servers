@@ -3,7 +3,9 @@
 #include "Character.h"
 #include "Server-Game/Application/EnttRegistries.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
+#include "Server-Game/ECS/Components/CreatureFactionPolicy.h"
 #include "Server-Game/ECS/Components/Transform.h"
+#include "Server-Game/ECS/Components/UnitFaction.h"
 #include "Server-Game/ECS/Components/UnitAuraInfo.h"
 #include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
 #include "Server-Game/ECS/Components/UnitPowersComponent.h"
@@ -15,6 +17,7 @@
 #include "Server-Game/ECS/Singletons/NetworkState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
 #include "Server-Game/ECS/Util/CombatEventUtil.h"
+#include "Server-Game/ECS/Util/FactionUtil.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
 #include "Server-Game/ECS/Util/Cache/CacheUtil.h"
 #include "Server-Game/Util/ServiceLocator.h"
@@ -24,6 +27,8 @@
 #include <Scripting/Zenith.h>
 
 #include <entt/entt.hpp>
+
+#include <cmath>
 
 namespace Scripting
 {
@@ -37,7 +42,9 @@ namespace Scripting
 
         Unit* Unit::Create(Zenith* zenith, entt::entity entity)
         {
-            Unit* unit = zenith->PushUserData<Unit>([](void* x) {});
+            Unit* unit = zenith->PushUserData<Unit>([](void* x)
+            {
+            });
             unit->entity = entity;
 
             luaL_getmetatable(zenith->state, "UnitMetaTable");
@@ -129,6 +136,184 @@ namespace Scripting
                 zenith->Push(maxHealth);
                 zenith->Push(baseHealth);
                 return 3;
+            }
+
+            i32 GetFactionID(Zenith* zenith, Unit* unit)
+            {
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& gameCache = registry->ctx().get<ECS::Singletons::GameCache>();
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                const auto* faction = world.TryGet<ECS::Components::UnitFaction>(unit->entity);
+                if (!faction || !gameCache.factionRuntimeData)
+                    return 0;
+
+                zenith->Push(gameCache.factionRuntimeData->GetFactionID(faction->effectiveFaction));
+                return 1;
+            }
+
+            i32 SetFactionID(Zenith* zenith, Unit* unit)
+            {
+                const auto factionID = zenith->CheckVal<Gameplay::Faction::FactionID>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& gameCache = registry->ctx().get<ECS::Singletons::GameCache>();
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                const bool changed = gameCache.factionRuntimeData && world.ValidEntity(unit->entity) && ECS::Util::Faction::SetAssignedFaction(world, unit->entity, *gameCache.factionRuntimeData, factionID);
+                zenith->Push(changed);
+                return 1;
+            }
+
+            i32 GetReaction(Zenith* zenith, Unit* unit)
+            {
+                Unit* target = zenith->GetUserData<Unit>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& gameCache = registry->ctx().get<ECS::Singletons::GameCache>();
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                if (!target || !gameCache.factionRuntimeData || !world.ValidEntity(unit->entity) || !world.ValidEntity(target->entity))
+                    return 0;
+
+                zenith->Push(static_cast<u8>(ECS::Util::Faction::GetReaction(world, unit->entity, target->entity, *gameCache.factionRuntimeData)));
+                return 1;
+            }
+
+            i32 CanAttack(Zenith* zenith, Unit* unit)
+            {
+                Unit* target = zenith->GetUserData<Unit>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& gameCache = registry->ctx().get<ECS::Singletons::GameCache>();
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                const bool canAttack = target && gameCache.factionRuntimeData && world.ValidEntity(unit->entity) && world.ValidEntity(target->entity) && ECS::Util::Faction::CanAttack(world, unit->entity, target->entity, *gameCache.factionRuntimeData);
+                zenith->Push(canAttack);
+                return 1;
+            }
+
+            i32 CanAssist(Zenith* zenith, Unit* unit)
+            {
+                Unit* target = zenith->GetUserData<Unit>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& gameCache = registry->ctx().get<ECS::Singletons::GameCache>();
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                const bool canAssist = target && gameCache.factionRuntimeData && world.ValidEntity(unit->entity) && world.ValidEntity(target->entity) && ECS::Util::Faction::CanAssist(world, unit->entity, target->entity, *gameCache.factionRuntimeData);
+                zenith->Push(canAssist);
+                return 1;
+            }
+
+            i32 CanInteract(Zenith* zenith, Unit* unit)
+            {
+                Unit* target = zenith->GetUserData<Unit>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& gameCache = registry->ctx().get<ECS::Singletons::GameCache>();
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                const bool canInteract = target && gameCache.factionRuntimeData && world.ValidEntity(unit->entity) && world.ValidEntity(target->entity) && ECS::Util::Faction::CanInteract(world, unit->entity, target->entity, *gameCache.factionRuntimeData);
+                zenith->Push(canInteract);
+                return 1;
+            }
+
+            i32 GetCreatureFactionPolicy(Zenith* zenith, Unit* unit)
+            {
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                const auto* policy = world.TryGet<ECS::Components::CreatureFactionPolicy>(unit->entity);
+                if (!policy)
+                    return 0;
+
+                zenith->Push(static_cast<u8>(policy->aggression));
+                zenith->Push(static_cast<u8>(policy->assistance));
+                zenith->Push(policy->detectionRange);
+                zenith->Push(policy->assistanceRange);
+                return 4;
+            }
+
+            i32 SetCreatureAggressionPolicy(Zenith* zenith, Unit* unit)
+            {
+                const u16 value = zenith->CheckVal<u16>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                auto* policy = world.TryGet<ECS::Components::CreatureFactionPolicy>(unit->entity);
+                const bool succeeded = policy && Gameplay::Faction::IsValidCreatureAggressionPolicy(value);
+                if (succeeded)
+                {
+                    policy->aggression = static_cast<Gameplay::Faction::CreatureAggressionPolicy>(value);
+                    policy->timeToNextAcquisition = 0.0f;
+                }
+
+                zenith->Push(succeeded);
+                return 1;
+            }
+
+            i32 SetCreatureAssistancePolicy(Zenith* zenith, Unit* unit)
+            {
+                const u16 value = zenith->CheckVal<u16>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                auto* policy = world.TryGet<ECS::Components::CreatureFactionPolicy>(unit->entity);
+                const bool succeeded = policy && Gameplay::Faction::IsValidCreatureAssistancePolicy(value);
+                if (succeeded)
+                    policy->assistance = static_cast<Gameplay::Faction::CreatureAssistancePolicy>(value);
+
+                zenith->Push(succeeded);
+                return 1;
+            }
+
+            i32 SetCreatureDetectionRange(Zenith* zenith, Unit* unit)
+            {
+                const f32 value = zenith->CheckVal<f32>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                auto* policy = world.TryGet<ECS::Components::CreatureFactionPolicy>(unit->entity);
+                const bool succeeded = policy && std::isfinite(value) && value >= 0.0f;
+                if (succeeded)
+                {
+                    policy->detectionRange = value;
+                    policy->timeToNextAcquisition = 0.0f;
+                }
+
+                zenith->Push(succeeded);
+                return 1;
+            }
+
+            i32 SetCreatureAssistanceRange(Zenith* zenith, Unit* unit)
+            {
+                const f32 value = zenith->CheckVal<f32>(2);
+
+                entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+                auto& worldState = registry->ctx().get<ECS::Singletons::WorldState>();
+
+                ECS::World& world = worldState.GetWorld(zenith->key.GetMapID());
+                auto* policy = world.TryGet<ECS::Components::CreatureFactionPolicy>(unit->entity);
+                const bool succeeded = policy && std::isfinite(value) && value >= 0.0f && value <= Gameplay::Faction::MAX_CREATURE_ASSISTANCE_RANGE;
+                if (succeeded)
+                    policy->assistanceRange = value;
+
+                zenith->Push(succeeded);
+                return 1;
             }
 
             i32 Kill(Zenith* zenith, Unit* unit)
@@ -380,7 +565,7 @@ namespace Scripting
                 zenith->Push(true);
                 return 1;
             }
-            
+
             i32 HasSpellCooldown(Zenith* zenith, Unit* unit)
             {
                 auto spellID = zenith->CheckVal<u32>(2);

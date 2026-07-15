@@ -9,13 +9,14 @@ local PostgresBackend = require("PostgresBackend")
 local PostgresModel = require("PostgresModel")
 local TestSuite = require("TestSuite")
 
-local expectedCounts = { auth = 6, character = 6, world = 16 }
+local expectedCounts = { auth = 6, character = 7, world = 21 }
 local expectedNames =
 {
     auth = "account_permission_groups|account_permissions|accounts|permission_group_data|permission_groups|permissions",
-    character = "character_currency|character_items|character_permission_groups|character_permissions|characters|item_instances",
-    world = "creature_class_level_stats|creature_templates|creatures|currency|item_armor_templates|item_shield_templates|item_stat_templates|" ..
-        "item_templates|item_weapon_templates|map_locations|maps|proximity_triggers|spell_effects|spell_proc_data|spell_proc_link|spells"
+    character = "character_currency|character_items|character_permission_groups|character_permissions|character_reputations|characters|item_instances",
+    world = "creature_class_level_stats|creature_templates|creatures|currency|faction_relations|faction_standings|faction_starting_reputations|factions|" ..
+        "item_armor_templates|item_shield_templates|item_stat_templates|item_templates|item_weapon_templates|map_locations|maps|" ..
+        "proximity_triggers|spell_effects|spell_proc_data|spell_proc_link|spells|unit_race_factions"
 }
 
 local function Run()
@@ -39,7 +40,7 @@ local function Run()
     local definitions = model.definitionsByTarget.postgres or {}
     local normalized = PostgresModel.Build(model, definitions)
 
-    assert(#normalized.tables == 28)
+    assert(#normalized.tables == 34)
     assert(#normalized.bundles == 3)
     for _, bundle in ipairs(normalized.bundles) do
         assert(#bundle.tables == expectedCounts[bundle.name])
@@ -61,12 +62,16 @@ local function Run()
     assert(#normalized.tablesByPersistentId["postgres.characters"].indexes == 1)
     assert(#normalized.tablesByPersistentId["postgres.creatures"].indexes == 1)
     assert(#normalized.tablesByPersistentId["postgres.proximity_triggers"].indexes == 1)
+    assert(#normalized.tablesByPersistentId["postgres.character_reputations"].operations == 3)
+    assert(normalized.tablesByPersistentId["postgres.character_reputations"].queries[1].orderBy[1].name == "factionId")
+    assert(normalized.tablesByPersistentId["postgres.unit_race_factions"].primaryKey == nil)
+    assert(normalized.tablesByPersistentId["postgres.faction_relations"].orderBy[2].name == "targetFactionId")
 
     local context = { postgresHistoryByBundle = assert(profile.postgres and profile.postgres.historyByBundle) }
     PostgresBackend.Validate(model, definitions, context)
     assert(#context.postgresMigrations.auth == 5)
-    assert(#context.postgresMigrations.character == 3)
-    assert(#context.postgresMigrations.world == 3)
+    assert(#context.postgresMigrations.character == 5)
+    assert(#context.postgresMigrations.world == 6)
     Model.AssertUnchanged(model, "production PostgreSQL definition validation")
     print("MetaGen PostgreSQL production definitions passed")
 end

@@ -20,6 +20,11 @@ namespace ECS
         struct GameCache;
     }
 
+    namespace Components
+    {
+        struct CharacterReputation;
+    }
+
     namespace Util::Persistence::Character
     {
         ECS::Result CharacterCreate(Singletons::GameCache& gameCache, u64 accountID, const std::string& name, u16 raceGenderClass, u64& characterID);
@@ -31,6 +36,7 @@ namespace ECS
         ECS::Result CharacterSetMapID(Singletons::GameCache& gameCache, u64 characterID, u32 mapID);
         ECS::Result CharacterSetPositionOrientation(Singletons::GameCache& gameCache, u64 characterID, const vec3& position, f32 orientation);
         ECS::Result CharacterSetMapIDPositionOrientation(Singletons::GameCache& gameCache, u64 characterID, u32 mapID, const vec3& position, f32 orientation);
+        ECS::Result CharacterFlushReputations(Singletons::GameCache& gameCache, u64 characterID, Components::CharacterReputation& reputation, u32 maximumUpdates, Database::OperationFailure* databaseFailure = nullptr);
 
         ECS::Result ItemAdd(Singletons::GameCache& gameCache, entt::registry& registry, entt::entity characterEntity,
             u64 characterID, u32 itemID, Database::Container& container, u64 containerID, u16 slotIndex,

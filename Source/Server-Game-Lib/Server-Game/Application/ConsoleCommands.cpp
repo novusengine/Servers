@@ -6,6 +6,7 @@
 #include <Server-Game/ECS/Singletons/GameCache.h>
 #include <Server-Game/ECS/Singletons/TimeState.h>
 #include <Server-Game/ECS/Util/PermissionUtil.h>
+#include <Server-Game/Gameplay/Faction/FactionClientDBExport.h>
 #include <Server-Game/Util/ServiceLocator.h>
 
 #include <Server-Common/Database/DatabaseService.h>
@@ -35,6 +36,7 @@ namespace
         const char* begin = text.data();
         const char* end = begin + text.size();
         const auto result = std::from_chars(begin, end, value);
+
         return result.ec == std::errc{} && result.ptr == end;
     }
 
@@ -46,6 +48,7 @@ namespace
             NC_LOG_ERROR("Unknown permission '{0}'", name);
             return false;
         }
+
         permissionID = itr->second;
         return true;
     }
@@ -58,12 +61,12 @@ namespace
             NC_LOG_ERROR("Unknown permission group '{0}'", name);
             return false;
         }
+
         permissionGroupID = itr->second;
         return true;
     }
 
-    bool ValidatePermissionGroupAncestry(u32 permissionGroupID,
-        const Database::PermissionAssignmentSnapshot& assignments, const Database::PermissionTables& tables)
+    bool ValidatePermissionGroupAncestry(u32 permissionGroupID, const Database::PermissionAssignmentSnapshot& assignments, const Database::PermissionTables& tables)
     {
         if (assignments.defaultGroupApplied)
             return true;
@@ -74,6 +77,7 @@ namespace
         {
             if (existingGroupID == permissionGroupID)
                 continue;
+
             const PermissionGroup existing = static_cast<PermissionGroup>(existingGroupID);
             if (!MetaGen::Server::Permission::GroupInherits(candidate, existing) &&
                 !MetaGen::Server::Permission::GroupInherits(existing, candidate))
@@ -83,14 +87,13 @@ namespace
 
             auto candidateNameItr = tables.permissionGroupIDToName.find(permissionGroupID);
             auto existingNameItr = tables.permissionGroupIDToName.find(existingGroupID);
-            const std::string candidateName = candidateNameItr == tables.permissionGroupIDToName.end() ?
-                std::to_string(permissionGroupID) : candidateNameItr->second;
-            const std::string existingName = existingNameItr == tables.permissionGroupIDToName.end() ?
-                std::to_string(existingGroupID) : existingNameItr->second;
-            NC_LOG_ERROR("Cannot combine permission groups '{0}' and '{1}' because one inherits the other",
-                candidateName, existingName);
+            const std::string candidateName = candidateNameItr == tables.permissionGroupIDToName.end() ? std::to_string(permissionGroupID) : candidateNameItr->second;
+            const std::string existingName = existingNameItr == tables.permissionGroupIDToName.end() ? std::to_string(existingGroupID) : existingNameItr->second;
+
+            NC_LOG_ERROR("Cannot combine permission groups '{0}' and '{1}' because one inherits the other", candidateName, existingName);
             return false;
         }
+
         return true;
     }
 
@@ -104,21 +107,21 @@ namespace
         return false;
     }
 
-    bool ReportPermissionDeleteResult(const Database::OperationResult<Database::DeleteOutcome>& result,
-        std::string_view operation)
+    bool ReportPermissionDeleteResult(const Database::OperationResult<Database::DeleteOutcome>& result, std::string_view operation)
     {
         if (!ReportPermissionDatabaseResult(result, operation))
             return false;
+
         if (result.Value() == Database::DeleteOutcome::AlreadyAbsent)
         {
             NC_LOG_INFO("Permission operation '{0}' made no change because no explicit assignment existed", operation);
             return false;
         }
+
         return true;
     }
 
-    void LogPermissionAssignments(std::string_view source, const Database::PermissionAssignmentSnapshot& snapshot,
-        const Database::PermissionTables& tables)
+    void LogPermissionAssignments(std::string_view source, const Database::PermissionAssignmentSnapshot& snapshot, const Database::PermissionTables& tables)
     {
         if (snapshot.permissionGroupIDs.empty() && snapshot.permissions.empty())
         {
@@ -129,27 +132,26 @@ namespace
         for (u32 groupID : snapshot.permissionGroupIDs)
         {
             auto itr = tables.permissionGroupIDToName.find(groupID);
-            const std::string groupName = itr == tables.permissionGroupIDToName.end() ?
-                "unknown:" + std::to_string(groupID) : itr->second;
-            NC_LOG_INFO("  {0} group: {1}{2}", source, groupName,
-                snapshot.defaultGroupApplied ? " (implicit default)" : "");
+            const std::string groupName = itr == tables.permissionGroupIDToName.end() ? "unknown:" + std::to_string(groupID) : itr->second;
+            NC_LOG_INFO("  {0} group: {1}{2}", source, groupName, snapshot.defaultGroupApplied ? " (implicit default)" : "");
         }
         for (const Database::PermissionAssignment& assignment : snapshot.permissions)
         {
             auto itr = tables.permissionIDToName.find(assignment.permissionID);
-            const std::string permissionName = itr == tables.permissionIDToName.end() ?
-                "unknown:" + std::to_string(assignment.permissionID) : itr->second;
+            const std::string permissionName = itr == tables.permissionIDToName.end() ? "unknown:" + std::to_string(assignment.permissionID) : itr->second;
             NC_LOG_INFO("  {0} direct: {1} = {2}", source, permissionName, assignment.value);
         }
     }
 
-    void LogEffectivePermissions(const ECS::Components::PermissionSet& permissions,
-        const Database::PermissionTables& tables)
+    void LogEffectivePermissions(const ECS::Components::PermissionSet& permissions, const Database::PermissionTables& tables)
     {
         std::vector<std::pair<u32, i64>> sortedPermissions;
         sortedPermissions.reserve(permissions.values.size());
         for (const auto& [permissionID, value] : permissions.values)
+        {
             sortedPermissions.emplace_back(permissionID, value);
+        }
+
         std::sort(sortedPermissions.begin(), sortedPermissions.end(), [](const auto& left, const auto& right)
         {
             return left.first < right.first;
@@ -160,11 +162,11 @@ namespace
             NC_LOG_INFO("  Effective: no non-default values");
             return;
         }
+
         for (const auto& [permissionID, value] : sortedPermissions)
         {
             auto itr = tables.permissionIDToName.find(permissionID);
-            const std::string permissionName = itr == tables.permissionIDToName.end() ?
-                "unknown:" + std::to_string(permissionID) : itr->second;
+            const std::string permissionName = itr == tables.permissionIDToName.end() ? "unknown:" + std::to_string(permissionID) : itr->second;
             NC_LOG_INFO("  Effective: {0} = {1}", permissionName, value);
         }
     }
@@ -176,7 +178,7 @@ void ConsoleCommands::CommandPrint(Application& app, std::vector<std::string>& s
         return;
 
     MessageInbound message(MessageInbound::Type::Print);
-        
+
     for (u32 i = 0; i < subCommands.size(); i++)
     {
         if (i > 0)
@@ -280,8 +282,7 @@ void ConsoleCommands::CommandAddAccount(Application& app, std::vector<std::strin
     auto& timeState = registry->ctx().get<ECS::Singletons::TimeState>();
     u64 registrationTimestamp = timeState.epochAtFrameStart;
 
-    auto createResult = gameCache.database->CreateAccount(username, email, registrationTimestamp,
-        stored_data, crypto_spake_STOREDBYTES);
+    auto createResult = gameCache.database->CreateAccount(username, email, registrationTimestamp, stored_data, crypto_spake_STOREDBYTES);
     if (!createResult)
         return;
 
@@ -291,13 +292,48 @@ void ConsoleCommands::CommandAddAccount(Application& app, std::vector<std::strin
 void ConsoleCommands::CommandPermission(Application& app, std::vector<std::string>& subCommands)
 {
     MessageInbound message(MessageInbound::Type::PermissionCommand);
+
     for (u32 index = 0; index < subCommands.size(); ++index)
     {
         if (index > 0)
             message.data += " ";
+
         message.data += subCommands[index];
     }
+
     app.PassMessage(message);
+}
+
+void ConsoleCommands::CommandExportFactions(Application& app, std::vector<std::string>& subCommands)
+{
+    if (subCommands.size() != 1)
+    {
+        NC_LOG_ERROR("Usage: exportfactions <patch-staging-directory>");
+        return;
+    }
+
+    MessageInbound message(MessageInbound::Type::FactionClientDBExport, subCommands.front());
+    app.PassMessage(message);
+}
+
+void ConsoleCommands::ExecuteExportFactions(const std::string& stagingDirectory)
+{
+    entt::registry* registry = ServiceLocator::GetEnttRegistries()->gameRegistry;
+    auto& gameCache = registry->ctx().get<ECS::Singletons::GameCache>();
+    if (!gameCache.factionRuntimeData)
+    {
+        NC_LOG_ERROR("Faction ClientDB export is unavailable until World faction data has loaded");
+        return;
+    }
+
+    Gameplay::Faction::ClientDBExportResult result;
+    if (!Gameplay::Faction::ExportClientDB(gameCache.factionTables, *gameCache.factionRuntimeData, stagingDirectory, result))
+    {
+        NC_LOG_ERROR("Faction ClientDB export failed");
+        return;
+    }
+
+    NC_LOG_INFO("Exported faction ClientDBs to '{}' (factions {}, relations {}, standings {})", stagingDirectory, result.factionCount, result.relationCount, result.standingCount);
 }
 
 void ConsoleCommands::ExecutePermission(std::vector<std::string>& subCommands)
@@ -329,11 +365,13 @@ void ConsoleCommands::ExecutePermission(std::vector<std::string>& subCommands)
         auto accountResult = database.GetAccountByName(targetName);
         if (!ReportPermissionDatabaseResult(accountResult, "find account"))
             return;
+
         if (!accountResult.Value())
         {
             NC_LOG_ERROR("Account '{0}' was not found", targetName);
             return;
         }
+
         targetID = accountResult.Value()->id;
         accountID = targetID;
     }
@@ -342,11 +380,13 @@ void ConsoleCommands::ExecutePermission(std::vector<std::string>& subCommands)
         auto characterResult = database.GetCharacterByName(targetName);
         if (!ReportPermissionDatabaseResult(characterResult, "find character"))
             return;
+
         if (!characterResult.Value())
         {
             NC_LOG_ERROR("Character '{0}' was not found", targetName);
             return;
         }
+
         targetID = characterResult.Value()->id;
         accountID = characterResult.Value()->accountId;
     }
@@ -373,11 +413,12 @@ void ConsoleCommands::ExecutePermission(std::vector<std::string>& subCommands)
             auto characterPermissionsResult = database.GetCharacterPermissions(targetID);
             if (!ReportPermissionDatabaseResult(characterPermissionsResult, "load character permissions"))
                 return;
+
             LogPermissionAssignments("Character", characterPermissionsResult.Value(), tables);
             ECS::Util::Permission::Merge(effectivePermissions, tables, characterPermissionsResult.Value());
         }
+
         LogEffectivePermissions(effectivePermissions, tables);
-        return;
     }
 
     bool succeeded = false;
@@ -390,8 +431,10 @@ void ConsoleCommands::ExecutePermission(std::vector<std::string>& subCommands)
         {
             if (!ParsePermissionValue(subCommands[4], value))
                 NC_LOG_ERROR("Permission value '{0}' is not a valid integer", subCommands[4]);
+
             return;
         }
+
         auto valueKindItr = tables.permissionIDToValueKind.find(permissionID);
         if (valueKindItr != tables.permissionIDToValueKind.end() && valueKindItr->second == 0 && value != 0 && value != 1)
         {
@@ -415,6 +458,7 @@ void ConsoleCommands::ExecutePermission(std::vector<std::string>& subCommands)
         u32 permissionID = 0;
         if (!ResolvePermissionID(tables, subCommands[3], permissionID))
             return;
+
         if (scope == "account")
         {
             auto result = database.DeleteAccountPermission(targetID, permissionID);
@@ -430,8 +474,7 @@ void ConsoleCommands::ExecutePermission(std::vector<std::string>& subCommands)
     {
         const std::string& groupAction = subCommands[3];
         u32 permissionGroupID = 0;
-        if ((groupAction != "add" && groupAction != "remove") ||
-            !ResolvePermissionGroupID(tables, subCommands[4], permissionGroupID))
+        if ((groupAction != "add" && groupAction != "remove") || !ResolvePermissionGroupID(tables, subCommands[4], permissionGroupID))
         {
             LogPermissionUsage();
             return;

@@ -1,8 +1,10 @@
 #include "UpdateCharacter.h"
 #include "Server-Game/ECS/Components/AABB.h"
 #include "Server-Game/ECS/Components/CharacterInfo.h"
+#include "Server-Game/ECS/Components/CharacterReputation.h"
 #include "Server-Game/ECS/Components/CharacterSpellCastInfo.h"
 #include "Server-Game/ECS/Components/DisplayInfo.h"
+#include "Server-Game/ECS/Components/FactionModifiers.h"
 #include "Server-Game/ECS/Components/NetInfo.h"
 #include "Server-Game/ECS/Components/ObjectInfo.h"
 #include "Server-Game/ECS/Components/PlayerContainers.h"
@@ -13,6 +15,7 @@
 #include "Server-Game/ECS/Components/Transform.h"
 #include "Server-Game/ECS/Components/UnitAuraInfo.h"
 #include "Server-Game/ECS/Components/UnitCombatInfo.h"
+#include "Server-Game/ECS/Components/UnitFaction.h"
 #include "Server-Game/ECS/Components/UnitPowersComponent.h"
 #include "Server-Game/ECS/Components/UnitResistancesComponent.h"
 #include "Server-Game/ECS/Components/UnitSpellCooldownHistory.h"
@@ -22,7 +25,9 @@
 #include "Server-Game/ECS/Components/VisibilityUpdateInfo.h"
 #include "Server-Game/ECS/Singletons/GameCache.h"
 #include "Server-Game/ECS/Singletons/NetworkState.h"
+#include "Server-Game/ECS/Singletons/TimeState.h"
 #include "Server-Game/ECS/Singletons/WorldState.h"
+#include "Server-Game/ECS/Util/DatabaseRetryUtil.h"
 #include "Server-Game/ECS/Util/MessageBuilderUtil.h"
 #include "Server-Game/ECS/Util/NetFieldsUtil.h"
 #include "Server-Game/ECS/Util/UnitUtil.h"
@@ -45,9 +50,154 @@
 
 #include <Scripting/Zenith.h>
 
+#include <algorithm>
+#include <limits>
+#include <string_view>
+#include <vector>
+
 namespace ECS::Systems
 {
-    void UpdateCharacter::HandleDeinitialization(Singletons::WorldState& worldState, World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+    namespace
+    {
+        static constexpr u64 REPUTATION_FLUSH_INTERVAL_SECONDS = 5;
+
+        void ScheduleReputationPersistenceRetry(Components::CharacterReputation& reputation, const Singletons::TimeState& timeState, u64 characterID)
+        {
+            const u64 delay = Util::DatabaseRetry::DelaySeconds(reputation.persistenceRetryCount, characterID ^ timeState.epochAtFrameStart, 5);
+            if (reputation.persistenceRetryCount < std::numeric_limits<u8>::max())
+                ++reputation.persistenceRetryCount;
+
+            reputation.nextPersistenceEpoch = timeState.epochAtFrameStart + delay;
+        }
+
+        bool FlushReputationBarrier(Singletons::GameCache& gameCache, const Singletons::TimeState& timeState, u64 characterID, Components::CharacterReputation& reputation)
+        {
+            if (reputation.persistenceRetryCount > 0 && reputation.nextPersistenceEpoch > timeState.epochAtFrameStart)
+                return false;
+
+            while (!reputation.dirtyByFaction.empty() || !reputation.removedDirtyByFaction.empty())
+            {
+                Database::OperationFailure failure = Database::OperationFailure::None;
+                const Result result = Util::Persistence::Character::CharacterFlushReputations(gameCache, characterID, reputation, Database::MAX_CHARACTER_REPUTATION_UPDATES_PER_BATCH, &failure);
+                if (result == Result::Success)
+                    continue;
+
+                ScheduleReputationPersistenceRetry(reputation, timeState, characterID);
+                NC_LOG_ERROR("Character {0} reputation persistence barrier failed ({1}); teardown deferred until retry", characterID, failure == Database::OperationFailure::None ? std::string_view("LocalValidation") : Database::OperationFailureName(failure));
+                return false;
+            }
+
+            return true;
+        }
+
+        void HandleReputationPersistence(World& world, const Singletons::TimeState& timeState, Singletons::GameCache& gameCache)
+        {
+            auto view = world.View<Components::ObjectInfo, Components::CharacterReputation>(entt::exclude<Events::CharacterNeedsDeinitialization>);
+            view.each([&](Components::ObjectInfo& objectInfo, Components::CharacterReputation& reputation)
+            {
+                if (reputation.dirtyByFaction.empty() && reputation.removedDirtyByFaction.empty())
+                    return;
+
+                const u64 characterID = objectInfo.guid.GetCounter();
+                if (reputation.nextPersistenceEpoch == 0)
+                {
+                    reputation.nextPersistenceEpoch = timeState.epochAtFrameStart + 1 + characterID % REPUTATION_FLUSH_INTERVAL_SECONDS;
+                    return;
+                }
+
+                if (reputation.nextPersistenceEpoch > timeState.epochAtFrameStart)
+                    return;
+
+                Database::OperationFailure failure = Database::OperationFailure::None;
+                const Result result = Util::Persistence::Character::CharacterFlushReputations(gameCache, characterID, reputation, Database::MAX_CHARACTER_REPUTATION_UPDATES_PER_BATCH, &failure);
+                if (result == Result::Success)
+                {
+                    if (!reputation.dirtyByFaction.empty() || !reputation.removedDirtyByFaction.empty())
+                        reputation.nextPersistenceEpoch = timeState.epochAtFrameStart + 1;
+                    return;
+                }
+
+                ScheduleReputationPersistenceRetry(reputation, timeState, characterID);
+                NC_LOG_ERROR("Character {0} reputation persistence failed ({1}); dirty state retained for retry", characterID, failure == Database::OperationFailure::None ? std::string_view("LocalValidation") : Database::OperationFailureName(failure));
+            });
+        }
+
+        void HandleReputationNetwork(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+        {
+            if (!gameCache.factionRuntimeData)
+                return;
+
+            auto view = world.View<Components::NetInfo, Components::CharacterReputation>();
+            view.each([&](Components::NetInfo& netInfo, Components::CharacterReputation& reputation)
+            {
+                if (reputation.pendingNetworkByFaction.empty())
+                    return;
+
+                std::vector<Gameplay::Faction::FactionIndex> sentFactions;
+                sentFactions.reserve(reputation.pendingNetworkByFaction.size());
+                for (const auto& [faction, updateFlags] : reputation.pendingNetworkByFaction)
+                {
+                    const auto stateItr = reputation.byFaction.find(faction);
+                    const Gameplay::Faction::FactionID factionID = gameCache.factionRuntimeData->GetFactionID(faction);
+                    MetaGen::Shared::Packet::ServerReputationUpdatePacket packet{
+                        .factionID = factionID,
+                        .value = stateItr == reputation.byFaction.end() ? 0 : stateItr->second.value,
+                        .flags = stateItr == reputation.byFaction.end() ? static_cast<u16>(0) : stateItr->second.flags,
+                        .isPresent = stateItr == reputation.byFaction.end() ? static_cast<u8>(0) : static_cast<u8>(1)
+                    };
+                    const bool immediate = updateFlags == Components::ReputationNetworkUpdateFlags::Immediate;
+                    const bool sent = immediate ? Util::Network::SendPacket(networkState, netInfo.socketID, packet)
+                                                : Util::Network::SendPacket(networkState, netInfo.socketID, Util::Network::CreateReplicationSendOptions(packet.PACKET_ID, ObjectGUID::Empty, factionID), packet);
+                    if (sent)
+                        sentFactions.push_back(faction);
+                }
+
+                for (Gameplay::Faction::FactionIndex faction : sentFactions)
+                {
+                    reputation.pendingNetworkByFaction.erase(faction);
+                }
+            });
+        }
+
+        void HandleFactionPerceptionNetwork(World& world, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
+        {
+            if (!gameCache.factionRuntimeData)
+                return;
+
+            auto view = world.View<Components::NetInfo, Components::FactionModifiers>();
+            view.each([&](Components::NetInfo& netInfo, Components::FactionModifiers& modifiers)
+            {
+                if (modifiers.pendingPerceptionNetwork.empty())
+                    return;
+
+                std::vector<Gameplay::Faction::FactionIndex> sentFactions;
+                sentFactions.reserve(modifiers.pendingPerceptionNetwork.size());
+                for (Gameplay::Faction::FactionIndex faction : modifiers.pendingPerceptionNetwork)
+                {
+                    MetaGen::Shared::Packet::ServerFactionPerceptionOverrideUpdatePacket packet{
+                        .factionID = gameCache.factionRuntimeData->GetFactionID(faction)
+                    };
+                    const auto perceptionItr = modifiers.perceptionByFaction.find(faction);
+                    if (perceptionItr != modifiers.perceptionByFaction.end())
+                    {
+                        packet.activeFields = perceptionItr->second.activeFields;
+                        packet.effectiveStandingValue = perceptionItr->second.effectiveStandingValue;
+                        packet.effectiveReaction = static_cast<u8>(perceptionItr->second.effectiveReaction);
+                    }
+
+                    if (Util::Network::SendPacket(networkState, netInfo.socketID, packet))
+                        sentFactions.push_back(faction);
+                }
+
+                for (Gameplay::Faction::FactionIndex faction : sentFactions)
+                {
+                    modifiers.pendingPerceptionNetwork.erase(faction);
+                }
+            });
+        }
+    }
+
+    void UpdateCharacter::HandleDeinitialization(Singletons::WorldState& worldState, World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
         auto view = world.View<Components::ObjectInfo, Components::NetInfo, Events::CharacterNeedsDeinitialization>();
         view.each([&](entt::entity entity, Components::ObjectInfo& objectInfo, Components::NetInfo& netInfo)
@@ -57,12 +207,14 @@ namespace ECS::Systems
             bool hasCharacterInfo = world.AllOf<Components::CharacterInfo>(entity);
             bool hasWorldTransfer = world.AllOf<Events::CharacterWorldTransfer>(entity);
 
-            if (!hasCharacterInfo || !hasWorldTransfer)
+            if (auto* reputation = world.TryGet<Components::CharacterReputation>(entity))
             {
-                zenith->CallEvent(MetaGen::Server::Lua::CharacterEvent::OnLogout, MetaGen::Server::Lua::CharacterEventDataOnLogout{
-                    .characterEntity = entt::to_integral(entity)
-                });
+                if (!FlushReputationBarrier(gameCache, timeState, characterID, *reputation))
+                    return;
             }
+
+            if (!hasCharacterInfo || !hasWorldTransfer)
+                zenith->CallEvent(MetaGen::Server::Lua::CharacterEvent::OnLogout, MetaGen::Server::Lua::CharacterEventDataOnLogout{ .characterEntity = entt::to_integral(entity) });
 
             if (auto* playerContainers = world.TryGet<Components::PlayerContainers>(entity))
             {
@@ -145,8 +297,7 @@ namespace ECS::Systems
                         .targetMapID = worldTransfter.targetMapID,
                         .targetPosition = worldTransfter.targetPosition,
                         .targetOrientation = worldTransfter.targetOrientation,
-                        .useTargetPosition = true
-                    });
+                        .useTargetPosition = true });
                 }
                 else if (hasWorldTransfer)
                 {
@@ -158,8 +309,6 @@ namespace ECS::Systems
 
             world.DestroyEntity(entity);
         });
-
-        world.Clear<Events::CharacterNeedsDeinitialization>();
     }
     void UpdateCharacter::HandleInitialization(World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState)
     {
@@ -178,9 +327,67 @@ namespace ECS::Systems
             const auto& itemRecords = initialization.items;
             const auto& itemPlacements = initialization.placements;
 
+            Gameplay::Faction::FactionIndex characterFaction = Gameplay::Faction::INVALID_FACTION_INDEX;
+            if (!gameCache.factionRuntimeData || !gameCache.factionRuntimeData->TryGetFactionIndex(character.factionId, characterFaction))
+            {
+                NC_LOG_ERROR("Character {0} references unknown faction ID {1}", characterID, character.factionId);
+                Util::Network::RequestSocketToClose(networkState, netInfo.socketID);
+                return;
+            }
+
+            Components::CharacterReputation characterReputation;
+            characterReputation.byFaction.reserve(initialization.reputations.size());
+            for (const auto& reputation : initialization.reputations)
+            {
+                Gameplay::Faction::FactionIndex reputationFaction = Gameplay::Faction::INVALID_FACTION_INDEX;
+                if (!gameCache.factionRuntimeData->TryGetFactionIndex(reputation.factionId, reputationFaction))
+                {
+                    NC_LOG_ERROR("Character {0} reputation references unknown faction ID {1}", characterID, reputation.factionId);
+                    Util::Network::RequestSocketToClose(networkState, netInfo.socketID);
+                    return;
+                }
+                const Gameplay::Faction::DefinitionRuntime& definition = gameCache.factionRuntimeData->GetDefinition(reputationFaction);
+                if (!Gameplay::Faction::HasFlag(definition.flags, Gameplay::Faction::DefinitionFlags::AllowsReputation))
+                {
+                    NC_LOG_ERROR("Character {0} has reputation for faction {1}, which does not allow reputation", characterID, reputation.factionId);
+                    Util::Network::RequestSocketToClose(networkState, netInfo.socketID);
+                    return;
+                }
+
+                if ((reputation.flags & ~Gameplay::Faction::REPUTATION_FLAG_MASK) != 0)
+                {
+                    NC_LOG_ERROR("Character {0} faction {1} reputation has unknown flags", characterID, reputation.factionId);
+                    Util::Network::RequestSocketToClose(networkState, netInfo.socketID);
+                    return;
+                }
+
+                if ((reputation.flags & static_cast<u16>(Gameplay::Faction::ReputationFlags::AtWar)) != 0 && !Gameplay::Faction::HasFlag(definition.flags, Gameplay::Faction::DefinitionFlags::CanSetAtWar))
+                {
+                    NC_LOG_ERROR("Character {0} faction {1} reputation is At War, but the faction does not allow it", characterID, reputation.factionId);
+                    Util::Network::RequestSocketToClose(networkState, netInfo.socketID);
+                    return;
+                }
+
+                if (!characterReputation.byFaction.emplace(reputationFaction, Components::ReputationState{ .value = reputation.value, .flags = reputation.flags }).second)
+                {
+                    NC_LOG_ERROR("Character {0} has duplicate reputation rows for faction {1}", characterID, reputation.factionId);
+                    Util::Network::RequestSocketToClose(networkState, netInfo.socketID);
+                    return;
+                }
+            }
+
             auto& permissionInfo = world.Get<Components::CharacterPermissionInfo>(entity);
             permissionInfo.effectivePermissions = permissionInfo.accountPermissions;
             Util::Permission::Merge(permissionInfo.effectivePermissions, gameCache.permissionTables, initialization.permissions);
+
+            const u8 characterReactionBounds = gameCache.factionRuntimeData->GetDefinition(characterFaction).defaultPlayerReactionBounds;
+            world.Emplace<Components::UnitFaction>(entity, Components::UnitFaction{
+                .assignedFaction = characterFaction,
+                .effectiveFaction = characterFaction,
+                .assignedPlayerReactionBounds = characterReactionBounds,
+                .effectivePlayerReactionBounds = characterReactionBounds
+            });
+            auto& characterReputationComponent = world.Emplace<Components::CharacterReputation>(entity, std::move(characterReputation));
 
             world.Emplace<Tags::IsPlayer>(entity);
             auto& characterInfo = world.Emplace<Components::CharacterInfo>(entity);
@@ -259,11 +466,45 @@ namespace ECS::Systems
             bool failed = false;
 
             failed |= !Util::MessageBuilder::Unit::BuildUnitAdd(buffer, objectInfo.guid, characterInfo.name, unitClass, transform.position, transform.scale, transform.pitchYaw);
-            failed |= !Util::Network::AppendPacketToBuffer(buffer, MetaGen::Shared::Packet::ServerUnitSetMoverPacket{
-                .guid = objectInfo.guid
+            failed |= !Util::Network::AppendPacketToBuffer(buffer, MetaGen::Shared::Packet::ServerUnitSetMoverPacket{ .guid = objectInfo.guid });
+            failed |= !Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, entity, objectInfo.guid, *gameCache.factionRuntimeData);
+
+            std::vector<Gameplay::Faction::FactionIndex> reputationFactions;
+            reputationFactions.reserve(characterReputationComponent.byFaction.size());
+            for (const auto& [faction, state] : characterReputationComponent.byFaction)
+            {
+                reputationFactions.push_back(faction);
+            }
+
+            std::sort(reputationFactions.begin(), reputationFactions.end(), [&](Gameplay::Faction::FactionIndex left, Gameplay::Faction::FactionIndex right)
+            {
+                return gameCache.factionRuntimeData->GetFactionID(left) < gameCache.factionRuntimeData->GetFactionID(right);
             });
-            failed |= !Util::MessageBuilder::Unit::BuildUnitBaseInfo(buffer, *world.registry, entity, objectInfo.guid);
-            
+
+            PacketWriter reputationWriter;
+            if (!reputationFactions.empty())
+            {
+                const size_t packetSize = sizeof(Network::MessageHeader) + MetaGen::Shared::Packet::ServerReputationUpdatePacket{}.GetSerializedSize();
+                reputationWriter = world.packetArena.Acquire(packetSize * reputationFactions.size());
+                if (!reputationWriter.IsValid())
+                {
+                    networkState.server->CloseSocketID(netInfo.socketID);
+                    return;
+                }
+
+                Bytebuffer& reputationBuffer = reputationWriter.GetBuffer();
+                for (Gameplay::Faction::FactionIndex faction : reputationFactions)
+                {
+                    const Components::ReputationState& state = characterReputationComponent.byFaction.at(faction);
+                    failed |= !Util::Network::AppendPacketToBuffer(reputationBuffer, MetaGen::Shared::Packet::ServerReputationUpdatePacket{
+                        .factionID = gameCache.factionRuntimeData->GetFactionID(faction),
+                        .value = state.value,
+                        .flags = state.flags,
+                        .isPresent = 1
+                    });
+                }
+            }
+
             for (auto& pair : unitResistancesComponent.resistanceTypeToValue)
             {
                 failed |= !Util::Network::AppendPacketToBuffer(buffer, MetaGen::Shared::Packet::ServerUnitResistanceUpdatePacket{
@@ -279,8 +520,7 @@ namespace ECS::Systems
             {
                 for (const auto& itemRecord : itemRecords)
                 {
-                    Database::ItemInstance itemInstance =
-                    {
+                    Database::ItemInstance itemInstance = {
                         .id = itemRecord.id,
                         .ownerID = itemRecord.ownerId,
                         .itemID = itemRecord.itemId,
@@ -385,10 +625,8 @@ namespace ECS::Systems
                 {
                     failed |= !Util::Network::AppendPacketToBuffer(buffer, MetaGen::Shared::Packet::ServerTriggerAddPacket{
                         .triggerID = proximityTrigger.triggerID,
-
                         .name = proximityTrigger.name,
                         .flags = static_cast<u8>(proximityTrigger.flags),
-
                         .mapID = transform.mapID,
                         .position = transform.position,
                         .extents = aabb.extents
@@ -405,28 +643,29 @@ namespace ECS::Systems
 
             world.AddEntity(objectInfo.guid, entity, vec2(transform.position.x, transform.position.z));
             Util::Network::SendPacket(networkState, netInfo.socketID, writer.Seal());
+            if (reputationWriter.IsValid())
+                Util::Network::SendPacket(networkState, netInfo.socketID, reputationWriter.Seal());
 
             if (world.AllOf<Tags::CharacterWasWorldTransferred>(entity))
             {
-                zenith->CallEvent(MetaGen::Server::Lua::CharacterEvent::OnWorldChanged, MetaGen::Server::Lua::CharacterEventDataOnWorldChanged{
-                    .characterEntity = entt::to_integral(entity)
-                });
+                zenith->CallEvent(MetaGen::Server::Lua::CharacterEvent::OnWorldChanged, MetaGen::Server::Lua::CharacterEventDataOnWorldChanged{ .characterEntity = entt::to_integral(entity) });
 
                 world.Remove<Tags::CharacterWasWorldTransferred>(entity);
             }
             else
             {
-                zenith->CallEvent(MetaGen::Server::Lua::CharacterEvent::OnLogin, MetaGen::Server::Lua::CharacterEventDataOnLogin{
-                    .characterEntity = entt::to_integral(entity)
-                });
+                zenith->CallEvent(MetaGen::Server::Lua::CharacterEvent::OnLogin, MetaGen::Server::Lua::CharacterEventDataOnLogin{ .characterEntity = entt::to_integral(entity) });
             }
         });
     }
 
-    void UpdateCharacter::HandleUpdate(Singletons::WorldState& worldState, World& world, Scripting::Zenith* zenith, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
+    void UpdateCharacter::HandleUpdate(Singletons::WorldState& worldState, World& world, Scripting::Zenith* zenith, Singletons::TimeState& timeState, Singletons::GameCache& gameCache, Singletons::NetworkState& networkState, f32 deltaTime)
     {
-        HandleDeinitialization(worldState, world, zenith, gameCache, networkState);
+        HandleDeinitialization(worldState, world, zenith, timeState, gameCache, networkState);
         HandleInitialization(world, zenith, gameCache, networkState);
+        HandleReputationNetwork(world, gameCache, networkState);
+        HandleFactionPerceptionNetwork(world, gameCache, networkState);
+        HandleReputationPersistence(world, timeState, gameCache);
 
         auto spellCooldownView = world.View<Components::UnitSpellCooldownHistory, Tags::IsPlayer>();
         spellCooldownView.each([&](entt::entity entity, Components::UnitSpellCooldownHistory& cooldownHistory)

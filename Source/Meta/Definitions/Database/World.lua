@@ -12,6 +12,88 @@ return D.Definitions
         Column("name", Type.STRING, P.Text)
     }, { constraints = { Unique("currency", "currency_unique_name", { "name" }) } }),
 
+    Table("world", "factions",
+    {
+        Column("id", Type.U16, P.Integer, I),
+        Column("name", Type.STRING, P.Text),
+        Column("flags", Type.U16, P.SmallInt, D0(0)),
+        Column("default_reaction_to_others", Type.U16, P.SmallInt, D0(2)),
+        Column("default_player_reaction_min", Type.U16, P.SmallInt, D0(0)),
+        Column("default_player_reaction_max", Type.U16, P.SmallInt, D0(3)),
+        Column("default_reputation_value", Type.I32, P.Integer, D0(0))
+    }, { constraints = {
+            Unique("factions", "factions_unique_name", { "name" })
+        }, operations = {
+            Upsert("factions", { "id", "name", "flags", "defaultReactionToOthers", "defaultPlayerReactionMin",
+                "defaultPlayerReactionMax", "defaultReputationValue" },
+                { "name", "flags", "defaultReactionToOthers", "defaultPlayerReactionMin",
+                    "defaultPlayerReactionMax", "defaultReputationValue" })
+        } }),
+
+    Table("world", "faction_relations",
+    {
+        Column("id", Type.U32, P.Integer, I),
+        Column("source_faction_id", Type.U16, P.Integer),
+        Column("target_faction_id", Type.U16, P.Integer),
+        Column("reaction", Type.U16, P.SmallInt)
+    }, { constraints = {
+            Unique("faction_relations", "faction_relations_source_target_key", { "source_faction_id", "target_faction_id" }),
+            ForeignKey("faction_relations", "faction_relations_source_faction_fk", { "source_faction_id" }, "factions", { "id" }),
+            ForeignKey("faction_relations", "faction_relations_target_faction_fk", { "target_faction_id" }, "factions", { "id" })
+        }, operations = {
+            P.Upsert("Set", { "sourceFactionId", "targetFactionId", "reaction" },
+                { "sourceFactionId", "targetFactionId" }, { "reaction" },
+                { persistentId = "postgres.faction_relations.set" })
+        }, orderBy = { P.Asc("sourceFactionId"), P.Asc("targetFactionId") } }),
+
+    Table("world", "faction_standings",
+    {
+        Column("id", Type.U16, P.SmallInt, I),
+        Column("name", Type.STRING, P.Text),
+        Column("minimum_value", Type.I32, P.Integer),
+        Column("reaction", Type.U16, P.SmallInt),
+        Column("sort_order", Type.U16, P.SmallInt)
+    }, { constraints = {
+            Unique("faction_standings", "faction_standings_unique_name", { "name" }),
+            Unique("faction_standings", "faction_standings_unique_sort_order", { "sort_order" })
+        }, operations = {
+            Upsert("faction_standings", { "id", "name", "minimumValue", "reaction", "sortOrder" },
+                { "name", "minimumValue", "reaction", "sortOrder" })
+        }, orderBy = { P.Asc("minimumValue"), P.Asc("id") } }),
+
+    Table("world", "faction_starting_reputations",
+    {
+        Column("id", Type.U32, P.Integer, I),
+        Column("player_faction_id", Type.U16, P.Integer),
+        Column("target_faction_id", Type.U16, P.Integer),
+        Column("value", Type.I32, P.Integer)
+    }, { constraints = {
+            Unique("faction_starting_reputations", "faction_starting_reputations_player_target_key",
+                { "player_faction_id", "target_faction_id" }),
+            ForeignKey("faction_starting_reputations", "faction_starting_reputations_player_faction_fk",
+                { "player_faction_id" }, "factions", { "id" }),
+            ForeignKey("faction_starting_reputations", "faction_starting_reputations_target_faction_fk",
+                { "target_faction_id" }, "factions", { "id" })
+        }, operations = {
+            P.Upsert("Set", { "playerFactionId", "targetFactionId", "value" },
+                { "playerFactionId", "targetFactionId" }, { "value" },
+                { persistentId = "postgres.faction_starting_reputations.set" })
+        }, orderBy = { P.Asc("playerFactionId"), P.Asc("targetFactionId") } }),
+
+    Table("world", "unit_race_factions",
+    {
+        Column("race_id", Type.U16, P.SmallInt),
+        Column("faction_id", Type.U16, P.Integer)
+    }, { noPrimaryKey = true, constraints = {
+            Unique("unit_race_factions", "unit_race_factions_race_key", { "race_id" }),
+            ForeignKey("unit_race_factions", "unit_race_factions_faction_fk", { "faction_id" }, "factions", { "id" })
+        }, queries = {
+            P.Query("ByRace", { "raceId" }, { persistentId = "postgres.unit_race_factions.by_race", cardinality = "zeroOrOne" })
+        }, operations = {
+            P.Upsert("Set", { "raceId", "factionId" }, { "raceId" }, { "factionId" },
+                { persistentId = "postgres.unit_race_factions.set" })
+        }, orderBy = { P.Asc("raceId") } }),
+
     Table("world", "creature_class_level_stats",
     {
         Column("id", Type.U32, P.Integer, I),
@@ -41,7 +123,7 @@ return D.Definitions
         Column("damage_mod", Type.F32, P.Real, D0(1.0)),
         Column("script_name", Type.STRING, P.Text, D0("")),
         Column("unit_class", Type.U16, P.SmallInt, D0(1)),
-        Column("faction_id", Type.U16, P.SmallInt, D0(0)),
+        Column("faction_id", Type.U16, P.Integer, D0(0)),
         Column("creature_type", Type.U16, P.SmallInt, D0(0)),
         Column("rank", Type.U16, P.SmallInt, D0(0)),
         Column("damage_school", Type.U16, P.SmallInt, D0(0)),
@@ -51,7 +133,12 @@ return D.Definitions
         Column("default_movement_type", Type.U16, P.SmallInt, D0(0)),
         Column("detection_range", Type.F32, P.Real, D0(20.0)),
         Column("leash_range", Type.F32, P.Real, D0(0.0)),
-        Column("melee_attack_time_ms", Type.U32, P.Integer, D0(2000))
+        Column("melee_attack_time_ms", Type.U32, P.Integer, D0(2000)),
+        Column("player_reaction_min_override", Type.U16, P.SmallInt, D0(255)),
+        Column("player_reaction_max_override", Type.U16, P.SmallInt, D0(255)),
+        Column("aggression_policy", Type.U16, P.SmallInt, D0(1)),
+        Column("assistance_policy", Type.U16, P.SmallInt, D0(0)),
+        Column("assistance_range", Type.U16, P.SmallInt, D0(20))
     }),
 
     Table("world", "creatures",

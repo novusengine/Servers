@@ -95,9 +95,29 @@ declare class SpellEffectTypeEnum
     AuraRemove          : number
     AuraPeriodicDamage  : number
     AuraPeriodicHeal    : number
+    AuraFactionOverride : number
+    AuraFactionStandingOverride : number
+    AuraFactionReactionOverride : number
+    AuraFactionPlayerReactionMinOverride : number
+    AuraFactionPlayerReactionMaxOverride : number
+    AuraFactionUnitReactionOverride : number
     Count               : number
 end
 declare SpellEffectTypeEnum : SpellEffectTypeEnum
+
+declare class CreatureAggressionPolicy
+    Passive    : number
+    Defensive  : number
+    Aggressive : number
+end
+declare CreatureAggressionPolicy : CreatureAggressionPolicy
+
+declare class CreatureAssistancePolicy
+    None        : number
+    SameFaction : number
+    Friendly    : number
+end
+declare CreatureAssistancePolicy : CreatureAssistancePolicy
 
 declare class ProcInfo
     id : number
@@ -256,6 +276,9 @@ declare class PacketListEnum
     ServerPathVisualizationPacket : number
     ClientSendCheatCommandPacket : number
     ServerCheatCommandResultPacket : number
+    ServerUnitFactionUpdatePacket : number
+    ServerReputationUpdatePacket : number
+    ServerFactionPerceptionOverrideUpdatePacket : number
     Count : number
 end
 declare PacketListEnum : PacketListEnum
@@ -289,6 +312,17 @@ declare class Unit
         
     function IsAlive(self) : boolean
     function GetHealth(self) : (number, number, number)
+    function GetFactionID(self) : number?
+    function SetFactionID(self, factionID : number) : boolean
+    function GetReaction(self, target : Unit) : number?
+    function CanAttack(self, target : Unit) : boolean
+    function CanAssist(self, target : Unit) : boolean
+    function CanInteract(self, target : Unit) : boolean
+    function GetCreatureFactionPolicy(self) : (number?, number?, number?, number?)
+    function SetCreatureAggressionPolicy(self, policy : number) : boolean
+    function SetCreatureAssistancePolicy(self, policy : number) : boolean
+    function SetCreatureDetectionRange(self, range : number) : boolean
+    function SetCreatureAssistanceRange(self, range : number) : boolean
     
     function Kill(self) : ()
     function Resurrect(self) : ()
@@ -316,6 +350,13 @@ end
 
 declare class Character extends Unit
     function GetEquippedItem(self, slot : number) : Item?
+    function GetReputation(self, factionID : number) : (number?, number?)
+    function SetReputation(self, factionID : number, value : number, contentID : number?) : boolean
+    function ModifyReputation(self, factionID : number, delta : number, contentID : number?) : boolean
+    function RemoveReputation(self, factionID : number, contentID : number?) : boolean
+    function DiscoverReputation(self, factionID : number) : boolean
+    function SetReputationFlags(self, factionID : number, flags : number, contentID : number?) : boolean
+    function SetReputationLocked(self, factionID : number, locked : boolean, contentID : number?) : boolean
 end
 
 declare class Spell
