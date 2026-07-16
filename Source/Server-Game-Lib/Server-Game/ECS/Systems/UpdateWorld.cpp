@@ -169,14 +169,15 @@ namespace ECS::Systems
             return assistanceRange;
         }
 
-        void ResetCreatureResources(World& world, entt::entity entity, Components::UnitPowersComponent& powers,
-            Components::UnitStatsComponent& stats)
+        void ResetCreatureResources(World& world, entt::entity entity, Components::UnitPowersComponent& powers, Components::UnitStatsComponent& stats)
         {
             for (auto& [powerType, power] : powers.powerTypeToValue)
             {
                 f64 resetCurrent = 0.0;
                 if (powerType == MetaGen::Shared::Unit::PowerTypeEnum::Health ||
                     powerType == MetaGen::Shared::Unit::PowerTypeEnum::Mana ||
+                    powerType == MetaGen::Shared::Unit::PowerTypeEnum::Focus ||
+                    powerType == MetaGen::Shared::Unit::PowerTypeEnum::Happiness ||
                     powerType == MetaGen::Shared::Unit::PowerTypeEnum::Energy)
                 {
                     resetCurrent = power.max;
@@ -1012,6 +1013,8 @@ namespace ECS::Systems
                 armorStat.current = armor;
             }
 
+            ResetCreatureResources(world, entity, unitPowersComponent, unitStatsComponent);
+
             world.Emplace<Tags::IsAlive>(entity);
             auto& visibilityInfo = world.Emplace<Components::VisibilityInfo>(entity);
             auto& visibilityUpdateInfo = world.Emplace<Components::VisibilityUpdateInfo>(entity);
@@ -1221,6 +1224,14 @@ namespace ECS::Systems
         {
             Util::Movement::Stop(world, entity);
 
+            if (auto* powers = world.TryGet<Components::UnitPowersComponent>(entity))
+            {
+                for (auto& [powerType, power] : powers->powerTypeToValue)
+                {
+                    Util::Unit::SetPower(world, entity, *powers, powerType, power.base, 0.0, power.max);
+                }
+            }
+
             if (auto* lifecycleInfo = world.TryGet<Components::CreatureLifecycleInfo>(entity))
             {
                 Util::Combat::ClearCreatureThreatTable(world, entity);
@@ -1251,21 +1262,15 @@ namespace ECS::Systems
         auto resurrectView = world.View<Components::UnitCombatInfo, Events::UnitResurrected, Tags::IsDead>();
         resurrectView.each([&](entt::entity entity, Components::UnitCombatInfo&, Events::UnitResurrected& event)
         {
-            world.Remove<Tags::IsDead>(entity);
-            world.Emplace<Tags::IsAlive>(entity);
-
             if (auto* lifecycleInfo = world.TryGet<Components::CreatureLifecycleInfo>(entity))
             {
-                lifecycleInfo->state = Components::CreatureLifecycleState::Alive;
+                lifecycleInfo->state = Components::CreatureLifecycleState::Despawned;
                 lifecycleInfo->timeRemaining = 0.0f;
-                auto& visibilityUpdateInfo = world.Get<Components::VisibilityUpdateInfo>(entity);
-                ShowCreature(visibilityUpdateInfo);
-
-                const auto* creatureInfo = world.TryGet<Components::CreatureInfo>(entity);
-                const auto* creatureCombatInfo = world.TryGet<Components::CreatureCombatInfo>(entity);
-                if (creatureInfo && creatureCombatInfo)
-                    StartCreatureDefaultMovement(world, entity, *creatureInfo, *creatureCombatInfo);
+                return;
             }
+
+            world.Remove<Tags::IsDead>(entity);
+            world.Emplace<Tags::IsAlive>(entity);
 
             if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
             {
@@ -1275,7 +1280,6 @@ namespace ECS::Systems
                 });
             }
         });
-        world.Clear<Events::UnitResurrected>();
 
         auto lifecycleView = world.View<Components::ObjectInfo, Components::CreatureInfo, Components::CreatureCombatInfo,
             Components::CreatureLifecycleInfo, Components::Transform, Components::VisibilityInfo, Components::VisibilityUpdateInfo,
@@ -1323,14 +1327,17 @@ namespace ECS::Systems
 
             if (auto* creatureAIInfo = world.TryGet<Components::CreatureAIInfo>(entity))
             {
+                const auto* resurrectEvent = world.TryGet<Events::UnitResurrected>(entity);
+                const entt::entity resurrectorEntity = resurrectEvent ? resurrectEvent->resurrectorEntity : entt::entity{ entt::null };
                 zenith->CallEvent(MetaGen::Server::Lua::CreatureAIEvent::OnResurrect, MetaGen::Server::Lua::CreatureAIEventDataOnResurrect{
                     .creatureEntity = entt::to_integral(entity),
-                    .resurrectorEntity = entt::to_integral(entt::entity{ entt::null })
+                    .resurrectorEntity = entt::to_integral(resurrectorEntity)
                 });
             }
 
             StartCreatureDefaultMovement(world, entity, creatureInfo, creatureCombatInfo);
         });
+        world.Clear<Events::UnitResurrected>();
 
         auto netFieldUpdateView = world.View<Components::ObjectFields, Components::UnitFields, Components::VisibilityInfo, Events::ObjectNeedsNetFieldUpdate>();
         netFieldUpdateView.each([&](entt::entity entity, Components::ObjectFields& objectFields, Components::UnitFields& unitFields, Components::VisibilityInfo& visibilityInfo)
